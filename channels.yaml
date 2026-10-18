@@ -3,4 +3,4 @@
 # Only promotion moves `stable` (see README: "From change to promotion").
 team-default:
   stable: "sha256:7dfa50c5d0867d34ebe1cb99db1541f4ce408a2f1079e463ed6c46031c13b590"  # r1
-  candidate: "sha256:e404acb199cb28337c8bf7ce9e5aa2251141566e02b20e9011ac57f014c8f583"  # r2: + ai-dlc workflow plugin
+  candidate: "sha256:4ad62a08347a03d60a1053dab2c880ab489a2746383ce8539cf4b628bbba46ed"  # r3: + ai-dlc workflow plugin (Claude) and its Codex form
