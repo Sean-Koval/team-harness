@@ -7,6 +7,10 @@ complete, copyable example built around a typical stack: **OpenSpec**, **GitHub*
 [flightdeck](https://github.com/Sean-Koval/flightdeck) (judges changes to it) and
 [ai-dlc](https://github.com/Sean-Koval/ai-dlc) (authors the workflow plugin it pins).
 
+> This example lives in [agent-factory](https://github.com/Sean-Koval/agent-factory) under `examples/team-harness/`
+> until it has its own repository. Point `HANGAR_HARNESS_REPO` at a standalone copy: hangar looks up older channel
+> revisions in git history relative to the repository root.
+
 Nothing here belongs to a real organisation: endpoints are public vendor URLs or `example.com`, and credentials
 appear by name only.
 
@@ -61,7 +65,7 @@ manifest; if the sandbox had anything else, the difference is recorded as drift.
 
 ```console
 $ hangar harness check harnesses/team-default
-ok: team-default r2, 10 component(s), harness_digest sha256:…
+ok: team-default r2, 9 component(s), harness_digest sha256:…
 ```
 
 ## Run an agent from it
@@ -166,7 +170,7 @@ What works today and what waits on hangar:
 | `flightdeck/` | The A/B suite, its pre-registered decision and the behavior specs |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
-| `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolvable |
+| `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks |
 | `.github/workflows/check.yml` | The CI for a standalone copy |
 
 ## CI

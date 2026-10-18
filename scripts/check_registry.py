@@ -11,7 +11,8 @@ For each `harnesses/<name>/`:
 
 And for `channels.yaml`: every channel names a digest that resolves to a lock, in the checkout or its git history,
 the way `hangar harness thaw name@<channel>` resolves it (hangar's resolver itself when this directory is the
-repository root).
+repository root, followed by its claim checks against the rendered environments: CLI version, model, approvals,
+MCP servers; a lock with a plugin is reported as waiting on hangar#221, which adds plugin thaw).
 
     python scripts/check_registry.py [REPO_ROOT]
 """
@@ -79,6 +80,21 @@ def resolve_channel(root: Path, name: str, channel: str, digest: str) -> str:
     raise ValueError(f"{name}@{channel} ({digest}) is neither the current lock nor in the git history of {rel}")
 
 
+def claim_channel(root: Path, name: str, channel: str) -> str:
+    """hangar's claim checks (`harness_thaw.pin`) for `name@channel` on the rendered environment that provides it."""
+    r = harness_thaw.resolve(SimpleNamespace(harness_repo=str(root)), f"{name}@{channel}")
+    env = f"{name}-candidate" if any(c["id"].startswith("plugin:") for c in r.lock["components"]) else name
+    fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root)),
+                            catalog=EnvCatalog([root / "harnesses" / name]))
+    try:
+        p = harness_thaw.pin(fleet, f"{name}@{channel}", env)
+    except harness_thaw.ThawError as e:
+        if "plugin:" in str(e):
+            return f"claim on {env}: waits on hangar#221 (plugin thaw)"
+        raise
+    return f"claim on {env}: ok ({p['harness']} {p['version']}, {p['model']}, {p['approvals']})"
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
     errors: list[str] = []
@@ -113,6 +129,9 @@ def main() -> int:
             try:
                 where = resolve_channel(root, name, ch, digest)
                 print(f"{name}@{ch}: {digest} -> {where}")
+                top = (_git(root, "rev-parse", "--show-toplevel") or "").strip()
+                if top and Path(top).resolve() == root:
+                    print(f"{name}@{ch}: {claim_channel(root, name, ch)}")
             except (ValueError, harness_thaw.ThawError) as e:
                 errors.append(str(e))
     for e in errors:
