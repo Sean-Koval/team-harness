@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Render the hangar environments that provide a harness's files, from its lock and `bindings/<name>.yaml`.
 
-Until hangar mounts a lock's files itself (hangar#221), the environment provides them, and turn 1 is compared with
-the lock (drift). These environments carry exactly the pinned files, so a session thawed from the lock on them
-reports the lock's `harness_digest`:
+A thawed session mounts the lock's guide, skills and plugins itself (hangar#221); the environment still provides
+the native files and the MCP servers, and an experiment variant still names an environment until hangar runs
+variants by lock (hangar#135). These environments carry exactly the pinned files, so a session on them reports the
+lock's `harness_digest`:
 
 - `env.stable.yaml` (environment `<name>`): the guide, skills, native files and MCP servers; no plugins.
 - `env.candidate.yaml` (environment `<name>-candidate`): the same plus the lock's plugin components, loaded from
-  hangar's read-only plugin seed (hangar docs/harnesses.md#plugins).
+  hangar's read-only plugin seed (hangar docs/harnesses.md#plugins), for flightdeck's environment-based variants.
 
 They are written next to the lock because hangar resolves skill and plugin paths inside the spec's directory. Add the
 harness directory to hangar's environment directories (`HANGAR_ENV_DIRS`).
@@ -87,8 +88,9 @@ def render(root: Path) -> dict[str, str]:
     plugins = [c for c in comps if c["id"].startswith("plugin:")]
     candidate = {"name": f"{name}-candidate", "extends": name,
                  "description": f"{name} with its plugin components loaded from the read-only plugin seed",
-                 "plugins": [{"path": ".", "name": c["id"][7:].split("@")[0], "marketplace": c["id"].split("@")[1],
-                              "enabled": c.get("enabled", True)} for c in plugins]}
+                 "plugins": [{"path": f"plugins/{c['id'].split('@')[1]}", "name": c["id"][7:].split("@")[0],
+                              "marketplace": c["id"].split("@")[1], "enabled": c.get("enabled", True)}
+                             for c in plugins]}
     dump = lambda d: HEADER.format(name=name) + yaml.safe_dump(d, sort_keys=False, width=120, allow_unicode=True)
     out = {"env.stable.yaml": dump(stable)}
     if plugins:

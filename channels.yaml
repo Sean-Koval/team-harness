@@ -2,5 +2,5 @@
 # A channel holds a harness_digest; hangar finds that lock in this checkout or in its git history.
 # Only promotion moves `stable` (see README: "From change to promotion").
 team-default:
-  stable: "sha256:7dfa50c5d0867d34ebe1cb99db1541f4ce408a2f1079e463ed6c46031c13b590"  # r1
-  candidate: "sha256:4ad62a08347a03d60a1053dab2c880ab489a2746383ce8539cf4b628bbba46ed"  # r3: + ai-dlc workflow plugin (Claude) and its Codex form
+  stable: "sha256:8242a53f8befb71236d41fb3188e50c0dd6c674a59c821f64d853c05bd81b074"  # r1 (re-keyed: hangar#221 changed the digest form; same lock)
+  candidate: "sha256:689ffca78109f5232a34d5f6c03d03ead60a52d37d005d039037bbb490bbf83c"  # r4: + ai-dlc workflow plugin (Claude) and its Codex form

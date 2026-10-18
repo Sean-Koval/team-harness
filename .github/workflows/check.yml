@@ -10,7 +10,7 @@ permissions:
 
 env:
   # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
-  HANGAR_REF: 6dc8a395639c164dd884f10f8baa32ba2cc85c49
+  HANGAR_REF: 266280580d0cb541e34b67253def686633f74038
   FLIGHTDECK_REF: 73c9178c0ad577b40eed56a7f3e090e899fb8795
 
 jobs:

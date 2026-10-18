@@ -6,13 +6,14 @@ For each `harnesses/<name>/`:
 1. the lock checks (`harness_lock.check`, what `hangar harness check` runs);
 2. `AGENTS.md`, when present, is byte-identical to the `CLAUDE.md` guide, so the guide's digest covers both;
 3. the rendered environments are up to date (`scripts/render_envs.py --check`);
-4. `env.stable.yaml`, loaded by hangar's environment catalog, yields the lock's `harness_digest` (without plugins)
-   when projected the way a turn's manifest is: a session thawed on it reports no drift.
+4. `env.stable.yaml`, loaded by hangar's environment catalog, yields the lock's `harness_digest` without plugins, and
+   `env.candidate.yaml` (when the lock has plugins) yields the full `harness_digest`, when projected the way a turn's
+   manifest is: an experiment arm on either environment runs exactly that lock.
 
 And for `channels.yaml`: every channel names a digest that resolves to a lock, in the checkout or its git history,
 the way `hangar harness thaw name@<channel>` resolves it (hangar's resolver itself when this directory is the
 repository root, followed by its claim checks against the rendered environments: CLI version, model, approvals,
-MCP servers; a lock with a plugin is reported as waiting on hangar#221, which adds plugin thaw).
+MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel claims on `<name>`.
 
     python scripts/check_registry.py [REPO_ROOT]
 """
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -82,16 +84,11 @@ def resolve_channel(root: Path, name: str, channel: str, digest: str) -> str:
 
 def claim_channel(root: Path, name: str, channel: str) -> str:
     """hangar's claim checks (`harness_thaw.pin`) for `name@channel` on the rendered environment that provides it."""
-    r = harness_thaw.resolve(SimpleNamespace(harness_repo=str(root)), f"{name}@{channel}")
-    env = f"{name}-candidate" if any(c["id"].startswith("plugin:") for c in r.lock["components"]) else name
-    fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root)),
-                            catalog=EnvCatalog([root / "harnesses" / name]))
-    try:
+    env = name
+    with tempfile.TemporaryDirectory() as data:  # pin copies the lock's files out (hangar#221 mounts them)
+        fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data),
+                                catalog=EnvCatalog([root / "harnesses" / name]))
         p = harness_thaw.pin(fleet, f"{name}@{channel}", env)
-    except harness_thaw.ThawError as e:
-        if "plugin:" in str(e):
-            return f"claim on {env}: waits on hangar#221 (plugin thaw)"
-        raise
     return f"claim on {env}: ok ({p['harness']} {p['version']}, {p['model']}, {p['approvals']})"
 
 
@@ -123,6 +120,12 @@ def main() -> int:
                           f"{hl.harness_digest(without)}")
         else:
             print(f"{d.name}: env.stable.yaml reproduces {got}")
+        if any(c["id"].startswith("plugin:") for c in lock["components"]):
+            got = env_identity(d, f"{lock['name']}-candidate", approvals)
+            if got != hl.harness_digest(lock):
+                errors.append(f"{d.name}: env.candidate.yaml yields {got}, the lock is {hl.harness_digest(lock)}")
+            else:
+                print(f"{d.name}: env.candidate.yaml reproduces {got}")
     channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
     for name, chans in channels.items():
         for ch, digest in (chans or {}).items():

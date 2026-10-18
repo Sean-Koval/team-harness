@@ -1,11 +1,15 @@
 {
   "name": "team-harness",
-  "owner": {"name": "Team harness maintainers"},
-  "metadata": {"description": "Plugins pinned by this team harness; each is a harness.lock component."},
+  "owner": {
+    "name": "Team harness maintainers"
+  },
+  "metadata": {
+    "description": "Plugins pinned by this team harness; each is a harness.lock component."
+  },
   "plugins": [
     {
       "name": "ai-dlc-workflow",
-      "source": "./plugins/ai-dlc-workflow",
+      "source": "./ai-dlc-workflow",
       "description": "AI-DLC workflow guidance, team skills and CLI-optional safety hooks (off in stable, on in candidate).",
       "defaultEnabled": false
     }

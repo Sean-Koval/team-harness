@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 3
+revision: 4
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -40,10 +40,11 @@ components:
   path: skills/splunk-logs
   source: path:skills/splunk-logs
 - id: plugin:ai-dlc-workflow@team-harness
-  digest: sha256:0e39bfba76da148cb53a8399aef15e8a88f58615ca1a6f485834ac96d87bd54c
-  path: plugins/ai-dlc-workflow
+  digest: sha256:50cc2dcbfcc726f91f80eaab4538efbebc5cbe850023213c3660097d15884f54
+  tree: sha256:1fde02bcae29122e466dc5d84d8ec4ed3e3eac0b216e1cd0c3023cdfdf5c20f7
+  path: plugins/team-harness/ai-dlc-workflow
   enabled: true
-  source: git:https://github.com/Sean-Koval/ai-dlc#plugins/ai-dlc-workflow@c55c563b197b5d5b3c837e8eb2a292b935536b90
+  source: git:https://github.com/Sean-Koval/ai-dlc#plugins/ai-dlc-workflow@fec8b9186a01009b3e58408c37dc0e508b3ec058
 - id: native:claude-code/hooks/guard_readonly.py
   digest: sha256:b1ab393d2b81fdecf0f1fde7084fa01b7318ec781f4ed7835bfb3b18eaeb43dc
   path: native/claude-code/hooks/guard_readonly.py

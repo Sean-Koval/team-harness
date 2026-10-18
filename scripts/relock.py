@@ -4,7 +4,7 @@
 The normal way to get a lock is `hangar harness freeze` from a turn that went well. Use this when you change the
 harness's files by hand (a new skill, an edited guide, your own MCP endpoints) and want the lock to pin them before a
 run exists to freeze from: it keeps the lock's runtime, model and binding layer, recomputes every component's digest
-(and each skill's `tree`), adds components for unpinned skills, plugins and native files, and bumps the revision when
+(and each skill's `tree`), adds components for unpinned skills, plugins (each `plugins/<marketplace>/` directory marketplace) and native files, and bumps the revision when
 anything changed. `hangar harness check` then passes, and a turn run from the result reports the same
 `harness_digest` once the environment provides the same files.
 
@@ -31,13 +31,6 @@ from hangar import harness_lock as hl
 GUIDES = ("CLAUDE.md", "AGENTS.md")  # the first one present is the guide component
 CONFIG_ROOTS = {"claude-code": ".claude", "codex": ".codex"}  # native/<runtime>/ maps onto $HOME/<this>/
 
-
-def _marketplace(root: Path) -> str | None:
-    f = root / ".claude-plugin" / "marketplace.json"
-    try:
-        return json.loads(f.read_text())["name"]
-    except (OSError, ValueError, KeyError):
-        return None
 
 
 def _hooks(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
@@ -87,16 +80,25 @@ def relock(root: Path, *, without_plugins: bool = False) -> tuple[dict[str, Any]
             comps.append(c)
 
     if not without_plugins and (root / "plugins").is_dir():
-        market = _marketplace(root)
-        if market is None:
-            raise SystemExit(f"{root}/.claude-plugin/marketplace.json: a plugin needs the marketplace that lists it")
-        for d in sorted(p for p in (root / "plugins").iterdir() if p.is_dir()):
-            cid = f"plugin:{d.name}@{market}"
-            c = {"id": cid, "digest": hl.files_digest(hl.read_dir(d)), "path": f"plugins/{d.name}"}
-            c["enabled"] = (old.get(cid) or {}).get("enabled", True)
-            if src := (old.get(cid) or {}).get("source"):
-                c["source"] = src
-            comps.append(c)
+        # each directory under plugins/ is a Claude Code directory marketplace (hangar#221): its
+        # .claude-plugin/marketplace.json lists the plugins, each at plugins/<marketplace>/<its ./ source>
+        for mdir in sorted(p for p in (root / "plugins").iterdir() if p.is_dir()):
+            entries = hl.marketplace_entries(root, mdir.name)
+            if entries is None:
+                raise SystemExit(f"{mdir}/.claude-plugin/marketplace.json: missing, or not marketplace {mdir.name}")
+            for name, entry in sorted(entries.items()):
+                src = entry.get("source")
+                if not isinstance(src, str) or not src.startswith("./"):
+                    raise SystemExit(f"{mdir}: plugin {name} needs a relative ./ source to be pinned")
+                d = (mdir / src).resolve()
+                files = hl.read_dir(d)
+                cid = f"plugin:{name}@{mdir.name}"
+                c = {"id": cid, "digest": hl.plugin_digest(entry, files), "tree": hl.tree_digest(files),
+                     "path": d.relative_to(root.resolve()).as_posix()}
+                c["enabled"] = (old.get(cid) or {}).get("enabled", True)
+                if prov := (old.get(cid) or {}).get("source"):
+                    c["source"] = prov
+                comps.append(c)
 
     if (root / "native").is_dir():
         for f in sorted(p for p in (root / "native").rglob("*") if p.is_file() and not p.is_symlink()):
