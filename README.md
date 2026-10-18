@@ -45,14 +45,14 @@ names, never values:
 ```yaml
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 2
+revision: 4
 runtime: {harness: claude-code, version: 2.1.296}
 model: {id: claude-opus-5-5, policy: balanced}
 components:
 - {id: guide:CLAUDE.md, digest: sha256:2ac8…, path: CLAUDE.md}
 - {id: skill:github-pr, digest: sha256:4991…, tree: sha256:7205…, path: skills/github-pr}
 # … four more skills, then the plugin and the native files
-- {id: plugin:ai-dlc-workflow@team-harness, digest: sha256:…, path: plugins/ai-dlc-workflow, enabled: true}
+- {id: plugin:ai-dlc-workflow@team-harness, digest: sha256:…, tree: sha256:…, path: plugins/team-harness/ai-dlc-workflow, enabled: true}
 binding:
   mcp:
   - {name: github, transport: http, endpoint: "https://api.githubcopilot.com/mcp/", header_names: [Authorization]}
@@ -86,9 +86,10 @@ hangar harness thaw team-default@stable --env team-default "Pick up ABC-123"
 
 `team-default@stable` resolves through `channels.yaml` to a digest, and hangar finds that lock in the checkout or in
 its git history. The session is pinned to the lock's CLI version, model and approval mode; the MCP servers must exist
-in the environment (endpoints and credentials live there, not here). Until hangar mounts a lock's files itself
-(hangar#221), the environment provides them: `env.stable.yaml` carries exactly the pinned files, and
-`scripts/check_registry.py` proves with hangar's own manifest code that a turn on it reports the lock's digest.
+in the environment (endpoints and credentials live there, not here). hangar mounts the lock's files itself when it
+thaws (hangar#221). `env.stable.yaml` still carries exactly the pinned files for runs that name an environment instead
+of a lock, and `scripts/check_registry.py` proves with hangar's own manifest code that a turn on it reports the lock's
+digest.
 
 ## From change to promotion
 
@@ -148,8 +149,9 @@ What works today and what waits on hangar:
   manifest's plugin digest, `hangar harness check` recomputes it in CI, and `hangar harness thaw team-default@candidate
   --env team-default` mounts the lock's plugins itself ([hangar#221](https://github.com/Sean-Koval/hangar/issues/221)).
   `scripts/check_registry.py` runs that claim when this directory is a repository root.
-- **`env.candidate.yaml` stays for experiments.** flightdeck's variants still name an environment until hangar runs
-  experiment variants by lock ([hangar#135](https://github.com/Sean-Koval/hangar/issues/135)), so the candidate arm
+- **`env.candidate.yaml` stays for experiments.** hangar accepts experiment variants by lock
+  ([hangar#135](https://github.com/Sean-Koval/hangar/issues/135)), but flightdeck's runner doesn't send `harness_lock`
+  yet (its line budget is full until flightdeck#20 closes; flightdeck ADR 0005), so the candidate arm
   keeps an environment that loads the plugin from hangar's read-only seed; `check_registry.py` proves it reproduces the
   candidate lock's `harness_digest`. Drop it once variants are `{harness_lock: team-default@candidate}`.
 - **`stable` was re-keyed, not moved.** hangar#221 changed the manifest's plugin identity and with it the
