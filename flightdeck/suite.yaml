@@ -1,0 +1,14 @@
+# The team-default A/B: stable (no ai-dlc workflow plugin) against candidate (the plugin on). The two environments
+# are rendered from the lock (scripts/render_envs.py) and differ only by the plugin component.
+#   flightdeck experiment run flightdeck/suite.yaml --dry-run
+# Once hangar runs experiment variants by lock (hangar#135), the variants become
+#   {harness_lock: team-default@stable} and {harness_lock: team-default@candidate}.
+suite: team-default-ab
+tasks: ["tasks"]      # add Harbor-format task directories (flightdeck docs/tasks.md); mine them from labelled failures
+n: 3
+budget_usd: 120
+trial_budget_usd: 3
+parallel: 4
+variants:
+  stable: {environment: team-default, model: claude-opus-5-5, approvals: deny-risky}
+  candidate: {environment: team-default-candidate, model: claude-opus-5-5, approvals: deny-risky}

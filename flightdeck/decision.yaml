@@ -1,0 +1,6 @@
+# Pre-registered before the first trial (flightdeck docs/reports.md#pre-registration): promote the candidate only
+# if it is not worse on resolved tasks by more than 5 points.
+metric: resolved
+direction: higher
+margin: -0.05
+min_tasks: 10

@@ -1,0 +1,38 @@
+# CI for a standalone team harness repository (this example copied to its own repo).
+name: harness
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
+  HANGAR_REF: 6dc8a395639c164dd884f10f8baa32ba2cc85c49
+  FLIGHTDECK_REF: 73c9178c0ad577b40eed56a7f3e090e899fb8795
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # channels resolve through the history of each harness.lock
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install hangar and flightdeck from git
+        run: |
+          pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" \
+                      "flightdeck @ git+https://github.com/Sean-Koval/flightdeck@${FLIGHTDECK_REF}" pytest
+      - name: hangar harness check
+        run: |
+          for d in harnesses/*/; do hangar harness check "$d"; done
+      - name: Guides, environments and channels
+        run: python scripts/check_registry.py .
+      - name: Behavior specs lint
+        run: flightdeck spec lint flightdeck/specs/*.yaml
+      - name: Hook tests
+        run: python -m pytest -q tests

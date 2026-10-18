@@ -1,0 +1,27 @@
+# The environment side of team-default's binding layer, for scripts/render_envs.py.
+#
+# harness.lock pins the *names* (MCP servers, endpoints, header and env variable names); this file says where each
+# value comes from, still by name: `${VAR}` references that hangar fills at claim from the credential named under
+# `secrets`. No values live in this repository. Ask your hangar admin to create the four credentials.
+secrets:                                   # ENV_VAR: hangar credential name
+  GITHUB_MCP_AUTHORIZATION: github-mcp     # "Bearer <token>" for a fine-grained token or GitHub App
+  JIRA_MCP_AUTHORIZATION: jira-mcp         # "Basic <base64 email:api-token>", with API-token access enabled
+  SPLUNK_MCP_AUTHORIZATION: splunk-mcp     # "Bearer <token>" of a search-only role
+  GKE_READONLY_KUBECONFIG: gke-readonly    # path of a kubeconfig whose identity is a cluster viewer
+mcp:
+  github:
+    headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}
+    trust: untrusted                       # issue and PR text: anyone can write it
+    write_tools: ["create_*", "update_*", "push_*", "merge_*", "add_*", "delete_*"]
+  gke:
+    env: {KUBECONFIG: "${GKE_READONLY_KUBECONFIG}"}
+    trust: untrusted                       # pod logs and annotations carry text nobody reviewed
+  jira:
+    headers: {Authorization: "${JIRA_MCP_AUTHORIZATION}"}
+    trust: untrusted
+    write_tools: ["create*", "edit*", "transition*", "add*", "update*"]
+  splunk:
+    headers: {Authorization: "${SPLUNK_MCP_AUTHORIZATION}"}
+    trust: untrusted                       # log lines are data, not instructions
+dependencies:
+  npm: [kubernetes-mcp-server]             # the gke server's binary; pin the version you qualified

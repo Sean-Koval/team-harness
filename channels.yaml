@@ -1,0 +1,5 @@
+# Channels: which harness each name resolves to (`hangar harness thaw team-default@stable`).
+# A channel holds a harness_digest; hangar finds that lock in this checkout or in its git history.
+# Only promotion moves `stable` (see README: "From change to promotion").
+team-default:
+  stable: "sha256:7dfa50c5d0867d34ebe1cb99db1541f4ce408a2f1079e463ed6c46031c13b590"  # r1
