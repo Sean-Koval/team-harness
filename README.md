@@ -7,9 +7,10 @@ complete, copyable example built around a typical stack: **OpenSpec**, **GitHub*
 [flightdeck](https://github.com/Sean-Koval/flightdeck) (judges changes to it) and
 [ai-dlc](https://github.com/Sean-Koval/ai-dlc) (authors the workflow plugin it pins).
 
-> This example lives in [agent-factory](https://github.com/Sean-Koval/agent-factory) under `examples/team-harness/`
-> until it has its own repository. Point `HANGAR_HARNESS_REPO` at a standalone copy: hangar looks up older channel
-> revisions in git history relative to the repository root.
+> This is the standalone repository of the example that started in
+> [agent-factory](https://github.com/Sean-Koval/agent-factory) (`examples/team-harness/`, now a pointer here). Its git
+> history is part of the registry: hangar resolves channels that aren't the current lock (such as `stable` = r1) from
+> older commits of `harnesses/team-default/harness.lock`, so keep the history when you fork or copy it.
 
 Nothing here belongs to a real organisation: endpoints are public vendor URLs or `example.com`, and credentials
 appear by name only.
@@ -76,8 +77,8 @@ Point the hangar server at a checkout of this repository, then name a channel:
 
 ```sh
 # hangar server settings
-HANGAR_HARNESS_REPO=/srv/team-harness                                   # a checkout (hangar#138 adds fetching)
-HANGAR_ENV_DIRS='["envs", "/srv/team-harness/harnesses/team-default"]'  # adds team-default, team-default-candidate
+HANGAR_HARNESS_REPO=https://github.com/Sean-Koval/team-harness        # hangar keeps its own full checkout (hangar#138); a local checkout path works too
+HANGAR_ENV_DIRS='["envs", "/srv/team-harness/harnesses/team-default"]'  # a checkout of this repo; adds team-default, team-default-candidate
 
 # anyone with a hangar token
 hangar harness thaw team-default@stable --env team-default "Pick up ABC-123"
@@ -156,13 +157,14 @@ What works today and what waits on hangar:
 
 ## Copy it for your team
 
-1. Copy this directory into a new repository. Commit `harness.lock` before you change it, so `stable` resolves.
+1. Fork this repository, or copy it with its history (`git clone`, then push to your own remote). If you start from
+   a fresh repository instead, commit `harness.lock` before you change it, so `stable` resolves through history.
 2. Replace the Splunk endpoint (`splunk.example.com`) with yours, adjust the skills to your workflow and the Projects
    field names in `github-pr`, and set the credential names in `bindings/team-default.yaml`.
 3. Re-pin and regenerate:
 
    ```sh
-   pip install "hangar @ git+https://github.com/Sean-Koval/hangar@266280580d0cb541e34b67253def686633f74038"
+   pip install "hangar @ git+https://github.com/Sean-Koval/hangar@0f1367a7c3b62edbb1c49210e458d8f98eac17c1"
    python scripts/relock.py harnesses/team-default --write
    python scripts/render_envs.py harnesses/team-default
    hangar harness check harnesses/team-default && python scripts/check_registry.py
@@ -184,7 +186,7 @@ What works today and what waits on hangar:
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks |
-| `.github/workflows/check.yml` | The CI for a standalone copy |
+| `.github/workflows/check.yml` | This repository's CI |
 
 ## CI
 

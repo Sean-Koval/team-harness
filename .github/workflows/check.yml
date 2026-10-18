@@ -1,4 +1,4 @@
-# CI for a standalone team harness repository (this example copied to its own repo).
+# CI for the team harness repository.
 name: harness
 on:
   pull_request:
@@ -10,8 +10,8 @@ permissions:
 
 env:
   # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
-  HANGAR_REF: 266280580d0cb541e34b67253def686633f74038
-  FLIGHTDECK_REF: 73c9178c0ad577b40eed56a7f3e090e899fb8795
+  HANGAR_REF: 0f1367a7c3b62edbb1c49210e458d8f98eac17c1
+  FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
 
 jobs:
   check:
