@@ -4,10 +4,11 @@
 # Once hangar runs experiment variants by lock (hangar#135), the variants become
 #   {harness_lock: team-default@stable} and {harness_lock: team-default@candidate}.
 suite: team-default-ab
-tasks: ["tasks"]      # add Harbor-format task directories (flightdeck docs/tasks.md); mine them from labelled failures
+tasks: ["tasks"]      # regression-v1 (flightdeck#12) is mined from labelled failures into the private data repo
+                      # (flightdeck ADR 0002); point this at its checkout for the #20 run. Run without --cache.
 n: 3
-budget_usd: 120
-trial_budget_usd: 3
+budget_usd: 300          # 25 tasks x 2 arms x 3 trials at ~$2 (flightdeck#20's projection)
+trial_budget_usd: 5      # ~2.5x the mean, the same in both arms, so the costlier arm isn't truncated first
 parallel: 4
 variants:
   stable: {environment: team-default, model: claude-opus-5-5, approvals: deny-risky}
