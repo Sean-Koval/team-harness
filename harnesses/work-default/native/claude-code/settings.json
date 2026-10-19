@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash(terraform apply:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(terraform import:*)",
+      "Bash(kubectl apply:*)",
+      "Bash(kubectl delete:*)",
+      "Bash(helm upgrade:*)",
+      "Bash(helm install:*)",
+      "Edit(/workspace/deploy/**)",
+      "Write(/workspace/deploy/**)",
+      "Read(~/.kube/**)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Work harness: read the ticket (jira-ticket), plan across /workspace/<role> (change-set), verify each repo in its own checkout, describe each PR (github-pr). /workspace/deploy is read-only.'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/guard_work.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
