@@ -1,0 +1,14 @@
+# The code role: the service itself. Replace the toolchain with your services' (this one is Python and Node).
+name: role-code
+extends: work-default
+description: work-default + Python 3.12/uv and Node 22, for a service's code repo
+tools:
+  mise:
+    python: "3.12"
+    uv: latest
+    node: "22"
+dependencies:
+  pip: [ruff, pytest]
+egress:
+  mode: allowlist
+  presets: [packages, github]

@@ -1,0 +1,21 @@
+# The database role: migrations, verified up, tested and down against a database of the sandbox's own. The engine and
+# its image are yours (the image must match HANGAR_ENV_SERVICE_IMAGES); this one is Postgres 16. The credentials
+# below are the throwaway service's, not secrets.
+name: role-database
+extends: work-default
+description: work-default + a Postgres client and a Postgres service, for a service's database repo
+tools:
+  apt: [postgresql-client]
+services:
+  db:
+    image: postgres:16
+    port: 5432
+    env: {POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: app}
+    volumes: [/var/lib/postgresql/data]
+    cpus: 1
+    memory_gb: 1
+env:
+  DATABASE_URL: "postgres://app:app@127.0.0.1:5432/app"
+egress:
+  mode: allowlist
+  presets: [packages, github]

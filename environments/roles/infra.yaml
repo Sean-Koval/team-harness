@@ -1,0 +1,17 @@
+# Role environments for the four-repo convention (infra, code, database, trigger-deployment). Each one extends the
+# work-default harness's environment (harnesses/work-default/env.stable.yaml), so a job on any one repo of a service
+# runs the same harness with that repo's toolchain. A repo policy names its role's environment
+# (`environment: role-infra`); a change set uses work-multirepo, which carries every role's tools.
+#
+# Add this directory, ../ and harnesses/work-default/ to HANGAR_ENV_DIRS. `egress` needs a hangar admin to set.
+name: role-infra
+extends: work-default
+description: work-default + Terraform, for a service's infra repo (fmt and validate without a backend; never apply)
+tools:
+  mise:
+    terraform: "1.9.8"             # pin the version your infra repos require
+verify: "terraform fmt -check -recursive && terraform init -backend=false -input=false && terraform validate"
+egress:
+  mode: allowlist
+  presets: [packages, github]
+  allow: [registry.terraform.io, releases.hashicorp.com]   # providers for `terraform init -backend=false`
