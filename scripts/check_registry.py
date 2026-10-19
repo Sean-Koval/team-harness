@@ -15,11 +15,16 @@ the way `hangar harness thaw name@<channel>` resolves it (hangar's resolver itse
 repository root, followed by its claim checks against the rendered environments: CLI version, model, approvals,
 MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel claims on `<name>`.
 
+And for the work conventions: every environment under `environments/` (the role environments and `work-multirepo`)
+loads in hangar's catalog next to the harness environments it extends, `work-multirepo` installs everything the
+infra, code and database roles do, and every change-set profile under `changesets/` is well formed against them.
+
     python scripts/check_registry.py [REPO_ROOT]
 """
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -92,6 +97,140 @@ def claim_channel(root: Path, name: str, channel: str) -> str:
     return f"claim on {env}: ok ({p['harness']} {p['version']}, {p['model']}, {p['approvals']})"
 
 
+def _catalog(root: Path) -> EnvCatalog:
+    """Harness environments first (role environments extend them), then environments/roles/, then environments/."""
+    harness_dirs = sorted(d for d in (root / "harnesses").iterdir() if (d / hl.LOCK_FILE).is_file())
+    return EnvCatalog([*harness_dirs, root / "environments" / "roles", root / "environments"])
+
+
+MULTI = "work-multirepo"
+COVERED_ROLES = ("role-infra", "role-code", "role-database")  # role-deploy runs the deploy step, not the agent
+
+
+def check_environments(root: Path) -> list[str]:
+    errors: list[str] = []
+    cat = _catalog(root)
+    own = sorted({f.stem for f in (root / "environments").rglob("*.y*ml")})
+    names: dict[str, Any] = {}
+    for f in sorted((root / "environments").rglob("*.y*ml")):
+        name = (yaml.safe_load(f.read_text()) or {}).get("name") or f.stem
+        try:
+            names[name] = cat.get(name)
+            print(f"environment {name}: ok ({f.relative_to(root)})")
+        except (KeyError, ValueError) as e:
+            errors.append(f"{f.relative_to(root)}: {e}")
+    if not own or errors or MULTI not in names:
+        return errors
+    multi = names[MULTI]
+    for role in COVERED_ROLES:
+        r = names.get(role)
+        if r is None:
+            errors.append(f"environments/roles: {role} is missing")
+            continue
+        missing = [*(f"apt {p}" for p in r.tools.apt if p not in multi.tools.apt),
+                   *(f"mise {t}={v}" for t, v in r.tools.mise.items() if multi.tools.mise.get(t) != v),
+                   *(f"pip {p}" for p in r.dependencies.pip if p not in multi.dependencies.pip),
+                   *(f"service {k}" for k, v in r.services.items() if multi.services.get(k) != v),
+                   *(f"env {k}" for k, v in r.env.items() if multi.env.get(k) != v)]
+        if missing:
+            errors.append(f"{MULTI} lacks what {role} installs: {', '.join(missing)}")
+    if not errors:
+        print(f"environment {MULTI}: carries {', '.join(COVERED_ROLES)}")
+    errors += claim_role_environments(root, cat, names)
+    return errors
+
+
+def claim_role_environments(root: Path, cat: EnvCatalog, names: dict[str, Any]) -> list[str]:
+    """hangar's claim checks for `<harness>@stable` on each environment that extends that harness's environment:
+    a job on a role's repo (or a change set) runs the stable harness there with its CLI, model and MCP servers."""
+    top = (_git(root, "rev-parse", "--show-toplevel") or "").strip()
+    if not (top and Path(top).resolve() == root):
+        return []  # hangar's resolver wants the repository root
+    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
+    errors: list[str] = []
+    for env in names:
+        base = env
+        while (parent := cat.raw(base).get("extends")) is not None:
+            base = parent
+        if "stable" not in (channels.get(base) or {}):
+            continue
+        with tempfile.TemporaryDirectory() as data:
+            fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data), catalog=cat)
+            try:
+                p = harness_thaw.pin(fleet, f"{base}@stable", env)
+                print(f"{base}@stable: claim on {env}: ok ({p['harness']} {p['version']}, {p['model']})")
+            except harness_thaw.ThawError as e:
+                errors.append(f"{base}@stable on {env}: {e}")
+    return errors
+
+
+PROFILE_SCHEMA = "hangar.changeset-profile/v1"
+_REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
+_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_REF = re.compile(r"{([a-z][a-z0-9_-]*)\.merge_sha}")
+
+
+def profile_problems(p: Any, envs: set[str]) -> list[str]:
+    """The shape of hangar.changeset-profile/v1 (hangar's change-set design, section 5), checked without hangar."""
+    if not isinstance(p, dict):
+        return ["not a mapping"]
+    out: list[str] = []
+    if p.get("schema") != PROFILE_SCHEMA:
+        out.append(f"schema must be {PROFILE_SCHEMA}")
+    if not _NAME.match(str(p.get("name") or "")):
+        out.append("name: lowercase letters, digits and '-'")
+    if p.get("environment") not in envs:
+        out.append(f"environment {p.get('environment')!r} is not in environments/ or a harness")
+    repos = p.get("repos") or {}
+    if not isinstance(repos, dict) or len(repos) < 2:
+        return [*out, "repos: at least two roles, {role: {repo: owner/name}}"]
+    read_only = set()
+    for role, r in repos.items():
+        if not isinstance(r, dict) or not _REPO.match(str(r.get("repo") or "")):
+            out.append(f"repos.{role}: repo must be owner/name")
+            continue
+        if r.get("agent", "write") not in ("read", "write"):
+            out.append(f"repos.{role}: agent is read or write")
+        if r.get("agent") == "read":
+            read_only.add(role)
+    if len({r.get("repo") for r in repos.values() if isinstance(r, dict)}) != len(repos):
+        out.append("repos: each role is a different repo")
+    order = p.get("land_order") or []
+    if len(set(order)) != len(order) or not set(order) <= set(repos) - read_only or not order:
+        out.append("land_order: each writable role once, and only those")
+    d = p.get("deploy")
+    if d is not None:
+        role = d.get("role")
+        if role not in read_only:
+            out.append("deploy.role: a role the agent may only read (agent: read)")
+        if not set(d.get("after") or []) <= set(order) or not d.get("after"):
+            out.append("deploy.after: roles from land_order")
+        for step in ("ready", "apply"):
+            if not isinstance(d.get(step), dict) or not d[step].get("kind"):
+                out.append(f"deploy.{step}: needs a kind")
+        refs = set(_REF.findall(yaml.safe_dump(d)))
+        if unknown := sorted(refs - set(d.get("after") or [])):
+            out.append(f"deploy: {{<role>.merge_sha}} names roles that aren't in deploy.after: {', '.join(unknown)}")
+        if not d.get("environments"):
+            out.append("deploy.environments: at least one")
+    return out
+
+
+def check_changesets(root: Path) -> list[str]:
+    errors: list[str] = []
+    envs = set(_catalog(root).names())
+    for f in sorted((root / "changesets").glob("*.y*ml")):
+        p = yaml.safe_load(f.read_text())
+        problems = profile_problems(p, envs)
+        if isinstance(p, dict) and p.get("name") != f.stem:
+            problems.append(f"name {p.get('name')!r} differs from the file name")
+        errors += [f"{f.relative_to(root)}: {x}" for x in problems]
+        if not problems:
+            print(f"changeset {f.stem}: ok ({', '.join(p['land_order'])}, then {p['deploy']['role']})"
+                  if p.get("deploy") else f"changeset {f.stem}: ok")
+    return errors
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
     errors: list[str] = []
@@ -137,6 +276,10 @@ def main() -> int:
                     print(f"{name}@{ch}: {claim_channel(root, name, ch)}")
             except (ValueError, harness_thaw.ThawError) as e:
                 errors.append(str(e))
+    if (root / "environments").is_dir():
+        errors += check_environments(root)
+    if (root / "changesets").is_dir():
+        errors += check_changesets(root)
     for e in errors:
         print(f"error: {e}", file=sys.stderr)
     return 1 if errors else 0
