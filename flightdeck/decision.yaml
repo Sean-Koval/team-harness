@@ -1,6 +1,33 @@
-# Pre-registered before the first trial (flightdeck docs/reports.md#pre-registration): promote the candidate only
-# if it is not worse on resolved tasks by more than 5 points.
-metric: resolved
-direction: higher
-margin: -0.05
-min_tasks: 10
+# Pre-registered for Sean-Koval/flightdeck#20 (route B) before the first trial; flightdeck docs/reports.md.
+# Decision: does team-default's `stable` channel move from r1 (ai-dlc workflow plugin off) to r4 (plugin on)?
+# Experiment: flightdeck/suite.yaml, control `stable` (environment team-default) vs treat `candidate`
+#   (environment team-default-candidate); regression-v1 (flightdeck#12) + smoke; n = 3; claude-opus-5-5,
+#   deny-risky in both arms; run without --cache (reused older trials would predate this file).
+# Report: flightdeck report experiment <id> --a stable --b candidate --decision flightdeck/decision.yaml
+#   --post Sean-Koval/team-harness#<promotion PR>   (no --details: this repository is public)
+#
+# Primary, the verdict: cost per trial, non-inferiority. The plugin's certain effect is the context it adds to
+# every turn. At 20-25 paired tasks x 3 trials the cost interval is about $0.55-0.60 wide (simulated with
+# flightdeck's paired_bootstrap) and fits inside the margin; the resolved interval is about 25 pp wide (19 pp at
+# 50 tasks, flightdeck PR #62), so resolved can only rule out a large regression and is a guardrail.
+metric: cost_usd
+direction: lower
+margin: 0.40        # USD per trial: candidate may cost at most $0.40 more than stable (~20% of the ~$2 projection)
+min_tasks: 20       # fewer paired tasks after exclusions: "No decision: underpowered"
+#
+# Guardrails, read from the same report (Outcome, Behavior specs, Exclusions). The verdict ignores these keys.
+# Any one failing blocks promotion, whatever the verdict says.
+guard_resolved_ci_low: -0.20  # the paired resolved interval's lower bound must be above -20 pp
+guard_spec_max_drop: 0.10     # no behavior spec's candidate pass rate more than 10 points below stable's
+guard_excluded_max: 0.15      # over 15% of planned trials excluded (infra_error, drift, unknown cost): no decision
+#
+# Reported, not gating: tool_calls and wall_s (Process), $ per resolved (Cost), the resolved estimate.
+#
+# Outcomes, each recorded as an ADR in Sean-Koval/team-harness with the report link:
+#   better or non-inferior on cost_usd, and every guardrail holds: promote. A team-harness PR moves `stable` to
+#     r4 (its approver is not its author). The ADR says resolved ruled out only regressions of 20 pp or more.
+#   worse on cost_usd (the interval wholly above +$0.40): stable stays r1 and the plugin stays opt-in
+#     (@candidate); the overhead is filed on ai-dlc's workflow plugin.
+#   no decision (the interval spans the margin) or underpowered: stable stays r1, plugin opt-in. The ADR says
+#     "no decision from flightdeck: underpowered"; rerun once regression-v1 has 40 or more tasks.
+#   a guardrail fails: stable stays r1 whatever the verdict; the ADR names the guardrail and its numbers.
