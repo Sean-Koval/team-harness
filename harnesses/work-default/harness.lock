@@ -1,0 +1,61 @@
+# hangar harness lock (docs/harness-lock.md). Written by `hangar harness freeze`; identity is
+# harness_digest, printed by `hangar harness check`.
+schema: hangar.harness-lock/v1
+name: work-default
+revision: 1
+runtime:
+  harness: claude-code
+  version: 2.1.296
+  pack: null
+model:
+  id: claude-opus-5-5
+  policy: balanced
+components:
+- id: guide:CLAUDE.md
+  digest: sha256:67320088219e45e25975020278a73a599a5e2f30fa7e01e6ec046e3472591b3c
+  path: CLAUDE.md
+- id: skill:change-set
+  digest: sha256:c5bf04538692f87401fefa0a8a974c538f349ec935fc2bc3a720b8f39eae2070
+  tree: sha256:7675d580a6ee710d720fb6f218d1f3bac4a0d5681c99e89e99a47bfa6e108e7f
+  path: skills/change-set
+  source: path:skills/change-set
+- id: skill:github-pr
+  digest: sha256:461b789bbb43eefe84ffb4190dc17499e332d66aa074a90117ab3e4d6d16cb0b
+  tree: sha256:96602c88f7f71c3b3fbf58862914d031794ed7089a1ed9fe3bcc10d2a5132189
+  path: skills/github-pr
+  source: path:skills/github-pr
+- id: skill:jira-ticket
+  digest: sha256:a99706798d14f8b6d8b4a4a76e873e6e78ba4914656b547585d5af47bf730de5
+  tree: sha256:3599713bf934f14f51ca8ed0073ac9ef3e4f0d1f896531cbeb8d43867057b4c5
+  path: skills/jira-ticket
+  source: path:skills/jira-ticket
+- id: native:claude-code/hooks/guard_work.py
+  digest: sha256:e3567f06861e0b7cc200689296002c1b00a7c80b5e795f70081524a5b66f92ca
+  path: native/claude-code/hooks/guard_work.py
+- id: native:claude-code/settings.json
+  digest: sha256:da9eef3a5e8c21dbb195196bf9cbb7c1fa0f045d16730be1a76ad610645bc961
+  path: native/claude-code/settings.json
+binding:
+  mcp:
+  - name: github
+    transport: http
+    endpoint: https://api.githubcopilot.com/mcp/
+    header_names:
+    - Authorization
+  - name: jira
+    transport: http
+    endpoint: https://mcp.atlassian.com/v1/mcp
+    header_names:
+    - Authorization
+  permissions:
+    approvals: deny-risky
+  hooks:
+  - event: SessionStart
+    source: environment:.claude/settings.json
+    digest: sha256:da9eef3a5e8c21dbb195196bf9cbb7c1fa0f045d16730be1a76ad610645bc961
+  - event: PreToolUse
+    source: environment:.claude/settings.json
+    digest: sha256:da9eef3a5e8c21dbb195196bf9cbb7c1fa0f045d16730be1a76ad610645bc961
+plugins:
+  autoUpdate: false
+remote: []

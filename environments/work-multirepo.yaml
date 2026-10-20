@@ -1,0 +1,28 @@
+# One sandbox for a change set: the code role's toolchain plus the infra and database roles' (Terraform, a Postgres
+# client and a Postgres service), with every repo cloned to /workspace/<role> by hangar. scripts/check_registry.py
+# checks that it carries everything role-infra, role-code and role-database install, so a role environment and the
+# multi-repo one can't drift apart. There is no `verify`: each changed repo runs its own repo policy's.
+name: work-multirepo
+extends: role-code
+description: role-code + role-infra + role-database in one image, for change sets across a service's repos
+tools:
+  apt: [postgresql-client]
+  mise:
+    terraform: "1.9.8"
+services:
+  db:
+    image: postgres:16
+    port: 5432
+    env: {POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: app}
+    volumes: [/var/lib/postgresql/data]
+    cpus: 1
+    memory_gb: 1
+env:
+  DATABASE_URL: "postgres://app:app@127.0.0.1:5432/app"
+egress:
+  mode: allowlist
+  presets: [packages, github]
+  allow: [registry.terraform.io, releases.hashicorp.com]
+resources:
+  cpus: 4
+  memory_gb: 8

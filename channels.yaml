@@ -4,3 +4,5 @@
 team-default:
   stable: "sha256:8242a53f8befb71236d41fb3188e50c0dd6c674a59c821f64d853c05bd81b074"  # r1 (re-keyed: hangar#221 changed the digest form; same lock)
   candidate: "sha256:689ffca78109f5232a34d5f6c03d03ead60a52d37d005d039037bbb490bbf83c"  # r4: + ai-dlc workflow plugin (Claude) and its Codex form
+work-default:
+  stable: "sha256:a7953f6685f2967d3919f794e7bc08e21279c4448f8e0ec763d07c5b43ecfe31"  # r1: the company SDLC harness (Jira, GitHub PRs, change sets)

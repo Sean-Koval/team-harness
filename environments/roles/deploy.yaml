@@ -1,0 +1,13 @@
+# The trigger-deployment role: overlays and image pins. No agent edits it: hangar's deploy step runs the change-set
+# profile's `deploy.apply` (a command such as ./scripts/bump.sh, or a deliverer plugin) in a fresh sandbox of this
+# environment, then opens the PR. Agents in a change set only read it, at /workspace/deploy.
+name: role-deploy
+extends: work-default
+description: work-default + kustomize, for a service's trigger-deployment repo and the change set's deploy step
+tools:
+  mise:
+    kustomize: "5.7.1"
+verify: "./scripts/check.sh"
+egress:
+  mode: allowlist
+  presets: [github]

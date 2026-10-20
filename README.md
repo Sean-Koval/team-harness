@@ -36,7 +36,28 @@ harnesses/team-default/
   harness.lock                       pins all of the above, plus the CLI version, model and MCP bindings
   env.stable.yaml                    hangar environments that provide these files (generated)
   env.candidate.yaml
-channels.yaml                        team-default: {stable: sha256:…, candidate: sha256:…}
+channels.yaml                        team-default: {stable: sha256:…, candidate: sha256:…}; work-default: {stable: …}
+```
+
+A second harness, `work-default`, and the environments around it are for a company's four-repo services (see
+[Work roles](#work-roles-the-four-repo-convention)):
+
+```text
+harnesses/work-default/
+  CLAUDE.md, AGENTS.md               how the agent works across a service's infra, database, code and deploy repos
+  skills/
+    change-set/SKILL.md              plan across /workspace/<role>, keep each repo safe on its own, say what depends on what
+    jira-ticket/SKILL.md             read the ticket and comment; hangar moves it through the workflow
+    github-pr/SKILL.md               the per-repo PR description; hangar opens, links and lands the PRs
+  native/claude-code/
+    settings.json                    hooks + deny rules
+    hooks/guard_work.py              PreToolUse: no terraform apply or real backends, no shared databases, no
+                                     cluster changes, no edits under /workspace/deploy
+  harness.lock, env.stable.yaml      as for team-default
+environments/
+  roles/{infra,code,database,deploy}.yaml   role-infra, role-code, role-database, role-deploy: work-default + each role's tools
+  work-multirepo.yaml                one image with the infra, code and database roles' tools, for change sets
+changesets/example-service.yaml      an example change-set profile over those environments
 ```
 
 The lock is hangar's `hangar.harness-lock/v1`. One component per file or directory, and a binding layer that holds
@@ -157,6 +178,34 @@ What works today and what waits on hangar:
 - **`stable` was re-keyed, not moved.** hangar#221 changed the manifest's plugin identity and with it the
   `harness_digest` form; `stable` still names r1, at its new digest.
 
+## Work roles: the four-repo convention
+
+At a company, a service is often four repositories: **infra** (Terraform), **database** (migrations), **code** (the
+service) and **trigger-deployment** (overlays and image pins). A ticket can touch several of them, and each has its own
+approvers. This repository holds the agent's side of that convention; the factory's own side (overlays, repo policies,
+the profiles a company actually runs) is the company overlay template in
+[agent-factory](https://github.com/Sean-Koval/agent-factory/tree/main/examples/company-overlay).
+
+- **Role environments.** `environments/roles/` has one environment per role, each extending `work-default`'s
+  environment with that role's tools and a default `verify`: `role-infra` (Terraform, `validate` without a backend),
+  `role-code` (Python and Node), `role-database` (a Postgres client and a Postgres service of the sandbox's own) and
+  `role-deploy` (kustomize, for the deploy step that runs no agent). A repo policy names its role's environment.
+  Replace the toolchains with your services'.
+- **One sandbox for a change set.** `environments/work-multirepo.yaml` carries the infra, code and database roles'
+  tools together; `check_registry.py` fails if a role installs something it doesn't.
+- **The harness.** `work-default` (r1, `stable`) is pinned the same way as `team-default`: native files and a
+  `harness.lock` (written with `scripts/relock.py`; replace it with `hangar harness freeze` from a good run), with the skills for a company SDLC (Jira ticket, GitHub PR, change sets across the four repos) and a
+  guard hook that keeps shared systems read-only and the deploy checkout untouched. Its MCP servers are GitHub and
+  Jira; the credential names are in `bindings/work-default.yaml`.
+- **A change-set profile.** `changesets/example-service.yaml` shows the shape hangar's change sets take
+  (`hangar.changeset-profile/v1`): the roles and their repos, the deploy repo read-only to the agent, the landing
+  order, and the deploy step after every changed role merged. Profiles are admin config that a company applies from its
+  factory deploy repo, never from a target repo's `.hangar/`; `check_registry.py` checks this one's shape against the
+  environments here.
+
+Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-default`, `environments/roles` and
+`environments`) and `HANGAR_DEFAULT_HARNESS=work-default@stable`.
+
 ## Copy it for your team
 
 1. Fork this repository, or copy it with its history (`git clone`, then push to your own remote). If you start from
@@ -187,7 +236,9 @@ What works today and what waits on hangar:
 | `flightdeck/` | The A/B suite, its pre-registered decision and the behavior specs |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
-| `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks |
+| `environments/` | Role environments for the four-repo convention and `work-multirepo` for change sets |
+| `changesets/` | An example change-set profile |
+| `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks (on the role environments too), `work-multirepo` covering the roles, change-set profiles well formed |
 | `.github/workflows/check.yml` | This repository's CI |
 
 ## CI

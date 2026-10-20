@@ -1,0 +1,18 @@
+# The environment side of work-default's binding layer, for scripts/render_envs.py.
+#
+# harness.lock pins the *names* (MCP servers, endpoints, header names); this file says where each value comes from,
+# still by name: `${VAR}` references that hangar fills at claim from the credential named under `secrets`. No values
+# live in this repository. Ask your hangar admin to create the two credentials (in the company overlay they are
+# files mounted from your secret manager).
+secrets:                                   # ENV_VAR: hangar credential name
+  GITHUB_MCP_AUTHORIZATION: github-mcp     # "Bearer <token>": read access to the service repos; hangar opens the PRs
+  JIRA_MCP_AUTHORIZATION: jira-mcp         # "Basic <base64 email:api-token>", or "Bearer <PAT>" on Data Center
+mcp:
+  github:
+    headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}
+    trust: untrusted                       # issue and PR text: anyone can write it
+    write_tools: ["create_*", "update_*", "push_*", "merge_*", "add_*", "delete_*"]
+  jira:
+    headers: {Authorization: "${JIRA_MCP_AUTHORIZATION}"}
+    trust: untrusted
+    write_tools: ["create*", "edit*", "transition*", "add*", "update*"]
