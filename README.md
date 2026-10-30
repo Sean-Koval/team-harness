@@ -233,7 +233,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `harnesses/<name>/` | One harness: native files plus `harness.lock` |
 | `channels.yaml` | Channel → `harness_digest`, per harness |
 | `bindings/<name>.yaml` | Where each MCP credential comes from (credential names, `${VAR}` references), for the environments |
-| `flightdeck/` | The A/B suite, its pre-registered decision and the behavior specs |
+| `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `environments/` | Role environments for the four-repo convention and `work-multirepo` for change sets |

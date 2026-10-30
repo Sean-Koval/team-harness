@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/flightdeck#88,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/flightdeck-88-release-check"
+version = "1.0.0"
+description = "flightdeck has no release process. Prepare its first tagged release:"
+keywords = ["regression-v0", "flightdeck"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "flightdeck"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-27"
+mined_from = "https://github.com/Sean-Koval/flightdeck/pull/88"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/flightdeck.git"
+base_sha = "64d83491e3ea6e66bc791a899933245f18b6bb56"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:9c5b954bd62122e6967c92932ac12286ea3d301f5b3f65baf5c8fd3c3ae4b830"

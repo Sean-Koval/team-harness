@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/flightdeck#64,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/flightdeck-64-compactor-data-bucket"
+version = "1.0.0"
+description = "The compactor's deploy script, `deploy/compactor/setup.sh`, can't complete a first deploy. It grants the compactor's service account `roles/storage.objectAdmin` on the data bucket (`--data-b"
+keywords = ["regression-v0", "flightdeck"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "flightdeck"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-19"
+mined_from = "https://github.com/Sean-Koval/flightdeck/pull/64"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/flightdeck.git"
+base_sha = "ba5d1799fc941698dacebac9beaf66fde5a8161a"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:a0dbf48a93bdae84309932faac64e36ab9353684944fa7dff61cde127f58e55c"

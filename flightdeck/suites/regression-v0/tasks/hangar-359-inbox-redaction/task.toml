@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#359,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-359-inbox-redaction"
+version = "1.0.0"
+description = "Inbox items embedded in `GET /api/fleet` and its stream are redacted with the broker's redactor, but `GET /api/inbox` and the `hangar://inbox` MCP resource return item text exactly as writte"
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-23"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/359"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "6105e726b9ff47d2145c04386e4aa1d5720c7321"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:c517aece4efe30384e1c5c3f12471d9d620ed49360abb2ca655031c5ebcbb448"

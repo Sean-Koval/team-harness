@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/flightdeck#58,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/flightdeck-58-airframe-theme-v2"
+version = "1.0.0"
+description = "flightdeck's docs theme must move to Airframe's `theme-v2` release, from Sean-Koval/agent-factory (the design source of truth; see `AGENTS.md` and `CONTRIBUTING.md#design`)."
+keywords = ["regression-v0", "flightdeck"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "flightdeck"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-17"
+mined_from = "https://github.com/Sean-Koval/flightdeck/pull/58"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/flightdeck.git"
+base_sha = "f619b513ee7b4431211316d96fc5db491822ccb0"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:096ccf167fc0e4451f07737336536b2bb3c67153544da3df10d955799779f5eb"

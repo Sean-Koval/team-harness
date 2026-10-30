@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/flightdeck#53,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/flightdeck-53-mutation-scoring"
+version = "1.0.0"
+description = "Add mutation scoring of behavior suites: remove one harness component at a time and check whether a grader or a behavior spec notices. New module `flightdeck.specs.mutate` and a `flightdeck"
+keywords = ["regression-v0", "flightdeck"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "flightdeck"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-17"
+mined_from = "https://github.com/Sean-Koval/flightdeck/pull/53"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/flightdeck.git"
+base_sha = "062583b8bb51506653eba1ca3e2a134a53f075bc"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:6d0a513a16ae12be2aae737f460e269f8f5c8fc642968231ea152d0729bf200d"

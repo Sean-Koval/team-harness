@@ -1,0 +1,96 @@
+diff --git a/docs/changesets.md b/docs/changesets.md
+index e67fe1b..d8d1b7f 100644
+--- a/docs/changesets.md
++++ b/docs/changesets.md
+@@ -140,7 +140,7 @@ Three [repo policy](repo-policy.md) fields apply to every job, single-repo or no
+ | `require_ticket` | `true` refuses a job with no `ticket`. |
+ | `title_template` | The title of the job's PRs, e.g. `{ticket_key}: {title}`. Unset, or without a ticket: the job's title. |
+ 
+-Placeholders: `{job}`, `{ticket}`, `{ticket_key}` (`PAY-412` for `jira:PAY-412`), `{title}` and `{role}`. Set them with `PUT /api/repos/policy` like any field.
++Placeholders: `{job}`, `{ticket}`, `{ticket_key}` (`PAY-412` for `jira:PAY-412`), `{title}` and `{role}`. Set them with `hangar repo set` or `PUT /api/repos/policy`.
+ 
+ ## Limits in v1
+ 
+diff --git a/docs/repo-policy.md b/docs/repo-policy.md
+index edc019c..0e5bd14 100644
+--- a/docs/repo-policy.md
++++ b/docs/repo-policy.md
+@@ -13,6 +13,8 @@ hangar repo unset acme/app          # remove the policy
+ hangar repo set acme/app --job-max-cost 5 --job-max-turns 12 --max-usd-per-day 60
+ hangar repo set acme/app --land auto_after_approval --approver alice --risk-path 'infra/**'   # docs/landing.md
+ hangar repo set acme/app --ai-review hangar --self-approval low_risk_with_ai_review       # AI review, self-approval
++hangar repo set acme/app --branch-template 'feature/{ticket_key}-{job}' --require-ticket \
++  --title-template '{ticket_key}: {title}'                                               # company naming
+ hangar repo check acme/app          # is it ready for agent work? (below)
+ ```
+ 
+@@ -46,9 +48,9 @@ hangar repo check acme/app          # is it ready for agent work? (below)
+ | `max_open_agent_prs` | [Review capacity](team-scale.md#review-capacity): open agent PRs awaiting a person before their new jobs on this repo wait as `awaiting_capacity`; `0` turns it off. Unset: `HANGAR_PERSON_MAX_OPEN_AGENT_PRS` (5) (`--max-open-agent-prs`). |
+ | `verify_allowed` | Globs (`make test*`, `pytest tests/*`) a ticket's own *Verify command* ([agent tickets](intake.md#agent-tickets)) must match to become that job's `verify` (`--verify-allowed`, repeated). Unset: a ticket's command is only ever a suggestion to the agent, and the job's check stays the policy's or the environment's. A matched command is the job's own check (`verify_source: job`), so the [base check](#the-check-on-the-base-commit) is skipped for it, as for any acceptance test a job brings. `*` alone is refused. |
+ | `overnight` | `true`: the repo's intake jobs (Jira, GitHub, Slack, GitHub Projects) run at night in the overnight lane instead of waiting for 10:00 (`--overnight`; [gke.md](gke.md#the-overnight-lane), #186). A job from any repo can ask for it with the label `lane: overnight`. |
+-| `branch_template` | The repo's job branches, e.g. `feature/{ticket_key}-{job}`; it must contain `{job}`. Unset: `hangar/<job>`. See [change sets](changesets.md#company-conventions-in-the-repo-policy). |
+-| `require_ticket` | `true` refuses a job for the repo without a `ticket` (`jira:PAY-412`). |
+-| `title_template` | The title of the repo's agent PRs, e.g. `{ticket_key}: {title}`. |
++| `branch_template` | The repo's job branches, e.g. `feature/{ticket_key}-{job}`. It must contain `{job}`, or the set is refused and nothing changes. Unset: `hangar/<job>` (`--branch-template`; `''` clears it). See [change sets](changesets.md#company-conventions-in-the-repo-policy). |
++| `require_ticket` | `true` refuses a job for the repo without a `ticket` (`jira:PAY-412`) (`--require-ticket`, `--no-require-ticket`). |
++| `title_template` | The title of the repo's agent PRs, e.g. `{ticket_key}: {title}` (`--title-template`; `''` clears it). Placeholders: `{job}`, `{ticket}`, `{ticket_key}`, `{title}`, `{role}`. |
+ 
+ The repo is `owner/repo` for GitHub (any URL form, any case), or the git URL for another host.
+ 
+diff --git a/src/hangar/repo_cli.py b/src/hangar/repo_cli.py
+index 63c11f2..5cfc844 100644
+--- a/src/hangar/repo_cli.py
++++ b/src/hangar/repo_cli.py
+@@ -77,6 +77,12 @@ def _line(p: dict) -> str:
+     if p.get("ai_review") and p["ai_review"] != "off":  # --- AI review (#161)
+         bits.append(f"AI review: {p['ai_review']}" + (f" ({p['ai_review_harness']})" if p.get("ai_review_harness")
+                                                      else ""))
++    if p.get("branch_template"):  # --- change sets (G7)
++        bits.append(f"branch: {p['branch_template']}")
++    if p.get("require_ticket") is not None:
++        bits.append("ticket required" if p["require_ticket"] else "ticket not required")
++    if p.get("title_template"):
++        bits.append(f"PR title: {p['title_template']}")
+     return f"{p['repo']:40} " + "  ".join(bits)
+ 
+ 
+@@ -149,6 +155,14 @@ def repo_set(
+                                              "Replaces the list."),  # --- #156
+     overnight: bool | None = typer.Option(None, "--overnight/--no-overnight", help="Its intake jobs run at night "
+                                           "in the overnight lane (#186; hangar power overnight on)."),
++    # --- change sets (G7, KAN-37): the company's naming conventions
++    branch_template: str | None = typer.Option(None, "--branch-template", help="The repo's job branches, e.g. "
++                                               "'feature/{ticket_key}-{job}'; it must contain {job}. '' clears it "
++                                               "(hangar/<job>)."),
++    require_ticket: bool | None = typer.Option(None, "--require-ticket/--no-require-ticket",
++                                               help="Refuse a job for the repo that names no ticket."),
++    title_template: str | None = typer.Option(None, "--title-template", help="The title of the repo's agent PRs, "
++                                              "e.g. '{ticket_key}: {title}'. '' clears it."),
+     as_json: bool = typer.Option(False, "--json"),
+ ):
+     """Set the repo's defaults; what you don't pass is kept. Jobs that set a field themselves still win.
+@@ -170,9 +184,13 @@ def repo_set(
+                 ("ai_review", ai_review), ("ai_review_harness", ai_review_harness),  # --- #161
+                 ("ai_review_model", ai_review_model), ("ai_review_budget_usd", ai_review_budget),
+                 ("verify_allowed", verify_allowed or None),  # --- #156
+-                ("overnight", overnight)):  # --- #186
++                ("overnight", overnight),  # --- #186
++                ("require_ticket", require_ticket)):  # --- change sets (G7)
+         if v is not None:
+             body[k] = v
++    for k, t in (("branch_template", branch_template), ("title_template", title_template)):  # --- change sets
++        if t is not None:
++            body[k] = t or None  # '' clears it: an explicit null, as `hangar repo unset` would
+     if egress_mode is not None or egress_allow:  # --- egress
+         body["egress"] = {k: v for k, v in (("mode", egress_mode), ("allow", egress_allow)) if v}
+     if len(body) == 1:
+@@ -195,7 +213,8 @@ def repo_unset(repo: str = typer.Argument(...),
+                                                              "max_open_agent_prs, self_approval, ai_review, "
+                                                              "ai_review_harness, ai_review_model, "
+                                                              "ai_review_budget_usd, verify_allowed, "
+-                                                             "overnight). None: "
++                                                             "overnight, branch_template, require_ticket, "
++                                                             "title_template). None: "
+                                                              "remove the repo's policy.")):
+     """Clear fields of the repo's policy, or remove it."""
+     r = _cli()._call("DELETE", "/api/repos/policy", params={"repo": repo, "field": fields or []})

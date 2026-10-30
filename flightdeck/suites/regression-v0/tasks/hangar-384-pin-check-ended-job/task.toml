@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#384,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-384-pin-check-ended-job"
+version = "1.0.0"
+description = "An experiment checks each trial against the trial's pin set, so a trial whose environment drifted after the pin set was recorded ends as `infra_error` with `infra_reason: drift` and is exclu"
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-27"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/384"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "d1f48fb87751e41a9634d2e340c135080b0a15f9"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:8509d3912739531de24ca6085f3aa76261cd90bea62cb203d3ba281aeaf69710"

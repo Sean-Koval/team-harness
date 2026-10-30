@@ -1,8 +1,12 @@
 # Pre-registered for Sean-Koval/flightdeck#20 (route B) before the first trial; flightdeck docs/reports.md.
 # Decision: does team-default's `stable` channel move from r1 (ai-dlc workflow plugin off) to r4 (plugin on)?
 # Experiment: flightdeck/suite.yaml, control `stable` (environment team-default) vs treat `candidate`
-#   (environment team-default-candidate); regression-v1 (flightdeck#12) + smoke; n = 3; claude-opus-5-5,
-#   deny-risky in both arms; run without --cache (reused older trials would predate this file).
+#   (environment team-default-candidate); n = 3; claude-opus-5-5, deny-risky in both arms; run without --cache
+#   (reused older trials would predate this file).
+# Suite (amended 2026-10-29 by KAN-222, before trial 1; no trial had run): regression-v0, the 20 rule-picked tasks
+#   from merged PRs in flightdeck/suites/regression-v0/ (its README: the rule, the bias, the power). It replaces
+#   regression-v1 (flightdeck#12, KAN-88), which is mined from labelled failures and comes later. The semver smoke
+#   task is a dry run only: it is saturated (116/116) and has no repo or base_sha.
 # Report: flightdeck report experiment <id> --a stable --b candidate --decision flightdeck/decision.yaml
 #   --post Sean-Koval/team-harness#<promotion PR>   (no --details: this repository is public)
 #

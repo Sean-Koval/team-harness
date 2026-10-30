@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#298,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-298-own-agent-commands"
+version = "1.0.0"
+description = "Under `approvals: ask`, the agent's closing `hangar-agent done \"<summary>\"` is held as a pending Bash approval, so every ask-mode turn needs a pointless click at the end."
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-18"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/298"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "c02d4414aa6d3158829e2df4e86a05217a1396e5"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:4de33b24ecd242ee97db676c3b4f025376f3b91e56cd6ec602e3b31a22cbbad5"
