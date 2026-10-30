@@ -1,0 +1,377 @@
+diff --git a/docs/behavior-specs.md b/docs/behavior-specs.md
+index eb7a1ad..677fc47 100644
+--- a/docs/behavior-specs.md
++++ b/docs/behavior-specs.md
+@@ -208,6 +208,49 @@ second reviewer looks. A GitHub Action in the team repo runs it on PRs that touc
+ (`git show origin/main:<path> > old`) and adds the label; branch protection plus a CODEOWNERS entry for those paths
+ (the hangar/ai-dlc side) require a reviewer other than the author for `checks:loosened` and `checks:removed`.
+ 
++## Mutation scoring
++
++A suite with a low mutation score is decoration: if deleting part of the harness changes nothing the suite can see,
++the suite isn't testing that part. `flightdeck mutate` removes one component of a harness at a time and checks that
++some grader or spec notices (code: `src/flightdeck/specs/mutate.py`).
++
++```sh
++flightdeck mutate plan tasks/smoke/suite.yaml --harness claude-code --out mutants.yaml [--ops ...] [--max 12] \
++  [--n 2] [--data <plane>]
++flightdeck mutate run mutants.yaml [--max-usd 40] [--dry-run]
++flightdeck mutate score mutants.yaml <run-set> --specs specs/team.yaml --data <plane> [--out score.md]
++```
++
++**Operators**, over the base variant's hangar overlay (`Variant{skills, skills_remove, instructions,
++instructions_append, approvals}`):
++
++| Operator | Mutants |
++| --- | --- |
++| `drop-skill` | one per skill: the variant's `skills` minus it, or `skills_remove: [name]` for the skills seen in `--data`'s traces when the variant names none |
++| `drop-instruction-line` | one per block of `instructions` and `instructions_append`: blocks start at markdown headings, else each non-empty line is one |
++| `approvals` | `approvals: auto` when the base is `deny-risky` |
++| `noop` | the variant unchanged: a control that must come out equivalent |
++| `drop-hook`, `widen-egress` | not generated, and said so: hooks need harness locks (hangar#133); hangar fixes egress per experiment, so widening it is a separate experiment |
++
++`plan` writes a suite file: the base and its mutants as variants named `mutant-<op>-<component>`, `n` trials each
++(default 2; keep tasks cheap, since a changed instruction changes the prompt prefix and every trial runs in full),
++plus `base:` and `mutants:` for `score`. **Equivalent** mutants (the no-op, and a dropped skill no trace in `--data`
++ever used, by `spans.skill_name`) are listed but not run, and never counted. `run` submits through
++`experiment run`'s cost gate: it prints the projection first and refuses a plan above `--max-usd` (default $40).
++Mutants are per harness; hooks and the in-turn verify gate differ by runtime. A mutant is never promoted:
++`decision.yaml` and `stats compare` name the variants they read, and `mutant-*` variants appear nowhere else.
++
++**Killed** ([statistics](statistics.md#mutation-scores)): the resolved rate differs from the base's (paired task
++bootstrap interval excluding 0), or a spec that held on the base (pass^k at or above `--bound`, default 0.9) falls
++below it on the mutant. Otherwise it **survived**. The score is killed / (killed + survived) with a Wilson interval;
++equivalent and not-run mutants are left out. `score` prints a markdown section for the report or PR: the score, each
++mutant's verdict and why, and each survivor's component with a spec worth adding (for a dropped skill,
++`eventually: {tool: {skill: <name>}}`).
++
++Example: on the semver smoke task with `tests-before-commit`, a base variant whose `instructions_append` says "Write
++your own tests ... and make them pass" and the mutant without that block. When the mutant's trials commit without a
++trusted test run, the spec's pass^k falls from 1 to 0 and the mutant is killed; the no-op is equivalent.
++
+ ## Versioning
+ 
+ `flightdeck.spec/v1` is additive: a new operator, matcher key or field is not a new version; renaming or removing one
+diff --git a/docs/decisions/0005-post-v0-budget.md b/docs/decisions/0005-post-v0-budget.md
+index 7f3391f..10c54f5 100644
+--- a/docs/decisions/0005-post-v0-budget.md
++++ b/docs/decisions/0005-post-v0-budget.md
+@@ -1,6 +1,6 @@
+ # 0005: The post-v0 batch is counted, and the budget rises by each piece's measured size
+ 
+-Status: Accepted · Oct 17, 2026 · amended by each PR of the batch below (last: #13) (agent-proposed; owner review requested)
++Status: Accepted · Oct 17, 2026 · amended by each PR of the batch below (last: #16) (agent-proposed; owner review requested)
+ 
+ ## Context
+ 
+@@ -21,6 +21,8 @@ records them here. The cuts so far:
+   both and covers `task_id` and `variant` too, for a few lines less (#17).
+ - #13 found no cut in what it touches; it moved `task digest --write`'s logic into `tasks/format.py` so sealing
+   reuses it instead of adding a third copy.
++- #16 reuses `stats compare`, `pass_hat_k_suite`, `wilson`, the spec SQL compiler and `experiment run`'s cost gate
++  rather than adding its own; no cut found in `specs/`.
+ 
+ Cuts considered and not taken:
+ 
+@@ -55,6 +57,7 @@ B.
+ | (ADR 0004) | #18 | the local runner's adapter | | 2,800 |
+ | #51 | #17 | `tasks/aidlc.py` and `task import-aidlc` (+131); the `any` path operator and `task_id`/`variant` scope in specs, after the `applies_when` cut (-4); the stats re-export cut (-14) | +113 | 2,896 |
+ | #52 | #13 | `tasks/custody.py`: manifest, seal, canary scan, score once, briefs, and the `holdout` CLI (+204); `write_digest` moved to `tasks/format.py` so the CLI, the importer and sealing share it (+1); registration (+2) | +207 | 3,103 |
++| #53 | #16 | `specs/mutate.py`: operators, plan, run through the cost gate, kill scoring and the survivors' report (+167); `stats compare` no longer fails when no trial has a known cost (+1); registration (+2) | +170 | 3,273 |
+ 
+ ## Consequences
+ 
+diff --git a/docs/getting-started.md b/docs/getting-started.md
+index a10012b..67e1b24 100644
+--- a/docs/getting-started.md
++++ b/docs/getting-started.md
+@@ -56,7 +56,7 @@ included, gets built.
+ | `flightdeck.dataplane.ingest` | `flightdeck ingest export\|experiment\|job\|session`: hangar REST or `hangar experiment export` into local Parquet, idempotent, validated against vendored hangar schemas. See [Data plane](data-plane.md#ingest) |
+ | `flightdeck.stats` | Wilson, pass@k, pass^k, clean-run bound, paired task bootstrap, $ per resolved task, McNemar counts, the r1 power simulation; `flightdeck stats compare` with exclusions and saturated tasks. See [Statistics](statistics.md) |
+ | `flightdeck.report` | `flightdeck report experiment`: the markdown report with a pre-registered verdict, posted as one PR or issue comment. See [Reports](reports.md) |
+-| `flightdeck.specs` | `flightdeck.spec/v1` behavior specs: YAML predicates over `hangar.trace/v1`, a Python reference evaluator and a DuckDB compiler, the trusted-test rule; `flightdeck spec lint\|test`; the nightly runner over the data plane with ADR `checks:`, change-point alerts and `flightdeck check run\|diff`. See [Behavior specs](behavior-specs.md) |
++| `flightdeck.specs` | `flightdeck.spec/v1` behavior specs: YAML predicates over `hangar.trace/v1`, a Python reference evaluator and a DuckDB compiler, the trusted-test rule; `flightdeck spec lint\|test`; the nightly runner over the data plane with ADR `checks:`, change-point alerts and `flightdeck check run\|diff`. Mutation scoring of suites: `flightdeck mutate plan\|run\|score`. See [Behavior specs](behavior-specs.md) |
+ | `flightdeck.tasks` | Harbor-compatible task directories: load, check and digest them, map them onto a `hangar.experiment/v1` spec; `flightdeck task new\|check\|digest`; `flightdeck task import-aidlc` for ai-dlc evaluation suites; sealed holdout custody, `flightdeck holdout brief\|seal\|score\|canary-scan` ([Holdouts](holdouts.md)); the semver smoke task in `tasks/smoke/`. See [Tasks](tasks.md) |
+ | `flightdeck.runners` | The experiment submission client: suite plans to `hangar.experiment/v1` specs, a cost gate, `flightdeck experiment run\|status\|collect`. See [Running experiments](runners.md) |
+ | `flightdeck.ported` | Code moved in and kept close to its source, outside the line budget: hangar's model-concreteness rule and trace classifier; ai-dlc's local runner, evaluation contracts and suite checks |
+diff --git a/docs/statistics.md b/docs/statistics.md
+index b7e53d8..af694f6 100644
+--- a/docs/statistics.md
++++ b/docs/statistics.md
+@@ -67,6 +67,23 @@ seen), `drift` (unless `--include-drift`), `truncated trace` (process metrics on
+ - **Saturated tasks** (every trial of every arm had the same outcome) are listed: they carry no information.
+ - **Seeds**: every resampling takes one and reports print it.
+ 
++## Mutation scores
++
++`flightdeck mutate score` ([behavior specs](behavior-specs.md#mutation-scoring)) counts a mutant **killed** when
++either:
++
++- **the outcome moved**: the paired task bootstrap of resolved (mutant − base, tasks resampled, seed 0) has a 95%
++  interval that excludes 0; or
++- **a spec broke**: the spec held on the base, meaning its pass^k over tasks (k = the fewest judged trials of any
++  task) is at least the bound (default 0.9), and on the mutant it is below the bound. Only `pass` and `fail` count;
++  `not_applicable` and `unknown` units are left out.
++
++The **mutation score** is killed / (killed + survived) with a 95% Wilson interval. Equivalent mutants (no observable
++difference expected) and mutants without trials are reported but not counted. With n = 2 trials per task, a spec
++needs every judged trial to pass on the base to reach 0.9 on a small suite, so the spec criterion is strict on the
++base and loose on the mutant: one failing task on the mutant is enough to kill it. Read a survived mutant as "this
++suite didn't notice", not as "this component is useless".
++
+ ## Later
+ 
+ Sequential and adaptive designs (no peeking at fixed-n experiments), prediction-powered inference for model judges,
+diff --git a/scripts/loc_budget.py b/scripts/loc_budget.py
+index 044588e..41c93b1 100644
+--- a/scripts/loc_budget.py
++++ b/scripts/loc_budget.py
+@@ -14,7 +14,7 @@ import argparse
+ import sys
+ from pathlib import Path
+ 
+-LIMIT = 3103  # docs/decisions/0005-post-v0-budget.md (0004 set 2,800, 0003 2,500)
++LIMIT = 3273  # docs/decisions/0005-post-v0-budget.md (0004 set 2,800, 0003 2,500)
+ EXCLUDED = ("ported",)
+ 
+ 
+diff --git a/src/flightdeck/cli.py b/src/flightdeck/cli.py
+index 471a86a..336b61f 100644
+--- a/src/flightdeck/cli.py
++++ b/src/flightdeck/cli.py
+@@ -10,6 +10,7 @@ from flightdeck.metrics.weekly import app as metrics_app
+ from flightdeck.report import markdown
+ from flightdeck.runners.cli import app as experiment_app
+ from flightdeck.specs.cli import check_app, spec_app
++from flightdeck.specs.mutate import app as mutate_app
+ from flightdeck.stats import compare
+ from flightdeck.tasks.cli import app as task_app
+ from flightdeck.tasks.custody import app as holdout_app
+@@ -23,6 +24,7 @@ app.add_typer(compare.app, name="stats")
+ app.add_typer(markdown.app, name="report")
+ app.add_typer(spec_app, name="spec")
+ app.add_typer(check_app, name="check")
++app.add_typer(mutate_app, name="mutate")
+ app.add_typer(task_app, name="task")
+ app.add_typer(holdout_app, name="holdout")
+ app.add_typer(experiment_app, name="experiment")
+diff --git a/src/flightdeck/specs/mutate.py b/src/flightdeck/specs/mutate.py
+new file mode 100644
+index 0000000..3efdf96
+--- /dev/null
++++ b/src/flightdeck/specs/mutate.py
+@@ -0,0 +1,200 @@
++"""`flightdeck mutate plan|run|score`: mutation scoring of behavior suites (docs/behavior-specs.md#mutation-scoring).
++
++A suite that still passes when part of the harness is removed is decoration. `plan` derives mutants from a base
++variant's hangar overlay (drop a skill, drop an instructions block, auto approvals, plus a no-op control), `run`
++submits them through the experiment client's cost gate, and `score` counts a mutant killed when the grader's resolved
++rate differs significantly from the base (paired by task) or a spec that held on the base (pass^k at or above the
++bound) falls below it. Mutant variants are named `mutant-*` and are never promoted.
++"""
++
++from __future__ import annotations
++
++import os
++import re
++from pathlib import Path
++from typing import Annotated, Any
++
++import typer
++import yaml
++
++from flightdeck.runners.hangar import load_plan
++from flightdeck.specs import lang
++
++OPS = ("drop-skill", "drop-instruction-line", "approvals", "noop")
++REPORTED = {"drop-hook": "needs harness.lock hooks in the variant (hangar#133)",
++            "widen-egress": "hangar fixes egress per experiment: run it as a separate experiment"}
++
++
++def _blocks(text: str) -> list[str]:
++    """Instructions split into blocks at markdown headings, or into non-empty lines when there are none."""
++    parts = re.split(r"(?m)^(?=#{1,6} )", text)
++    parts = parts if len(parts) > 1 else text.splitlines(keepends=True)
++    return [p for p in parts if p.strip()]
++
++
++def plan(base: dict[str, Any], ops: list[str], seen_skills: set[str] | None = None, cap: int = 12) -> dict[str, dict]:
++    """Mutants of a base variant: {name: {op, component, variant, equivalent}}. `equivalent` says why no observable
++    difference is expected (a no-op; a skill no trace of the base ever used), else None."""
++    out: dict[str, dict] = {}
++
++    def add(op: str, component: str, variant: dict[str, Any], why: str | None = None) -> None:
++        name = re.sub(r"[^a-z0-9-]+", "-", f"mutant-{op}-{component}".lower())[:60].strip("-")
++        out[name] = {"op": op, "component": component, "variant": variant, "equivalent": why}
++
++    for op in ops:
++        if op not in OPS:
++            raise ValueError(f"unknown operator {op!r}: {', '.join(OPS)} (" + "; ".join(
++                f"{k}: {v}" for k, v in REPORTED.items()) + ")")
++        if op == "noop":
++            add(op, "none", dict(base), "the variant is unchanged (a control)")
++        elif op == "approvals" and base.get("approvals") == "deny-risky":
++            add(op, "approvals:auto", {**base, "approvals": "auto"})
++        elif op == "drop-skill":
++            names = [s.get("name") or s.get("path") for s in base.get("skills") or []] or sorted(seen_skills or ())
++            for n in names:
++                v = ({**base, "skills": [s for s in base["skills"] if (s.get("name") or s.get("path")) != n]}
++                     if base.get("skills") else {**base, "skills_remove": [*(base.get("skills_remove") or []), n]})
++                unused = seen_skills is not None and n not in seen_skills
++                add(op, f"skill:{n}", v, "no trace of the base used this skill" if unused else None)
++        elif op == "drop-instruction-line":
++            for key in ("instructions", "instructions_append"):
++                blocks = _blocks(base.get(key) or "")
++                for i in range(len(blocks)):
++                    add(op, f"{key}:{i + 1}", {**base, key: "".join(blocks[:i] + blocks[i + 1:])})
++    return dict(list(out.items())[:cap])
++
++
++def suggestion(m: dict[str, Any]) -> str:
++    """A spec worth adding for a surviving mutant."""
++    if m["op"] == "drop-skill":
++        return f"`eventually: {{tool: {{skill: {m['component'].split(':', 1)[1]}}}}}` where the skill should fire"
++    if m["op"] == "approvals":
++        return "`each: {tool: {ops: [delete]}}, requires_prior: {approval: {ops: [delete], status: allowed}}`"
++    return "a spec (or grader test) for the behaviour the removed block asks for"
++
++
++def score(trials: list[dict], units: dict[str, tuple[str, str]], results: dict[str, dict[str, str]], base: str,
++          mutants: dict[str, dict], bound: float = 0.9, seed: int = 0) -> dict[str, Any]:
++    """Each mutant's verdict (killed, survived, equivalent) and why. `units` maps a spec unit to (variant, task);
++    `results` maps spec id to {unit: result}."""
++    from flightdeck.stats.compare import compare
++    from flightdeck.stats.core import pass_hat_k_suite, wilson
++
++    def passk(sid: str, variant: str) -> float | None:
++        per: dict[str, list[bool]] = {}
++        for unit, r in results[sid].items():
++            if units.get(unit, ("", ""))[0] == variant and r in (lang.PASS, lang.FAIL):
++                per.setdefault(units[unit][1], []).append(r == lang.PASS)
++        if not per:
++            return None
++        k = min(len(v) for v in per.values())
++        return pass_hat_k_suite([(sum(v), len(v)) for v in per.values()], k)
++
++    held = {sid: p for sid in results if (p := passk(sid, base)) is not None and p >= bound}
++    verdicts = {}
++    for name, m in mutants.items():
++        if m.get("equivalent") or not any(t["variant"] == name for t in trials):
++            verdicts[name] = {**m, "verdict": "equivalent" if m.get("equivalent") else "not run",
++                              "why": m.get("equivalent") or "no trials in the run set"}
++            continue
++        why = [f"spec {sid}: pass^k {p:.2f} -> {q:.2f}" for sid, p in held.items()
++               if (q := passk(sid, name)) is not None and q < bound]
++        d = compare(trials, "resolved", base, name, seed).diff
++        if d and (d.low > 0 or d.high < 0):
++            why.append(f"resolved {d.estimate * 100:+.0f} pp [{d.low * 100:+.0f}, {d.high * 100:+.0f}]")
++        verdicts[name] = {**m, "verdict": "killed" if why else "survived", "why": "; ".join(why) or "no difference"}
++    n = {v: sum(x["verdict"] == v for x in verdicts.values()) for v in ("killed", "survived", "equivalent", "not run")}
++    return {"mutants": verdicts, **n, "kill_rate": n["killed"] / max(1, n["killed"] + n["survived"]),
++            "wilson95": wilson(n["killed"], n["killed"] + n["survived"]), "held": held}
++
++
++def render(suite: str, s: dict[str, Any]) -> str:
++    lo, hi = s["wilson95"]
++    out = [f"### Mutation score: {suite}", "",
++           f"**{s['killed']}/{s['killed'] + s['survived']} killed ({s['kill_rate']:.0%}, 95% Wilson "
++           f"{lo:.0%}-{hi:.0%})**, {s['survived']} survived, {s['equivalent']} equivalent and {s['not run']} not run "
++           "(not counted). "
++           "Specs that held on the base: "
++           + (", ".join(f"`{k}`" for k in s["held"]) or "none") + ".", "",
++           "| mutant | component | verdict | why |", "| --- | --- | --- | --- |"]
++    out += [f"| {k} | `{m['component']}` | {m['verdict']} | {m['why']} |" for k, m in s["mutants"].items()]
++    survivors = [m for m in s["mutants"].values() if m["verdict"] == "survived"]
++    if survivors:
++        out += ["", "Surviving mutants, with a spec to add:", ""]
++        out += [f"- `{m['component']}`: {suggestion(m)}" for m in survivors]
++    return "\n".join(out)
++
++
++# --- CLI ---------------------------------------------------------------------------------------------------------
++
++app = typer.Typer(help="Mutation scoring: mutate the harness, check the suite catches each mutant.",
++                  no_args_is_help=True)
++DATA = Annotated[str | None, typer.Option("--data", envvar="FLIGHTDECK_DATA_URI", help="Data plane root.")]
++
++
++@app.command("plan")
++def plan_cmd(suite: Path, harness: Annotated[str, typer.Option(help="The base variant in the suite.")],
++             out: Annotated[Path, typer.Option(help="The mutants' suite file to write.")],
++             ops: str = ",".join(OPS), max_mutants: Annotated[int, typer.Option("--max")] = 12,
++             n: int = 2, data: DATA = None) -> None:
++    """Write a suite with the base variant and its mutants, n trials each. Equivalent mutants (the no-op control;
++    skills no trace in --data used) are listed but not run."""
++    doc = yaml.safe_load(suite.read_text()) or {}
++    base = (doc.get("variants") or {}).get(harness)
++    if base is None:
++        raise typer.BadParameter(f"no variant {harness!r} in {suite}")
++    seen = None
++    if data:
++        from flightdeck.dataplane.duck import connect
++
++        seen = {r[0] for r in connect(os.path.expanduser(data)).sql(
++            "select distinct skill_name from spans where skill_name is not null").fetchall()}
++    mutants = plan(base, [o for o in ops.split(",") if o], seen, max_mutants)
++    tasks = [str((suite.parent / t).resolve()) for t in doc.get("tasks") or []]
++    doc.update(suite=f"{doc.get('suite') or suite.stem}-mutants", tasks=tasks, n=n, base=harness,
++               variants={harness: base, **{k: m["variant"] for k, m in mutants.items() if not m["equivalent"]}},
++               mutants={k: {x: m[x] for x in ("op", "component", "equivalent")} for k, m in mutants.items()})
++    out.write_text(yaml.safe_dump(doc, sort_keys=False))
++    for k, m in mutants.items():
++        typer.echo(f"{k}\t{m['component']}" + (f"\tequivalent: {m['equivalent']}" if m["equivalent"] else ""))
++    for op, why in REPORTED.items():
++        typer.echo(f"not generated\t{op}\t{why}")
++    load_plan(out)  # the file must load as a suite
++    typer.echo(f"wrote {out}: flightdeck mutate run {out}")
++
++
++@app.command("run")
++def run_cmd(plan_file: Path, max_usd: float = 40.0, dry_run: bool = False, data: DATA = None) -> None:
++    """Submit the mutants through `experiment run`'s cost gate (projection first; refused above --max-usd)."""
++    from flightdeck.runners.cli import run
++
++    run(plan_file, dry_run=dry_run, max_usd=max_usd, assume=3.0, budgets=None, author=os.environ.get(
++        "FLIGHTDECK_AUTHOR", ""), allow_model=None, data=data or "", kind="hangar")
++
++
++@app.command("score")
++def score_cmd(plan_file: Path, run_set: str, specs: Annotated[list[Path], typer.Option(help="Spec files.")],
++              data: DATA = None, bound: float = 0.9, out: Path | None = None) -> None:
++    """Kill rate with its interval, every mutant's verdict, and the survivors with a spec to add (markdown)."""
++    from flightdeck.dataplane.duck import connect
++    from flightdeck.stats.compare import load_trials
++
++    if not data:
++        raise typer.BadParameter("no data plane: pass --data or set FLIGHTDECK_DATA_URI")
++    doc = yaml.safe_load(plan_file.read_text())
++    con = connect(os.path.expanduser(data))
++    exps = run_set.split("+")
++    trials = [t for e in exps for t in load_trials(con, e)]
++    lang.prepare(con)
++    todo = [s for p in specs for s in lang.load(p.read_text())]
++    units: dict[str, tuple[str, str]] = {}
++    for s in todo:
++        col = lang.SCOPES[s.get("scope", "turn")]
++        units |= {r[0]: (r[1], r[2]) for r in con.execute(
++            f"select {col}, any_value(variant), any_value(task_id) from _runs where experiment_id in "
++            f"({', '.join('?' * len(exps))}) and {col} is not null group by 1", exps).fetchall()}
++    results = {s["id"]: {u: r for u, r in lang.evaluate_sql(s, con).items() if u in units} for s in todo}
++    md = render(doc["suite"], score(trials, units, results, doc["base"], doc["mutants"], bound))
++    typer.echo(md)
++    if out:
++        out.write_text(md + "\n")
+diff --git a/src/flightdeck/stats/compare.py b/src/flightdeck/stats/compare.py
+index 3061584..1024c9d 100644
+--- a/src/flightdeck/stats/compare.py
++++ b/src/flightdeck/stats/compare.py
+@@ -119,7 +119,8 @@ def compare(trials: list[dict[str, Any]], metric: str, a: str, b: str, seed: int
+             cost.setdefault(t["task_id"], []).append((t.get("cost_usd"), bool(resolved(t)[0])))
+         c.arms[arm] = {"n": len(ts), "mean": sum(vals) / len(vals) if vals else None, "k": k,
+                        "wilson": wilson(k, len(ts)) if metric == "resolved" else None,
+-                       "per_resolved": dollars_per_resolved(cost, b_resamples, seed) if cost else None}
++                       "per_resolved": dollars_per_resolved(cost, b_resamples, seed) if any(
++                           c is not None for v in cost.values() for c, _ in v) else None}  # none known: no ratio
+     paired = {task: v for task, v in c.per_task.items() if v[0] and v[1]}
+     if paired:
+         c.diff = paired_bootstrap(paired, b_resamples, seed)

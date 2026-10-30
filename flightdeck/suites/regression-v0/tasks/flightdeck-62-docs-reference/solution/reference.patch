@@ -1,0 +1,1761 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index f09d164..1edbc52 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -22,6 +22,21 @@ runs the real CLI on the fixture experiment and rewrites everything in `docs/ass
+ and fails when a committed text asset differs, or when a PNG's source page changed without a re-render
+ (`docs/assets/sources.sha256`). Change the CLI's output, the report or the fixture, and re-run it in the same PR.
+ 
++## Docs
++
++The site is built with [zensical](https://zensical.org) from `mkdocs.yml` and `docs/`, as the `docs` workflow does:
++
++```sh
++pip install zensical==0.0.71
++zensical serve        # http://localhost:8000/flightdeck/, rebuilt on save
++zensical build        # into site/ (ignored by git)
++```
++
++Two parts of the reference are generated from the code: `docs/cli.md` (every command and option of the Typer app) and
++the `flightdeck.parquet/v1` column tables in `docs/contracts.md` (from `src/flightdeck/dataplane/schema.py`). After
++changing a command, an option, a help text or a column, run `uv run python scripts/docs_reference.py` and commit the
++result; `tests/test_docs_reference.py` fails when they are stale.
++
+ ## The line budget
+ 
+ v0 is deliberately small: a fixed number of non-blank, non-comment lines under `src/flightdeck/` (`LIMIT` in the script).
+@@ -90,3 +105,8 @@ flightdeck's docs, reports and any future UI use **Airframe**, the suite's desig
+ visual work. Use `var(--af-*)` tokens and `af-` classes only, never a color literal (`tests/test_airframe.py` checks
+ `docs/stylesheets/`); flightdeck's hue is `--af-product-flightdeck`, for its mark, the docs header and the 2px nav marker.
+ `docs/stylesheets/airframe*.css` are vendored: never edit them; refresh with `sh scripts/sync-airframe.sh theme-vN`.
++The generated front-page assets (`docs/assets/*.svg`, `report-comment.html`, the PNGs) are exempt from the
++no-literal rule: GitHub renders the README's images outside any stylesheet, so `docs/assets/build.py` writes each
++color of the diagram as an Airframe token with its hex fallback (`var(--af-fg, #FFFFFF)`), the terminal recordings
++with Airframe's dark values as literals, and the PR-comment page with GitHub's own colors, since it shows how GitHub
++renders the report. Change colors in `build.py`, never in its output.
+diff --git a/README.md b/README.md
+index 9875e8c..e5405aa 100644
+--- a/README.md
++++ b/README.md
+@@ -12,6 +12,14 @@ and a verdict posted on the pull request where the change is reviewed.
+ Docs site: <https://sean-koval.github.io/flightdeck/> · Part of the [agent factory](https://sean-koval.github.io/agent-factory/)
+ (Run / **Judge** / Govern).
+ 
++**Is:** the Judge. It reads hangar's outbox (GCS → Parquet → DuckDB), or an experiment, job or session over
++REST, plans the trials, owns the sampling (which tasks, how many trials, when to stop) and posts a verdict where the change is
++reviewed. **Isn't:** a runner (beyond a local Docker runner for fixtures and CI), a dashboard, a leaderboard or a
++credential holder. **What it can see:** at about 500 trials a month, outcome changes of about 15 points or more (the
++share of tasks resolved going from 40% to 55%). Smaller changes are judged by process metrics (tool calls, cost, wall
++time), behavior specs and, later, trace-mined micro-evals ([#33](https://github.com/Sean-Koval/flightdeck/issues/33)). See
++[what flightdeck can tell you](docs/statistics.md#what-flightdeck-can-tell-you).
++
+ ## See it work
+ 
+ The verdict, posted as one pull-request comment that is updated in place. This one comes from the synthetic fixture
+@@ -45,43 +53,72 @@ reads hangar's versioned interfaces and asks hangar to run the trials it plans.
+ ## Use cases
+ 
+ - **Bump the CLI lock with evidence.** A harness maintainer opens the canary PR that moves claude-code to a new
+-  version, runs the regression suite on both locks with `flightdeck experiment run`, and gets a comment on the PR such as
+-  *non-inferior on resolved, −0.8 pp, CI −4.1…+2.5* or *No decision: underpowered*, with the cost per resolved task
+-  beside it.
++  version, runs the regression suite on the old lock and the new one with `flightdeck experiment run`, and gets one
++  comment on the PR with the pre-registered verdict and the cost per resolved task of each. At 50 tasks × 3 trials, a
++  bump that changes nothing typically reads *No decision: the interval on resolved spans the margin (−0.7 pp, CI
++  −10.0…+8.7, margin −5.0)*: 300 trials can't prove a 5-point margin. A regression of 20 points comes out *worse*
++  about 4 times in 5. Today: both arms run the CLI version hangar's lock pins (`harness@version`), so variants can
++  differ in model, skills, instructions and approvals but not in CLI version; lock against lock once the regression
++  suite ([#12](https://github.com/Sean-Koval/flightdeck/issues/12)) and `harness_lock` variants ([hangar#135](https://github.com/Sean-Koval/hangar/issues/135)) land in flightdeck.
+ - **Decide whether a workflow plugin pays for itself.** A team lead A/Bs the ai-dlc plugin on and off across 30 tasks.
+-  Trials are paired by task, so the answer needs a fraction of the runs an unpaired comparison would, and the verdict
+-  follows a `decision.yaml` committed before the first trial, so nobody moves the goalposts afterwards.
++  Trials are paired by task, so the answer needs a fraction of the runs an unpaired comparison would (at 30 tasks it
++  can see a change of about 20 points), and the verdict follows a `decision.yaml` committed before the first trial, so
++  nobody moves the goalposts afterwards.
+ - **Catch a behavior regression nobody tested for.** A platform engineer writes "never push to main" and "run trusted
+-  tests before committing" as behavior specs. The nightly `flightdeck check run` scores every turn and opens an issue
+-  when a violation rate jumps, naming the harness digest that changed that day.
++  tests before committing" as behavior specs. Scheduled nightly, `flightdeck check run` scores every turn and opens an
++  issue when a violation rate jumps, naming the harness digest that changed that day (the schedule lives in the
++  team's private data repository; [#15](https://github.com/Sean-Koval/flightdeck/issues/15)).
+ 
+ ## Quickstart
+ 
+-Needs [uv](https://docs.astral.sh/uv/) and git. Five commands, on the fixture experiment (no hangar, no team data):
++Needs [uv](https://docs.astral.sh/uv/) and git. Six commands, on the fixture experiment (no hangar, no team data):
+ 
+ ```sh
+ git clone https://github.com/Sean-Koval/flightdeck && cd flightdeck
+ uv run python scripts/fixture_export.py demo/export        # what `hangar experiment export <id> -o DIR` writes
+ uv run flightdeck ingest export demo/export --out demo/plane
++uv run flightdeck check run --data demo/plane --date 2025-10-16 --specs specs/examples/team-default.yaml
+ uv run flightdeck stats compare job-expdemo --data demo/plane
+ uv run flightdeck report experiment job-expdemo --data demo/plane --decision demo/export/decision.yaml
+ ```
+ 
++Once uv has installed the dependencies (the first `uv run` does that), it takes a few seconds. Expect, among the
++output:
++
++```text
++experiment-job-expdemo: 73 runs, 331 spans, 710 events, 2 manifests, 70 grades, 213 test_cases -> demo/plane
++spec	never-push-main	pass=72 fail=0 not_applicable=0 unknown=1
++Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; ...)
++**Verdict**: treat is better than control on resolved (+21.2 pp, CI +1.5…+43.9, margin -5.0).
++```
++
++The fixture is built with a large effect so that 11 tasks can show it; the report also gets a Behavior specs section
++from `check run`.
++
+ Against a real hangar, ingest with `HANGAR_TOKEN=... flightdeck ingest experiment <id> --hangar https://<your hangar>`
+ and post with `--post owner/repo#n`. [Getting started](docs/getting-started.md) has the rest.
+ 
+ ## Features
+ 
+-| Feature | What you get | Docs |
+-| --- | --- | --- |
+-| Ingest | Hangar REST or `hangar experiment export` into `flightdeck.parquet/v1` (runs, spans, events, manifests, grades, test cases), idempotent; `flightdeck query` over DuckDB | [Data plane](docs/data-plane.md) |
+-| Paired statistics | Task bootstrap, Wilson, pass@k and pass^k, $ per resolved task, a power estimate; exclusions (`infra_error` from hangar, cancelled, drift) always printed | [Statistics](docs/statistics.md) |
+-| Behavior specs | YAML predicates over `hangar.trace/v1` that count only trusted test runs; ADR `checks:`; nightly runner with change-point alerts | [Behavior specs](docs/behavior-specs.md) |
+-| Reports | Markdown with a pre-registered verdict, pins, outcome, process, cost and spec pass rates, posted as one PR comment | [Reports](docs/reports.md) |
+-| Experiments | Suites of Harbor-compatible tasks submitted to hangar with concrete model pins and a cost gate | [Running experiments](docs/runners.md), [Tasks](docs/tasks.md) |
+-| Small by design | A counted line budget for the analysis code, enforced in CI; every raise is a measured ADR | [ADR-0005](docs/decisions/0005-post-v0-budget.md) |
+-
+-Vocabulary (run, turn, trial, check vs grader) is in [Concepts](docs/concepts.md).
++| Feature | What you get | Status | Docs |
++| --- | --- | --- | --- |
++| Ingest | Hangar REST or `hangar experiment export` into `flightdeck.parquet/v1` (runs, spans, events, manifests, grades, test cases), idempotent; `flightdeck query` over DuckDB | Shipped ([#7](https://github.com/Sean-Koval/flightdeck/issues/7)) | [Data plane](docs/data-plane.md) |
++| Compactor | Hangar's GCS outbox into the Parquet data plane, nightly on Cloud Run, while the sandbox pools are off | Shipped ([#5](https://github.com/Sean-Koval/flightdeck/issues/5)); needs hangar's outbox turned on (`HANGAR_OUTBOX_URL`, off by default) | [Data plane](docs/data-plane.md#compactor) |
++| Paired statistics | Task bootstrap, Wilson, pass@k and pass^k, $ per resolved task, a power estimate; exclusions (`infra_error` from hangar, cancelled, drift) always printed | Shipped ([#8](https://github.com/Sean-Koval/flightdeck/issues/8)) | [Statistics](docs/statistics.md) |
++| Behavior specs | YAML predicates over `hangar.trace/v1` that count only trusted test runs | Shipped ([#14](https://github.com/Sean-Koval/flightdeck/issues/14)) | [Behavior specs](docs/behavior-specs.md) |
++| Nightly checks | `check run` over a day of the data plane, ADR `checks:`, change-point alerts | Code merged; [#15](https://github.com/Sean-Koval/flightdeck/issues/15) open until it is scheduled with a real team ADR | [Behavior specs](docs/behavior-specs.md#adr-checks-and-the-nightly-runner) |
++| Reports | Markdown with a pre-registered verdict, pins, outcome, process, cost and spec pass rates, posted as one PR comment | Shipped ([#9](https://github.com/Sean-Koval/flightdeck/issues/9)) | [Reports](docs/reports.md) |
++| Experiments | Suites of Harbor-compatible tasks submitted to hangar with concrete model pins and a cost gate; a local Docker backend for fixtures and CI | Shipped ([#11](https://github.com/Sean-Koval/flightdeck/issues/11), [#18](https://github.com/Sean-Koval/flightdeck/issues/18)); `harness_lock` variants not yet | [Running experiments](docs/runners.md), [Tasks](docs/tasks.md) |
++| Weekly metrics | The team's weekly scorecard, one SQL definition over Parquet, as JSON for hangar's digest | Shipped ([#6](https://github.com/Sean-Koval/flightdeck/issues/6)) | [Weekly metrics](docs/metrics.md) |
++| Judges | Rubric judges used only once calibrated against people (κ ≥ 0.6), estimates by prediction-powered inference | Shipped ([#27](https://github.com/Sean-Koval/flightdeck/issues/27)) | [Judges](docs/judges.md) |
++| Sealed holdouts | Hash-manifested, canaried task sets written blind and scored once | Code merged; [#13](https://github.com/Sean-Koval/flightdeck/issues/13) open until the first set is sealed | [Holdouts](docs/holdouts.md) |
++| Knowledge evals | A 40-question gold set scored on correctness and citation validity | Code merged; [#21](https://github.com/Sean-Koval/flightdeck/issues/21) open until the gold set is written and scored | [Knowledge evals](docs/knowledge-evals.md) |
++| Trial cache | Reuse trials whose inputs haven't changed; a nightly drift sentinel | Code merged; [#24](https://github.com/Sean-Koval/flightdeck/issues/24) open until the sentinel runs nightly | [Running experiments](docs/runners.md#cache) |
++| Mutation scoring | Remove one harness component at a time and check that a grader or spec notices | Code merged; [#16](https://github.com/Sean-Koval/flightdeck/issues/16) open until the first live run | [Behavior specs](docs/behavior-specs.md#mutation-scoring) |
++| Small by design | 3,785 counted lines of analysis code, enforced in CI; raised from 1,500 by ADRs 0003–0005 | The budget is full: any increase needs a new ADR | [ADR-0005](docs/decisions/0005-post-v0-budget.md) |
++
++Vocabulary (run, turn, trial, check vs grader) is in [Concepts](docs/concepts.md); every command and flag in the
++[CLI reference](docs/cli.md); what flightdeck reads, writes and pins in [Contracts](docs/contracts.md).
+ 
+ ## Development
+ 
+@@ -90,6 +127,7 @@ uv sync
+ uv run ruff check src tests scripts docs/assets && uv run pyright && uv run pytest -q
+ python scripts/loc_budget.py
+ uv run --group assets python docs/assets/build.py   # re-render the front-page assets (CI checks they are current)
++uv run python scripts/docs_reference.py              # regenerate docs/cli.md and the Parquet columns (tests check)
+ ```
+ 
+ See [CONTRIBUTING.md](CONTRIBUTING.md). Team data never goes in this repository
+diff --git a/docs/assets/demo.cast b/docs/assets/demo.cast
+index 7eb2a00..5f7cb78 100644
+--- a/docs/assets/demo.cast
++++ b/docs/assets/demo.cast
+@@ -161,7 +161,7 @@
+ [10.225, "o", "a"]
+ [10.26, "o", "n"]
+ [10.295, "o", "e"]
+-[10.795, "o", "\r\n**resolved**: treat vs control, experiment `job-expdemo`, seed 0\r\n\r\n| variant | trials | resolved (95% Wilson) | $ / resolved (95%) |\r\n| --- | --- | --- | --- |\r\n| control | 32 | 10/32 = 31.2% [18.0%, 48.6%] | 1.333 [0.801, 2.795] |\r\n| treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |\r\n\r\nPaired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; 3 concordant, 8 discordant tasks).\r\nAt 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (r1 simulation).\r\nResolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar's after-turn verify when no grader ran).\r\nExcluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.\r\nSaturated (same outcome in every trial of both arms, no information): t01, t02.\r\n"]
++[10.795, "o", "\r\n**resolved**: treat vs control, experiment `job-expdemo`, seed 0\r\n\r\n| variant | trials | resolved (95% Wilson) | $ / resolved (95%) |\r\n| --- | --- | --- | --- |\r\n| control | 32 | 10/32 = 31.2% [18.0%, 48.6%] | 1.333 [0.801, 2.795] |\r\n| treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |\r\n\r\nPaired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; 3 concordant, 8 discordant tasks).\r\nAt 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).\r\nResolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar's after-turn verify when no grader ran).\r\nExcluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.\r\nSaturated (same outcome in every trial of both arms, no information): t01, t02.\r\n"]
+ [12.395, "o", "$ "]
+ [12.43, "o", "f"]
+ [12.465, "o", "l"]
+diff --git a/docs/assets/demo.svg b/docs/assets/demo.svg
+index ae9ba4f..50cd12b 100644
+--- a/docs/assets/demo.svg
++++ b/docs/assets/demo.svg
+@@ -1 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 847 537" width="847" height="537" role="img" aria-label="flightdeck, fixture experiment, 12 tasks × 2 variants × 3 trials"><style>.t{font:13px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#E6E7E3;white-space:pre}.p{fill:#FFC400}.c{fill:#FFFFFF}.x{fill:#FF4D4D}.b{font:500 10.5px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;fill:#8E9297}.b1{fill:#E6E7E3}@keyframes s0{0%,2.288%{opacity:0}2.289%,100%{opacity:1}}.s0{animation:s0 26.22s step-end infinite}@keyframes s1{0%,9.935%{opacity:0}9.936%,100%{opacity:1}}.s1{animation:s1 26.22s step-end infinite}@keyframes s2{0%,16.266%{opacity:0}16.267%,100%{opacity:1}}.s2{animation:s2 26.22s step-end infinite}@keyframes s3{0%,26.850%{opacity:0}26.851%,100%{opacity:1}}.s3{animation:s3 26.22s step-end infinite}@keyframes s4{0%,27.079%{opacity:0}27.080%,100%{opacity:1}}.s4{animation:s4 26.22s step-end infinite}@keyframes s5{0%,27.307%{opacity:0}27.308%,100%{opacity:1}}.s5{animation:s5 26.22s step-end infinite}@keyframes s6{0%,27.536%{opacity:0}27.537%,100%{opacity:1}}.s6{animation:s6 26.22s step-end infinite}@keyframes s7{0%,27.765%{opacity:0}27.766%,100%{opacity:1}}.s7{animation:s7 26.22s step-end infinite}@keyframes s8{0%,34.096%{opacity:0}34.097%,100%{opacity:1}}.s8{animation:s8 26.22s step-end infinite}@keyframes s9{0%,42.544%{opacity:0}42.545%,100%{opacity:1}}.s9{animation:s9 26.22s step-end infinite}@keyframes s10{0%,42.773%{opacity:0}42.774%,100%{opacity:1}}.s10{animation:s10 26.22s step-end infinite}@keyframes s11{0%,43.002%{opacity:0}43.003%,100%{opacity:1}}.s11{animation:s11 26.22s step-end infinite}@keyframes s12{0%,43.230%{opacity:0}43.231%,100%{opacity:1}}.s12{animation:s12 26.22s step-end infinite}@keyframes s13{0%,43.459%{opacity:0}43.460%,100%{opacity:1}}.s13{animation:s13 26.22s step-end infinite}@keyframes s14{0%,43.688%{opacity:0}43.689%,100%{opacity:1}}.s14{animation:s14 26.22s step-end infinite}@keyframes s15{0%,43.917%{opacity:0}43.918%,100%{opacity:1}}.s15{animation:s15 26.22s step-end infinite}@keyframes s16{0%,44.146%{opacity:0}44.147%,100%{opacity:1}}.s16{animation:s16 26.22s step-end infinite}@keyframes s17{0%,44.375%{opacity:0}44.376%,100%{opacity:1}}.s17{animation:s17 26.22s step-end infinite}@keyframes s18{0%,44.603%{opacity:0}44.604%,100%{opacity:1}}.s18{animation:s18 26.22s step-end infinite}@keyframes s19{0%,44.832%{opacity:0}44.833%,100%{opacity:1}}.s19{animation:s19 26.22s step-end infinite}@keyframes s20{0%,45.061%{opacity:0}45.062%,100%{opacity:1}}.s20{animation:s20 26.22s step-end infinite}@keyframes s21{0%,45.290%{opacity:0}45.291%,100%{opacity:1}}.s21{animation:s21 26.22s step-end infinite}@keyframes s22{0%,45.519%{opacity:0}45.520%,100%{opacity:1}}.s22{animation:s22 26.22s step-end infinite}@keyframes s23{0%,51.850%{opacity:0}51.851%,100%{opacity:1}}.s23{animation:s23 26.22s step-end infinite}@keyframes s24{0%,67.239%{opacity:0}67.240%,100%{opacity:1}}.s24{animation:s24 26.22s step-end infinite}@keyframes s25{0%,73.570%{opacity:0}73.571%,100%{opacity:1}}.s25{animation:s25 26.22s step-end infinite}@keyframes s26{0%,78.413%{opacity:0}78.414%,100%{opacity:1}}.s26{animation:s26 26.22s step-end infinite}@keyframes s27{0%,84.744%{opacity:0}84.745%,100%{opacity:1}}.s27{animation:s27 26.22s step-end infinite}</style><rect width="847" height="537" rx="4" fill="#0A0A0A"/><rect x=".5" y=".5" width="846" height="536" rx="4" fill="none" stroke="#E6E7E3" stroke-opacity=".08"/><path d="M0 34.5H847" stroke="#E6E7E3" stroke-opacity=".09"/><g stroke="#8E9297" fill="none" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" transform="translate(14,10.0) scale(.7)"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></g><text class="b b1" x="42" y="20.75">FLIGHTDECK</text><text class="b" x="127" y="20.75">FIXTURE EXPERIMENT</text><text class="b" x="270" y="20.75">12 TASKS × 2 VARIANTS × 3 TRIALS</text><style>@keyframes y0{0%,2.288%{transform:translateX(0)}8.028%,100%{transform:translateX(335.4px)}}.y0{animation:y0 26.22s steps(43,end) infinite}</style><g class="s0"><text class="t" x="18" y="64.8" textLength="351.0" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck ingest export export --out plane</tspan></text><rect class="y0" x="33.6" y="51.1" width="339.4" height="17.0" fill="#0A0A0A"/></g><g class="s1"><text class="t" x="18" y="81.8">experiment-job-expdemo: 73 runs, 331 spans, 710 events, 2 manifests, 70 grades, 213 test_cases -&gt; plane</text></g><style>@keyframes y2{0%,16.266%{transform:translateX(0)}24.943%,100%{transform:translateX(507.0px)}}.y2{animation:y2 26.22s steps(65,end) infinite}</style><g class="s2"><text class="t" x="18" y="98.8" textLength="522.6" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck check run --data plane --date 2025-10-16 --specs specs</tspan></text><rect class="y2" x="33.6" y="85.2" width="511.0" height="17.0" fill="#0A0A0A"/></g><g class="s3"><text class="t" x="18" y="115.8">spec    ask-before-delete   pass=0 fail=0 not_applicable=72 unknown=1</text></g><g class="s4"><text class="t" x="18" y="132.8">spec    edits-stay-in-repo  pass=1 fail=0 not_applicable=71 unknown=1</text></g><g class="s5"><text class="t" x="18" y="149.8">spec    never-delete-outside-repo   pass=72 fail=0 not_applicable=0 unknown=1</text></g><g class="s6"><text class="t" x="18" y="166.8">spec    never-push-main pass=72 fail=0 not_applicable=0 unknown=1</text></g><g class="s7"><text class="t" x="18" y="183.8">spec    tests-before-commit pass=1 fail=0 not_applicable=71 unknown=1</text></g><style>@keyframes y8{0%,34.096%{transform:translateX(0)}40.637%,100%{transform:translateX(382.2px)}}.y8{animation:y8 26.22s steps(49,end) infinite}</style><g class="s8"><text class="t" x="18" y="200.8" textLength="397.8" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck stats compare job-expdemo --data plane</tspan></text><rect class="y8" x="33.6" y="187.2" width="386.2" height="17.0" fill="#0A0A0A"/></g><g class="s9"><text class="t" x="18" y="217.8">**resolved**: treat vs control, experiment `job-expdemo`, seed 0</text></g><g class="s10"><text class="t" x="18" y="234.8"></text></g><g class="s11"><text class="t" x="18" y="251.8">| variant | trials | resolved (95% Wilson) | $ / resolved (95%) |</text></g><g class="s12"><text class="t" x="18" y="268.8">| --- | --- | --- | --- |</text></g><g class="s13"><text class="t" x="18" y="285.8">| control | 32 | 10/32 = 31.2% [18.0%, 48.6%] | 1.333 [0.801, 2.795] |</text></g><g class="s14"><text class="t" x="18" y="302.8">| treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |</text></g><g class="s15"><text class="t" x="18" y="319.8"></text></g><g class="s16"><text class="t" x="18" y="336.8">Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks,</text></g><g class="s17"><text class="t" x="18" y="353.8">  63 trials; 3 concordant, 8 discordant tasks).</text></g><g class="s18"><text class="t" x="18" y="370.8">At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (r1 simulation).</text></g><g class="s19"><text class="t" x="18" y="387.8">Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar&#x27;s after-turn verify when</text></g><g class="s20"><text class="t" x="18" y="404.8">  no grader ran).</text></g><g class="s21"><text class="t" x="18" y="421.8">Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.</text></g><g class="s22"><text class="t" x="18" y="438.8">Saturated (same outcome in every trial of both arms, no information): t01, t02.</text></g><style>@keyframes y23{0%,51.850%{transform:translateX(0)}65.332%,100%{transform:translateX(787.8px)}}.y23{animation:y23 26.22s steps(101,end) infinite}</style><g class="s23"><text class="t" x="18" y="455.8" textLength="803.4" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck report experiment job-expdemo --data plane --decision export/decision.yaml --out report.md</tspan></text><rect class="y23" x="33.6" y="442.1" width="791.8" height="17.0" fill="#0A0A0A"/></g><g class="s24"><text class="t" x="18" y="472.8"></text></g><style>@keyframes y25{0%,73.570%{transform:translateX(0)}76.506%,100%{transform:translateX(171.6px)}}.y25{animation:y25 26.22s steps(22,end) infinite}</style><g class="s25"><text class="t" x="18" y="489.8" textLength="187.2" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">grep Verdict report.md</tspan></text><rect class="y25" x="33.6" y="476.1" width="175.6" height="17.0" fill="#0A0A0A"/></g><g class="s26"><text class="t c" x="18" y="506.8">**Verdict**: treat is better than control on resolved (+21.2 pp, CI +1.5…+43.9, margin -5.0).</text></g><g class="s27"><text class="t" x="18" y="523.8"><tspan class="p">$ ▌</tspan></text></g></svg>
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 847 537" width="847" height="537" role="img" aria-label="flightdeck, fixture experiment, 12 tasks × 2 variants × 3 trials"><style>.t{font:13px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#E6E7E3;white-space:pre}.p{fill:#FFC400}.c{fill:#FFFFFF}.x{fill:#FF4D4D}.b{font:500 10.5px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;fill:#8E9297}.b1{fill:#E6E7E3}@keyframes s0{0%,2.288%{opacity:0}2.289%,100%{opacity:1}}.s0{animation:s0 26.22s step-end infinite}@keyframes s1{0%,9.935%{opacity:0}9.936%,100%{opacity:1}}.s1{animation:s1 26.22s step-end infinite}@keyframes s2{0%,16.266%{opacity:0}16.267%,100%{opacity:1}}.s2{animation:s2 26.22s step-end infinite}@keyframes s3{0%,26.850%{opacity:0}26.851%,100%{opacity:1}}.s3{animation:s3 26.22s step-end infinite}@keyframes s4{0%,27.079%{opacity:0}27.080%,100%{opacity:1}}.s4{animation:s4 26.22s step-end infinite}@keyframes s5{0%,27.307%{opacity:0}27.308%,100%{opacity:1}}.s5{animation:s5 26.22s step-end infinite}@keyframes s6{0%,27.536%{opacity:0}27.537%,100%{opacity:1}}.s6{animation:s6 26.22s step-end infinite}@keyframes s7{0%,27.765%{opacity:0}27.766%,100%{opacity:1}}.s7{animation:s7 26.22s step-end infinite}@keyframes s8{0%,34.096%{opacity:0}34.097%,100%{opacity:1}}.s8{animation:s8 26.22s step-end infinite}@keyframes s9{0%,42.544%{opacity:0}42.545%,100%{opacity:1}}.s9{animation:s9 26.22s step-end infinite}@keyframes s10{0%,42.773%{opacity:0}42.774%,100%{opacity:1}}.s10{animation:s10 26.22s step-end infinite}@keyframes s11{0%,43.002%{opacity:0}43.003%,100%{opacity:1}}.s11{animation:s11 26.22s step-end infinite}@keyframes s12{0%,43.230%{opacity:0}43.231%,100%{opacity:1}}.s12{animation:s12 26.22s step-end infinite}@keyframes s13{0%,43.459%{opacity:0}43.460%,100%{opacity:1}}.s13{animation:s13 26.22s step-end infinite}@keyframes s14{0%,43.688%{opacity:0}43.689%,100%{opacity:1}}.s14{animation:s14 26.22s step-end infinite}@keyframes s15{0%,43.917%{opacity:0}43.918%,100%{opacity:1}}.s15{animation:s15 26.22s step-end infinite}@keyframes s16{0%,44.146%{opacity:0}44.147%,100%{opacity:1}}.s16{animation:s16 26.22s step-end infinite}@keyframes s17{0%,44.375%{opacity:0}44.376%,100%{opacity:1}}.s17{animation:s17 26.22s step-end infinite}@keyframes s18{0%,44.603%{opacity:0}44.604%,100%{opacity:1}}.s18{animation:s18 26.22s step-end infinite}@keyframes s19{0%,44.832%{opacity:0}44.833%,100%{opacity:1}}.s19{animation:s19 26.22s step-end infinite}@keyframes s20{0%,45.061%{opacity:0}45.062%,100%{opacity:1}}.s20{animation:s20 26.22s step-end infinite}@keyframes s21{0%,45.290%{opacity:0}45.291%,100%{opacity:1}}.s21{animation:s21 26.22s step-end infinite}@keyframes s22{0%,45.519%{opacity:0}45.520%,100%{opacity:1}}.s22{animation:s22 26.22s step-end infinite}@keyframes s23{0%,51.850%{opacity:0}51.851%,100%{opacity:1}}.s23{animation:s23 26.22s step-end infinite}@keyframes s24{0%,67.239%{opacity:0}67.240%,100%{opacity:1}}.s24{animation:s24 26.22s step-end infinite}@keyframes s25{0%,73.570%{opacity:0}73.571%,100%{opacity:1}}.s25{animation:s25 26.22s step-end infinite}@keyframes s26{0%,78.413%{opacity:0}78.414%,100%{opacity:1}}.s26{animation:s26 26.22s step-end infinite}@keyframes s27{0%,84.744%{opacity:0}84.745%,100%{opacity:1}}.s27{animation:s27 26.22s step-end infinite}</style><rect width="847" height="537" rx="4" fill="#0A0A0A"/><rect x=".5" y=".5" width="846" height="536" rx="4" fill="none" stroke="#E6E7E3" stroke-opacity=".08"/><path d="M0 34.5H847" stroke="#E6E7E3" stroke-opacity=".09"/><g stroke="#8E9297" fill="none" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" transform="translate(14,10.0) scale(.7)"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></g><text class="b b1" x="42" y="20.75">FLIGHTDECK</text><text class="b" x="127" y="20.75">FIXTURE EXPERIMENT</text><text class="b" x="270" y="20.75">12 TASKS × 2 VARIANTS × 3 TRIALS</text><style>@keyframes y0{0%,2.288%{transform:translateX(0)}8.028%,100%{transform:translateX(335.4px)}}.y0{animation:y0 26.22s steps(43,end) infinite}</style><g class="s0"><text class="t" x="18" y="64.8" textLength="351.0" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck ingest export export --out plane</tspan></text><rect class="y0" x="33.6" y="51.1" width="339.4" height="17.0" fill="#0A0A0A"/></g><g class="s1"><text class="t" x="18" y="81.8">experiment-job-expdemo: 73 runs, 331 spans, 710 events, 2 manifests, 70 grades, 213 test_cases -&gt; plane</text></g><style>@keyframes y2{0%,16.266%{transform:translateX(0)}24.943%,100%{transform:translateX(507.0px)}}.y2{animation:y2 26.22s steps(65,end) infinite}</style><g class="s2"><text class="t" x="18" y="98.8" textLength="522.6" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck check run --data plane --date 2025-10-16 --specs specs</tspan></text><rect class="y2" x="33.6" y="85.2" width="511.0" height="17.0" fill="#0A0A0A"/></g><g class="s3"><text class="t" x="18" y="115.8">spec    ask-before-delete   pass=0 fail=0 not_applicable=72 unknown=1</text></g><g class="s4"><text class="t" x="18" y="132.8">spec    edits-stay-in-repo  pass=1 fail=0 not_applicable=71 unknown=1</text></g><g class="s5"><text class="t" x="18" y="149.8">spec    never-delete-outside-repo   pass=72 fail=0 not_applicable=0 unknown=1</text></g><g class="s6"><text class="t" x="18" y="166.8">spec    never-push-main pass=72 fail=0 not_applicable=0 unknown=1</text></g><g class="s7"><text class="t" x="18" y="183.8">spec    tests-before-commit pass=1 fail=0 not_applicable=71 unknown=1</text></g><style>@keyframes y8{0%,34.096%{transform:translateX(0)}40.637%,100%{transform:translateX(382.2px)}}.y8{animation:y8 26.22s steps(49,end) infinite}</style><g class="s8"><text class="t" x="18" y="200.8" textLength="397.8" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck stats compare job-expdemo --data plane</tspan></text><rect class="y8" x="33.6" y="187.2" width="386.2" height="17.0" fill="#0A0A0A"/></g><g class="s9"><text class="t" x="18" y="217.8">**resolved**: treat vs control, experiment `job-expdemo`, seed 0</text></g><g class="s10"><text class="t" x="18" y="234.8"></text></g><g class="s11"><text class="t" x="18" y="251.8">| variant | trials | resolved (95% Wilson) | $ / resolved (95%) |</text></g><g class="s12"><text class="t" x="18" y="268.8">| --- | --- | --- | --- |</text></g><g class="s13"><text class="t" x="18" y="285.8">| control | 32 | 10/32 = 31.2% [18.0%, 48.6%] | 1.333 [0.801, 2.795] |</text></g><g class="s14"><text class="t" x="18" y="302.8">| treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |</text></g><g class="s15"><text class="t" x="18" y="319.8"></text></g><g class="s16"><text class="t" x="18" y="336.8">Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks,</text></g><g class="s17"><text class="t" x="18" y="353.8">  63 trials; 3 concordant, 8 discordant tasks).</text></g><g class="s18"><text class="t" x="18" y="370.8">At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).</text></g><g class="s19"><text class="t" x="18" y="387.8">Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar&#x27;s after-turn verify when</text></g><g class="s20"><text class="t" x="18" y="404.8">  no grader ran).</text></g><g class="s21"><text class="t" x="18" y="421.8">Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.</text></g><g class="s22"><text class="t" x="18" y="438.8">Saturated (same outcome in every trial of both arms, no information): t01, t02.</text></g><style>@keyframes y23{0%,51.850%{transform:translateX(0)}65.332%,100%{transform:translateX(787.8px)}}.y23{animation:y23 26.22s steps(101,end) infinite}</style><g class="s23"><text class="t" x="18" y="455.8" textLength="803.4" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck report experiment job-expdemo --data plane --decision export/decision.yaml --out report.md</tspan></text><rect class="y23" x="33.6" y="442.1" width="791.8" height="17.0" fill="#0A0A0A"/></g><g class="s24"><text class="t" x="18" y="472.8"></text></g><style>@keyframes y25{0%,73.570%{transform:translateX(0)}76.506%,100%{transform:translateX(171.6px)}}.y25{animation:y25 26.22s steps(22,end) infinite}</style><g class="s25"><text class="t" x="18" y="489.8" textLength="187.2" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">grep Verdict report.md</tspan></text><rect class="y25" x="33.6" y="476.1" width="175.6" height="17.0" fill="#0A0A0A"/></g><g class="s26"><text class="t c" x="18" y="506.8">**Verdict**: treat is better than control on resolved (+21.2 pp, CI +1.5…+43.9, margin -5.0).</text></g><g class="s27"><text class="t" x="18" y="523.8"><tspan class="p">$ ▌</tspan></text></g></svg>
+diff --git a/docs/assets/report-comment-dark.html b/docs/assets/report-comment-dark.html
+index 3e44479..8151787 100644
+--- a/docs/assets/report-comment-dark.html
++++ b/docs/assets/report-comment-dark.html
+@@ -97,7 +97,7 @@ background:linear-gradient(var(--fade),var(--bg))}
+ </tbody>
+ </table>
+ <p>Paired difference treat - control: <strong>+21.2 pp</strong>, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; 3 concordant, 8 discordant tasks).
+-At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (r1 simulation).
++At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).
+ Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar's after-turn verify when no grader ran).
+ Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.
+ Saturated (same outcome in every trial of both arms, no information): t01, t02.</p>
+diff --git a/docs/assets/report-comment-light.html b/docs/assets/report-comment-light.html
+index 1256c0e..e1ddcf6 100644
+--- a/docs/assets/report-comment-light.html
++++ b/docs/assets/report-comment-light.html
+@@ -97,7 +97,7 @@ background:linear-gradient(var(--fade),var(--bg))}
+ </tbody>
+ </table>
+ <p>Paired difference treat - control: <strong>+21.2 pp</strong>, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; 3 concordant, 8 discordant tasks).
+-At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (r1 simulation).
++At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).
+ Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar's after-turn verify when no grader ran).
+ Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.
+ Saturated (same outcome in every trial of both arms, no information): t01, t02.</p>
+diff --git a/docs/assets/report.md b/docs/assets/report.md
+index 2fd40e3..b7c3ba1 100644
+--- a/docs/assets/report.md
++++ b/docs/assets/report.md
+@@ -28,7 +28,7 @@ Base SHAs: 12 across 12 tasks (per task below).
+ | treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |
+ 
+ Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; 3 concordant, 8 discordant tasks).
+-At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (r1 simulation).
++At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).
+ Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar's after-turn verify when no grader ran).
+ Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.
+ Saturated (same outcome in every trial of both arms, no information): t01, t02.
+diff --git a/docs/assets/sources.sha256 b/docs/assets/sources.sha256
+index 9e7e191..27900db 100644
+--- a/docs/assets/sources.sha256
++++ b/docs/assets/sources.sha256
+@@ -1,4 +1,4 @@
+-c3c222b5befc320bcc482192071657871ff490d3297c41d07df63ceddc91641f  report-comment-dark.png
+-97ef6dd5f46dd52c6703c908fb301c3831c573f7e73f102e7b22e9f658560cab  report-comment-light.png
++350de94901abd38ad846e638f62f9b510c6d4c4e54bb2c0deabdb38372f786a9  report-comment-dark.png
++dc9baa15962b2b632f9c407e6cd09c7ca96b20e81f5bc58f1f1af45357cc8eae  report-comment-light.png
+ 2a7836ce68b5baeaf4d02c697e5cede73ecd7f956e57381906c8e482948cb09f  suite-dark.png
+ cb81671340555c76d4343ac789bea80aa78d9a195f54cf6c79b0cea868201938  suite-light.png
+diff --git a/docs/assets/stats-compare.svg b/docs/assets/stats-compare.svg
+index 24972f6..a773a77 100644
+--- a/docs/assets/stats-compare.svg
++++ b/docs/assets/stats-compare.svg
+@@ -1 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 847 316" width="847" height="316" role="img" aria-label="flightdeck, stats compare"><style>.t{font:13px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#E6E7E3;white-space:pre}.p{fill:#FFC400}.c{fill:#FFFFFF}.x{fill:#FF4D4D}.b{font:500 10.5px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;fill:#8E9297}.b1{fill:#E6E7E3}</style><rect width="847" height="316" rx="4" fill="#0A0A0A"/><rect x=".5" y=".5" width="846" height="315" rx="4" fill="none" stroke="#E6E7E3" stroke-opacity=".08"/><path d="M0 34.5H847" stroke="#E6E7E3" stroke-opacity=".09"/><g stroke="#8E9297" fill="none" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" transform="translate(14,10.0) scale(.7)"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></g><text class="b b1" x="42" y="20.75">FLIGHTDECK</text><text class="b" x="127" y="20.75">STATS COMPARE</text><text class="t" x="18" y="64.8" textLength="397.8" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck stats compare job-expdemo --data plane</tspan></text><text class="t" x="18" y="81.8">**resolved**: treat vs control, experiment `job-expdemo`, seed 0</text><text class="t" x="18" y="98.8"></text><text class="t" x="18" y="115.8">| variant | trials | resolved (95% Wilson) | $ / resolved (95%) |</text><text class="t" x="18" y="132.8">| --- | --- | --- | --- |</text><text class="t" x="18" y="149.8">| control | 32 | 10/32 = 31.2% [18.0%, 48.6%] | 1.333 [0.801, 2.795] |</text><text class="t" x="18" y="166.8">| treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |</text><text class="t" x="18" y="183.8"></text><text class="t" x="18" y="200.8">Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks,</text><text class="t" x="18" y="217.8">  63 trials; 3 concordant, 8 discordant tasks).</text><text class="t" x="18" y="234.8">At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (r1 simulation).</text><text class="t" x="18" y="251.8">Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar&#x27;s after-turn verify when</text><text class="t" x="18" y="268.8">  no grader ran).</text><text class="t" x="18" y="285.8">Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.</text><text class="t" x="18" y="302.8">Saturated (same outcome in every trial of both arms, no information): t01, t02.</text></svg>
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 847 316" width="847" height="316" role="img" aria-label="flightdeck, stats compare"><style>.t{font:13px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#E6E7E3;white-space:pre}.p{fill:#FFC400}.c{fill:#FFFFFF}.x{fill:#FF4D4D}.b{font:500 10.5px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;fill:#8E9297}.b1{fill:#E6E7E3}</style><rect width="847" height="316" rx="4" fill="#0A0A0A"/><rect x=".5" y=".5" width="846" height="315" rx="4" fill="none" stroke="#E6E7E3" stroke-opacity=".08"/><path d="M0 34.5H847" stroke="#E6E7E3" stroke-opacity=".09"/><g stroke="#8E9297" fill="none" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" transform="translate(14,10.0) scale(.7)"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></g><text class="b b1" x="42" y="20.75">FLIGHTDECK</text><text class="b" x="127" y="20.75">STATS COMPARE</text><text class="t" x="18" y="64.8" textLength="397.8" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck stats compare job-expdemo --data plane</tspan></text><text class="t" x="18" y="81.8">**resolved**: treat vs control, experiment `job-expdemo`, seed 0</text><text class="t" x="18" y="98.8"></text><text class="t" x="18" y="115.8">| variant | trials | resolved (95% Wilson) | $ / resolved (95%) |</text><text class="t" x="18" y="132.8">| --- | --- | --- | --- |</text><text class="t" x="18" y="149.8">| control | 32 | 10/32 = 31.2% [18.0%, 48.6%] | 1.333 [0.801, 2.795] |</text><text class="t" x="18" y="166.8">| treat | 31 | 16/31 = 51.6% [34.8%, 68.0%] | 0.639 [0.448, 1.071] |</text><text class="t" x="18" y="183.8"></text><text class="t" x="18" y="200.8">Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks,</text><text class="t" x="18" y="217.8">  63 trials; 3 concordant, 8 discordant tasks).</text><text class="t" x="18" y="234.8">At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).</text><text class="t" x="18" y="251.8">Resolved: grader for 63 trials (grader = exit 0 and applied; verify = hangar&#x27;s after-turn verify when</text><text class="t" x="18" y="268.8">  no grader ran).</text><text class="t" x="18" y="285.8">Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.</text><text class="t" x="18" y="302.8">Saturated (same outcome in every trial of both arms, no information): t01, t02.</text></svg>
+diff --git a/docs/behavior-specs.md b/docs/behavior-specs.md
+index 7d4971f..0f20948 100644
+--- a/docs/behavior-specs.md
++++ b/docs/behavior-specs.md
+@@ -1,5 +1,9 @@
+ # Behavior specs: `flightdeck.spec/v1`
+ 
++!!! note "Status"
++    The spec language, `spec lint` and `spec test` are done ([#14](https://github.com/Sean-Koval/flightdeck/issues/14)). The nightly runner and mutation scoring are
++    merged but their issues are open; each section below says what is left.
++
+ A behavior spec is a predicate over what an agent did, read from hangar's trace export (`hangar.trace/v1`,
+ hangar `docs/api/traces.md`) as flattened into the data plane ([data-plane.md](data-plane.md)). Specs answer "how did
+ it work?" questions: tests before the commit, no push to `main`, asked before deleting. They do not answer "did it
+@@ -86,16 +90,16 @@ Python `re` and RE2 (DuckDB): no lookaround or backreferences.
+ | `any: {paths: {from: [...]}, match: <glob or list>}` | at least one path matches (a delivered file, for ai-dlc's `path-committed`); `not_applicable` with no paths |
+ 
+ **Order** is `hangar.seq` within a session, the event log's position, because many items share a timestamp. Items
+-without a seq (job events, test runs, steers recorded before hangar#162) are compared by time, so mixed comparisons
++without a seq (job events, test runs, steers recorded before [hangar#162](https://github.com/Sean-Koval/hangar/issues/162)) are compared by time, so mixed comparisons
+ are by time (traces.md 'Order'). A `within: {seq: N}` window on an item without a seq is `unknown`. Across sessions
+ (best-of-N attempts) order is by time only.
+ 
+-**Steers.** Since hangar#162, `steer` and `interrupt` events carry `hangar.seq` (the event-log position where the
++**Steers.** Since [hangar#162](https://github.com/Sean-Koval/hangar/issues/162), `steer` and `interrupt` events carry `hangar.seq` (the event-log position where the
+ steer was delivered) and `hangar.steer.class` (`correction`, `redirect`, `new_info` or `unclassified`, with
+ `hangar.steer.classified_by`); a later classification is also a `steer.classified` event. A steer that arrives after
+ its turn ended is `queued` and starts the next turn, so its seq is that turn's start. Steer-avoidance counts only
+-corrections: `never: {event: steer, where: {hangar.steer.class: correction}}`. For steers recorded before #162 (no
+-seq, class `unclassified`), analyses that need a fork point (#29) take the nearest preceding seq and a judge's class
++corrections: `never: {event: steer, where: {hangar.steer.class: correction}}`. For steers recorded before hangar#162 (no
++seq, class `unclassified`), analyses that need a fork point ([#29](https://github.com/Sean-Koval/flightdeck/issues/29)) take the nearest preceding seq and a judge's class
+ (a [calibrated rubric](judges.md)), and say the result is approximate.
+ 
+ ### Results
+@@ -124,7 +128,7 @@ They pass and fail exactly as hangar `tests/test_interfaces.py::_behavior` does
+ 
+ `event: test.run` matches only a run hangar ran itself and trusts: `hangar.test.run.trusted = true`,
+ `hangar.test.total > 0` and a complete report (hangar `src/hangar/testresults.py`, the `TRUSTED` kinds such as
+-`verify`; hangar #164 adds `grader` runs and the `hangar.test.run.counted` attribute with the same meaning). The
++`verify`; [hangar#164](https://github.com/Sean-Koval/hangar/issues/164) adds `grader` runs and the `hangar.test.run.counted` attribute with the same meaning). The
+ agent's own in-turn runs are untrusted, and `pytest --collect-only` reports 0 tests. A spec may say
+ `allow_untrusted: true`, and `spec lint` flags it.
+ 
+@@ -150,8 +154,12 @@ tool input or output text alone, the shell `test` op, `applies_when` keys the da
+ 
+ ## ADR checks and the nightly runner
+ 
++!!! note "Status"
++    Code merged ([#41](https://github.com/Sean-Koval/flightdeck/pull/41)); issue [#15](https://github.com/Sean-Koval/flightdeck/issues/15) stays open until one real team ADR carries a `checks:` block and
++    the nightly run is scheduled in the private data repository.
++
+ An accepted decision can carry trace predicates that flightdeck runs every night: executable decisions. The `checks:`
+-convention for ADRs is ai-dlc's (Sean-Koval/ai-dlc#207: `docs/decisions/NNNN-slug.md` with knowledge-note
++convention for ADRs is ai-dlc's ([ai-dlc#207](https://github.com/Sean-Koval/ai-dlc/issues/207): `docs/decisions/NNNN-slug.md` with knowledge-note
+ frontmatter); the grammar is this page's. Each check is a spec without the header: `id`, optional `scope`,
+ `applies_when`, `harness` (default `"*"`) and `assert`.
+ 
+@@ -218,6 +226,10 @@ second reviewer looks. A GitHub Action in the team repo runs it on PRs that touc
+ 
+ ## Mutation scoring
+ 
++!!! note "Status"
++    Code merged ([#53](https://github.com/Sean-Koval/flightdeck/pull/53)); issue [#16](https://github.com/Sean-Koval/flightdeck/issues/16) stays open until the first live mutation run on hangar (at most
++    $40). The acceptance case so far is shown on stored results in tests.
++
+ A suite with a low mutation score is decoration: if deleting part of the harness changes nothing the suite can see,
+ the suite isn't testing that part. `flightdeck mutate` removes one component of a harness at a time and checks that
+ some grader or spec notices (code: `src/flightdeck/specs/mutate.py`).
+@@ -238,7 +250,7 @@ instructions_append, approvals}`):
+ | `drop-instruction-line` | one per block of `instructions` and `instructions_append`: blocks start at markdown headings, else each non-empty line is one |
+ | `approvals` | `approvals: auto` when the base is `deny-risky` |
+ | `noop` | the variant unchanged: a control that must come out equivalent |
+-| `drop-hook`, `widen-egress` | not generated, and said so: hooks need harness locks (hangar#133); hangar fixes egress per experiment, so widening it is a separate experiment |
++| `drop-hook`, `widen-egress` | not generated, and said so: hooks need harness locks ([hangar#133](https://github.com/Sean-Koval/hangar/issues/133)); hangar fixes egress per experiment, so widening it is a separate experiment |
+ 
+ `plan` writes a suite file: the base and its mutants as variants named `mutant-<op>-<component>`, `n` trials each
+ (default 2; keep tasks cheap, since a changed instruction changes the prompt prefix and every trial runs in full),
+diff --git a/docs/cli.md b/docs/cli.md
+new file mode 100644
+index 0000000..4d4d69e
+--- /dev/null
++++ b/docs/cli.md
+@@ -0,0 +1,660 @@
++# CLI reference
++
++Every command, argument and option of `flightdeck`, generated from the code by `uv run python scripts/docs_reference.py` (`tests/test_docs_reference.py` fails when this page is stale). Every command also takes `--help`. Options with an environment variable read it when the option isn't given; an option without a description here is explained in its group's guide.
++
++| Group | What it does | Commands | Guide |
++| --- | --- | --- | --- |
++| (none) | Top-level commands | [`compact`](#flightdeck-compact), [`version`](#flightdeck-version), [`query`](#flightdeck-query) | `compact`: [Data plane: compactor](data-plane.md#compactor), `query`: [Data plane: querying](data-plane.md#querying) |
++| [`ingest`](#flightdeck-ingest) | Pull hangar runs into the local data plane (flightdeck.parquet/v1). | [`export`](#flightdeck-ingest-export), [`experiment`](#flightdeck-ingest-experiment), [`job`](#flightdeck-ingest-job), [`session`](#flightdeck-ingest-session), [`github`](#flightdeck-ingest-github) | [Data plane: ingest](data-plane.md#ingest) |
++| [`stats`](#flightdeck-stats) | Paired statistics over the data plane. | [`compare`](#flightdeck-stats-compare) | [Statistics](statistics.md#flightdeck-stats-compare) |
++| [`report`](#flightdeck-report) | Markdown reports, posted where the change is reviewed. | [`experiment`](#flightdeck-report-experiment), [`post`](#flightdeck-report-post) | [Reports](reports.md) |
++| [`spec`](#flightdeck-spec) | Behavior specs over hangar.trace/v1: lint them, test them on an export. | [`lint`](#flightdeck-spec-lint), [`test`](#flightdeck-spec-test) | [Behavior specs](behavior-specs.md) |
++| [`check`](#flightdeck-check) | Nightly specs and ADR checks over the data plane; check-edit labels. | [`run`](#flightdeck-check-run), [`diff`](#flightdeck-check-diff) | [Behavior specs: nightly runner](behavior-specs.md#adr-checks-and-the-nightly-runner) |
++| [`mutate`](#flightdeck-mutate) | Mutation scoring: mutate the harness, check the suite catches each mutant. | [`plan`](#flightdeck-mutate-plan), [`run`](#flightdeck-mutate-run), [`score`](#flightdeck-mutate-score) | [Behavior specs: mutation scoring](behavior-specs.md#mutation-scoring) |
++| [`task`](#flightdeck-task) | Harbor-compatible task directories: write, check, digest. | [`new`](#flightdeck-task-new), [`check`](#flightdeck-task-check), [`digest`](#flightdeck-task-digest), [`import-aidlc`](#flightdeck-task-import-aidlc) | [Tasks](tasks.md) |
++| [`holdout`](#flightdeck-holdout) | Sealed holdouts: briefs, seal, canary scan, score once. | [`brief`](#flightdeck-holdout-brief), [`seal`](#flightdeck-holdout-seal), [`score`](#flightdeck-holdout-score), [`canary-scan`](#flightdeck-holdout-canary-scan) | [Holdouts](holdouts.md) |
++| [`knowledge`](#flightdeck-knowledge) | The knowledge gold set: seal it, score arms on correctness and citations. | [`seal`](#flightdeck-knowledge-seal), [`score`](#flightdeck-knowledge-score) | [Knowledge evals](knowledge-evals.md) |
++| [`experiment`](#flightdeck-experiment) | Trials on hangar: submit a suite, follow it, collect it. | [`run`](#flightdeck-experiment-run), [`status`](#flightdeck-experiment-status), [`collect`](#flightdeck-experiment-collect) | [Running experiments](runners.md) |
++| [`cache`](#flightdeck-cache) | The trial-result cache: drop entries, check the drift sentinel. | [`drop`](#flightdeck-cache-drop), [`sentinel`](#flightdeck-cache-sentinel) | [Running experiments: cache](runners.md#cache) |
++| [`metrics`](#flightdeck-metrics) | Team metrics over the data plane (docs/metrics.md). | [`weekly`](#flightdeck-metrics-weekly) | [Weekly metrics](metrics.md) |
++| [`judge`](#flightdeck-judge) | Rubric judges: label sheets, calibration, judge labels, PPI estimates. | [`label`](#flightdeck-judge-label), [`calibrate`](#flightdeck-judge-calibrate), [`score`](#flightdeck-judge-score), [`estimate`](#flightdeck-judge-estimate) | [Judges](judges.md) |
++
++## Top-level commands
++
++### `flightdeck compact`
++
++Compact hangar's outbox into the data plane (nightly on Cloud Run: deploy/compactor/). Guide: [Data plane: compactor](data-plane.md#compactor).
++
++```
++flightdeck compact [OPTIONS]
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `--date` | text |  |  | UTC outbox date, YYYY-MM-DD (default: today). |
++| `--lookback` | integer | `3` |  | Also recompact this many days before --date whose inputs changed. |
++| `--rebuild` / `--no-rebuild` | flag | off |  | Rewrite the dates even if their inputs are unchanged. |
++| `--input` | text | required | `FLIGHTDECK_RUNS_URI` | Outbox root: gs://, file:// or path. |
++| `--out` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++
++### `flightdeck version`
++
++Print flightdeck's version.
++
++```
++flightdeck version
++```
++
++### `flightdeck query`
++
++Run SQL over the data plane's tables (runs, spans, events, manifests, grades, test_cases). Guide: [Data plane: querying](data-plane.md#querying).
++
++```
++flightdeck query [OPTIONS] SQL
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SQL` | text | required |  |  |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane root: a directory or gs:// URI. |
++
++## `flightdeck ingest`
++
++Pull hangar runs into the local data plane (flightdeck.parquet/v1). Guide: [Data plane: ingest](data-plane.md#ingest).
++
++### `flightdeck ingest export`
++
++Ingest the files `hangar experiment export -o DIR` wrote.
++
++```
++flightdeck ingest export [OPTIONS] DIRECTORY
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `DIRECTORY` | path | required |  |  |
++| `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
++
++### `flightdeck ingest experiment`
++
++Fetch an experiment over REST (raw files kept under &lt;out&gt;/raw/&lt;id&gt;/) and ingest it.
++
++```
++flightdeck ingest experiment [OPTIONS] EXP_ID
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `EXP_ID` | text | required |  |  |
++| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL; token from HANGAR_TOKEN. |
++| `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
++
++### `flightdeck ingest job`
++
++Ingest a job's trace and its turns' manifests over REST.
++
++```
++flightdeck ingest job [OPTIONS] JOB_ID
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `JOB_ID` | text | required |  |  |
++| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL; token from HANGAR_TOKEN. |
++| `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
++
++### `flightdeck ingest session`
++
++Ingest a session's trace (or one turn's) and the turns' manifests over REST.
++
++```
++flightdeck ingest session [OPTIONS] NAME
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `NAME` | text | required |  |  |
++| `--turn` | integer |  |  | Only this turn. |
++| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL; token from HANGAR_TOKEN. |
++| `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
++
++### `flightdeck ingest github`
++
++Fill the `prs` table from GitHub REST (token from GITHUB_TOKEN).
++
++```
++flightdeck ingest github [OPTIONS]
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `--repos` | text | required | `FLIGHTDECK_GITHUB_REPOS` | Comma-separated owner/repo. |
++| `--days` | integer | `30` |  | Rewrite the PRs closed in the last N days (revert detection looks back 14). |
++| `--out` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++
++## `flightdeck stats`
++
++Paired statistics over the data plane. Guide: [Statistics](statistics.md#flightdeck-stats-compare).
++
++### `flightdeck stats compare`
++
++Compare variant B against A on one metric, paired by task, with exclusions printed.
++
++```
++flightdeck stats compare [OPTIONS] EXPERIMENT
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `EXPERIMENT` | text | required |  |  |
++| `--a` | text | `control` |  |  |
++| `--b` | text | `treat` |  |  |
++| `--metric` | text | `resolved` |  | resolved&#124;cost_usd&#124;tool_calls&#124;wall_s |
++| `--seed` | integer | `0` |  |  |
++| `--include-drift` | flag | off |  |  |
++| `--data` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane: directory or gs:// |
++
++## `flightdeck report`
++
++Markdown reports, posted where the change is reviewed. Guide: [Reports](reports.md).
++
++### `flightdeck report experiment`
++
++Render an experiment's report from the data plane; print it, write it, post it.
++
++```
++flightdeck report experiment [OPTIONS] EXPERIMENT
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `EXPERIMENT` | text | required |  |  |
++| `--a`, `--baseline` | text | `control` |  |  |
++| `--b` | text | `treat` |  |  |
++| `--decision` | path |  |  | Pre-registered decision.yaml; the verdict needs it. |
++| `--details` / `--no-details` | flag | off |  | Per-task rows and trial links (keep off for public repos). |
++| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL for trial links. |
++| `--out` | path |  |  | Also write the report here. |
++| `--post` | text |  |  | owner/repo#n: post as a PR or issue comment (token: GITHUB_TOKEN). |
++| `--seed` | integer | `0` |  |  |
++| `--data` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` |  |
++| `--full-url` | text |  |  | Where the full report is (https), linked when a comment is clipped. |
++| `--gist` | flag | off |  | Link a clipped comment to a secret gist of the full report. |
++
++### `flightdeck report post`
++
++Post (or update in place) a rendered report as a PR or issue comment.
++
++```
++flightdeck report post [OPTIONS] REPORT
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `REPORT` | path | required |  |  |
++| `--to` | text | required |  | owner/repo#n |
++| `--full-url` | text |  |  | Where the full report is (https), linked when a comment is clipped. |
++| `--gist` | flag | off |  | Link a clipped comment to a secret gist of the full report. |
++
++## `flightdeck spec`
++
++Behavior specs over hangar.trace/v1: lint them, test them on an export. Guide: [Behavior specs](behavior-specs.md).
++
++### `flightdeck spec lint`
++
++Load specs and print warnings; exit 1 when one does not load.
++
++```
++flightdeck spec lint PATHS...
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `PATHS` | path, one or more | required |  |  |
++
++### `flightdeck spec test`
++
++Evaluate specs on one export: `spec<TAB>unit<TAB>result` lines; exit 1 on any fail or unknown.
++
++```
++flightdeck spec test [OPTIONS] SPEC
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SPEC` | path | required |  |  |
++| `--trace` | path | required |  | A hangar.trace/v1 OTLP/JSON export. |
++| `--engine` | text | `python` |  | python (the reference evaluator) or sql (the nightly one). |
++
++## `flightdeck check`
++
++Nightly specs and ADR checks over the data plane; check-edit labels. Guide: [Behavior specs: nightly runner](behavior-specs.md#adr-checks-and-the-nightly-runner).
++
++### `flightdeck check run`
++
++Evaluate every spec and accepted ADR check over one day, write spec_results, and flag violation jumps.
++
++```
++flightdeck check run [OPTIONS]
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root: a directory or gs:// URI. |
++| `--date` | text |  |  | The dt partition to judge (default: yesterday, UTC). |
++| `--specs` | path, repeatable |  |  | Spec files, or directories of \*.yaml. |
++| `--adrs` | text, repeatable |  |  | &lt;git checkout&gt;:&lt;dir&gt; of ADRs (HEAD), or a dir. |
++| `--out` | text |  |  | Local plane root to write spec_results to (default: --data). |
++| `--window` | integer | `14` |  | Days of spec_results history for change-point alerts. |
++| `--alerts-repo` | text |  |  | owner/repo to open flightdeck:violation issues in (via gh). |
++
++### `flightdeck check diff`
++
++Label an edit to checks (spec files or ADRs): tightened, loosened or removed. A missing file has no checks.
++
++```
++flightdeck check diff OLD NEW
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `OLD` | path | required |  |  |
++| `NEW` | path | required |  |  |
++
++## `flightdeck mutate`
++
++Mutation scoring: mutate the harness, check the suite catches each mutant. Guide: [Behavior specs: mutation scoring](behavior-specs.md#mutation-scoring).
++
++### `flightdeck mutate plan`
++
++Write a suite with the base variant and its mutants, n trials each. Equivalent mutants (the no-op control; skills no trace in --data used) are listed but not run.
++
++```
++flightdeck mutate plan [OPTIONS] SUITE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SUITE` | path | required |  |  |
++| `--harness` | text | required |  | The base variant in the suite. |
++| `--out` | path | required |  | The mutants' suite file to write. |
++| `--ops` | text | `drop-skill,drop-instruction-line,approvals,noop` |  |  |
++| `--max` | integer | `12` |  |  |
++| `--n` | integer | `2` |  |  |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane root. |
++
++### `flightdeck mutate run`
++
++Submit the mutants through `experiment run`'s cost gate (projection first; refused above --max-usd).
++
++```
++flightdeck mutate run [OPTIONS] PLAN_FILE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `PLAN_FILE` | path | required |  |  |
++| `--max-usd` | number | `40.0` |  |  |
++| `--dry-run` / `--no-dry-run` | flag | off |  |  |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane root. |
++
++### `flightdeck mutate score`
++
++Kill rate with its interval, every mutant's verdict, and the survivors with a spec to add (markdown).
++
++```
++flightdeck mutate score [OPTIONS] PLAN_FILE RUN_SET
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `PLAN_FILE` | path | required |  |  |
++| `RUN_SET` | text | required |  |  |
++| `--specs` | path, repeatable | required |  | Spec files. |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane root. |
++| `--bound` | number | `0.9` |  |  |
++| `--out` | path |  |  |  |
++
++## `flightdeck task`
++
++Harbor-compatible task directories: write, check, digest. Guide: [Tasks](tasks.md).
++
++### `flightdeck task new`
++
++Write a new task from the template: safe test.sh, hidden tests, Harbor task.toml.
++
++```
++flightdeck task new [OPTIONS] PATH
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `PATH` | path | required |  |  |
++| `--id` | text |  |  | Task id (default: the directory's name). |
++
++### `flightdeck task check`
++
++Validate task directories: layout, symlinks, files_digest, hangar's limits.
++
++```
++flightdeck task check PATHS...
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `PATHS` | path, one or more | required |  |  |
++
++### `flightdeck task digest`
++
++Print the task digest and the tests' digest (files_digest).
++
++```
++flightdeck task digest [OPTIONS] PATH
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `PATH` | path | required |  |  |
++| `--write` | flag | off |  | Update files_digest in task.toml. |
++
++### `flightdeck task import-aidlc`
++
++Convert an ai-dlc evaluation suite (JSON) into task dirs, specs and a suite file; print the assertion mapping.
++
++```
++flightdeck task import-aidlc [OPTIONS] SUITE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SUITE` | path | required |  |  |
++| `--out` | path | required |  | An empty directory to write into. |
++
++## `flightdeck holdout`
++
++Sealed holdouts: briefs, seal, canary scan, score once. Guide: [Holdouts](holdouts.md).
++
++### `flightdeck holdout brief`
++
++Write one brief per blind writer to briefs/&lt;set&gt;_writer_&lt;x&gt;.txt.
++
++```
++flightdeck holdout brief [OPTIONS] NAME
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `NAME` | text | required |  |  |
++| `--writers` | integer | `2` |  |  |
++| `--family` | text | `regression` |  |  |
++| `--count` | integer | `20` |  |  |
++| `--mined-after` | text |  |  |  |
++| `--holdouts` | path | `holdouts` |  | The holdouts directory of the private data repo. |
++
++### `flightdeck holdout seal`
++
++Seal the writers' incoming tasks as one set and record it in the manifest (commit manifest.json alone).
++
++```
++flightdeck holdout seal [OPTIONS] NAME
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `NAME` | text | required |  |  |
++| `--writer` | text, repeatable | required |  | &lt;id&gt;=&lt;harness or person&gt;, once per writer |
++| `--fresh-after` | text | required |  | YYYY-MM-DD: the later of snapshot and model cutoff |
++| `--holdouts` | path | `holdouts` |  | The holdouts directory of the private data repo. |
++
++### `flightdeck holdout score`
++
++Score a sealed set once: results/&lt;set&gt;.json and the manifest are committed together.
++
++```
++flightdeck holdout score [OPTIONS] NAME
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `NAME` | text | required |  |  |
++| `--run-set` | text | required |  | The run set that ran the set's tasks. |
++| `--against` | text | required |  | The candidate's harness_digest (or config_digest). |
++| `--approve` | text | required |  | GitHub login of the approver. |
++| `--author` | text | required |  | GitHub login of the candidate change's author. |
++| `--by` | text | required | `FLIGHTDECK_AUTHOR` | Who runs the scoring. |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++| `--min-hangar` | text | `0` |  |  |
++| `--holdouts` | path | `holdouts` |  | The holdouts directory of the private data repo. |
++
++### `flightdeck holdout canary-scan`
++
++Find canaries in traces (tool input/output, messages, attributes) and logs; a hit voids its set.
++
++```
++flightdeck holdout canary-scan [OPTIONS]
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++| `--since` | integer | `7` |  | Days back to scan. |
++| `--logs` | path, repeatable |  |  | Retrieval or tool logs to scan too. |
++| `--alerts-repo` | text |  |  | owner/repo to open an issue in (gh). |
++| `--holdouts` | path | `holdouts` |  | The holdouts directory of the private data repo. |
++
++## `flightdeck knowledge`
++
++The knowledge gold set: seal it, score arms on correctness and citations. Guide: [Knowledge evals](knowledge-evals.md).
++
++### `flightdeck knowledge seal`
++
++Check the suite, plant canaries in the answer keys and write manifest.json (commit it on its own).
++
++```
++flightdeck knowledge seal [OPTIONS] SUITE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SUITE` | path | required |  |  |
++| `--holdouts` | path |  |  | Register canaries here. |
++
++### `flightdeck knowledge score`
++
++Score each arm; with --baseline and --candidate, the paired difference and the 15-point rule.
++
++```
++flightdeck knowledge score [OPTIONS] SUITE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SUITE` | path | required |  |  |
++| `--arm` | text, repeatable | required |  | An arm with answers/&lt;arm&gt;.jsonl. |
++| `--baseline` | text |  |  |  |
++| `--candidate` | text |  |  |  |
++| `--seed` | integer | `0` |  |  |
++
++## `flightdeck experiment`
++
++Trials on hangar: submit a suite, follow it, collect it. Guide: [Running experiments](runners.md).
++
++### `flightdeck experiment run`
++
++Gate a suite's plan on model pins and projected cost, then submit it (or print it with --dry-run).
++
++```
++flightdeck experiment run [OPTIONS] SUITE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SUITE` | path | required |  | Suite file (YAML). |
++| `--dry-run` | flag | off |  | Print the spec and the projection; submit nothing. |
++| `--max-usd` | number |  |  | Refuse a plan projected above this. |
++| `--assume` | number | `3.0` |  | $ per trial for a task without cost history. |
++| `--budgets` | path |  | `FLIGHTDECK_BUDGETS` | Caps. |
++| `--author` | text |  | `FLIGHTDECK_AUTHOR` | Whose sub-cap the plan spends. |
++| `--allow-model` | text, repeatable |  |  | Accept this id as concrete. |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane: cost history, collect target. |
++| `--backend` | text | `hangar` |  | hangar, or local: Docker on this machine (fixtures, CI). |
++| `--cache` | flag | off |  | Reuse matching trials from --data; submit only the rest. |
++
++### `flightdeck experiment status`
++
++A run set's state, trial counts, and pins that break pairing (exit 1 when there are any).
++
++```
++flightdeck experiment status [OPTIONS] RUN_SET
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `RUN_SET` | text | required |  |  |
++| `--json` | flag | off |  |  |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane: cost history, collect target. |
++
++### `flightdeck experiment collect`
++
++Write a run set's trials and grades into the data plane.
++
++```
++flightdeck experiment collect [OPTIONS] RUN_SET
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `RUN_SET` | text | required |  |  |
++| `--data` | text |  | `FLIGHTDECK_DATA_URI` | Data plane: cost history, collect target. |
++
++## `flightdeck cache`
++
++The trial-result cache: drop entries, check the drift sentinel. Guide: [Running experiments: cache](runners.md#cache).
++
++### `flightdeck cache drop`
++
++Stop reusing trials of these tasks or identities finished before now.
++
++```
++flightdeck cache drop [OPTIONS]
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root (local). |
++| `--task` | text, repeatable |  |  | A task id. |
++| `--identity` | text, repeatable |  |  | An identity (harness+environment digest). |
++
++### `flightdeck cache sentinel`
++
++Check the nightly sentinel (`experiment run <suite>` without --cache) for a step change; exit 1 on alerts.
++
++```
++flightdeck cache sentinel [OPTIONS] SUITE VARIANT
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `SUITE` | path | required |  |  |
++| `VARIANT` | text | required |  |  |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root (local). |
++| `--window` | integer | `14` |  |  |
++| `--alerts-repo` | text |  |  | owner/repo for an issue (gh). |
++
++## `flightdeck metrics`
++
++Team metrics over the data plane (docs/metrics.md). Guide: [Weekly metrics](metrics.md).
++
++### `flightdeck metrics weekly`
++
++The weekly scorecard; team-wide runs with --reports also write &lt;week&gt;.json, &lt;week&gt;.md and latest.json.
++
++```
++flightdeck metrics weekly [OPTIONS]
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `--week` | text |  |  | ISO week, e.g. 2026-W45 (default: last complete week). |
++| `--format` | text | `md` |  | md, json or slack (Block Kit JSON). |
++| `--person` | text |  |  | Only this person's jobs (share with that person and admins only). |
++| `--repo` | text |  |  | Only this repository (owner/repo). |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++| `--reports` | text |  | `FLIGHTDECK_REPORTS_URI` | Write reports/weekly/ here (private). |
++
++## `flightdeck judge`
++
++Rubric judges: label sheets, calibration, judge labels, PPI estimates. Guide: [Judges](judges.md).
++
++### `flightdeck judge label`
++
++A labelling sheet (CSV on stdout): a stratified sample of runs, the first `overlap` items for every rater and the rest shared out; variant names stay off the sheet (blind).
++
++```
++flightdeck judge label [OPTIONS] RUBRIC
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `RUBRIC` | path | required |  |  |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++| `--sample` | integer | `150` |  |  |
++| `--stratify-by` | text | `variant` |  |  |
++| `--raters` | integer | `2` |  |  |
++| `--overlap` | integer | `30` |  |  |
++| `--seed` | integer | `0` |  |  |
++
++### `flightdeck judge calibrate`
++
++Kappa with its interval, the calibration curve and the status; writes &lt;rubric&gt;.calibration.json.
++
++```
++flightdeck judge calibrate [OPTIONS] RUBRIC HUMAN JUDGE
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `RUBRIC` | path | required |  |  |
++| `HUMAN` | path | required |  |  |
++| `JUDGE` | path | required |  |  |
++| `--seed` | integer | `0` |  |  |
++
++### `flightdeck judge score`
++
++Store a judge's labels (`run_id, label, rationale`) as judge_labels: rationale text stays out, its digest in.
++
++```
++flightdeck judge score [OPTIONS] RUBRIC LABELS
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `RUBRIC` | path | required |  |  |
++| `LABELS` | path | required |  |  |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++
++### `flightdeck judge estimate`
++
++The PPI estimate of the rubric's mean over the judge-labelled runs, from the human labels and the judge's.
++
++```
++flightdeck judge estimate [OPTIONS] RUBRIC HUMAN
++```
++
++| Argument or option | Type | Default | Environment | Description |
++| --- | --- | --- | --- | --- |
++| `RUBRIC` | path | required |  |  |
++| `HUMAN` | path | required |  |  |
++| `--data` | text | required | `FLIGHTDECK_DATA_URI` | Data plane root. |
++
++## Environment
++
++Besides the options' environment variables above, flightdeck reads these directly:
++
++| Variable | Used for |
++| --- | --- |
++| `HANGAR_TOKEN` | Bearer token for hangar REST: `ingest experiment|job|session`, `experiment run|status|collect`. |
++| `GITHUB_TOKEN` | `report post` and `report experiment --post` (`issues:write` / `pull_requests:write`; `gist` for `--gist`), and `ingest github` (read-only). |
++| `GITHUB_API_URL` | GitHub API root for posting reports (default `https://api.github.com`). |
++| `FLIGHTDECK_AUTHOR` | Also read by `mutate run`, whose cost gate charges that author's sub-cap. |
++| `ANTHROPIC_API_KEY` | Local backend only, for a real-model `claude-code@<version>` trial (an API key, never a subscription login); never used in CI. |
+diff --git a/docs/contracts.md b/docs/contracts.md
+new file mode 100644
+index 0000000..fd560da
+--- /dev/null
++++ b/docs/contracts.md
+@@ -0,0 +1,126 @@
++# Contracts
++
++What flightdeck reads, what it writes, the files a team commits for it, and the pin set it judges trials by. Every
++contract here is additive within its version: a new optional field is not a new version; removing or renaming one is.
++
++## What flightdeck reads
++
++Only hangar's versioned interfaces and the Parquet data plane, never hangar's database or data directory
++([ADR-0001](decisions/0001-boundary-with-hangar.md)).
++
++| Interface | What it is | Read by |
++| --- | --- | --- |
++| `hangar.manifest/v1` | The effective harness manifest a turn ran with (hangar [`manifest.schema.json`](https://github.com/Sean-Koval/hangar/blob/main/docs/api/manifest.schema.json)) | `ingest`, `experiment collect`, and the compactor (`manifest.json`), into `manifests` |
++| `hangar.trace/v1` | A turn's, job's or session's OTLP/JSON trace export (hangar [`traces.md`](https://github.com/Sean-Koval/hangar/blob/main/docs/api/traces.md)) | `ingest`, `experiment collect`, and the compactor (`trace.otlp.json`), into `spans`, `events`, `test_cases` |
++| `hangar.experiment/v1` | An experiment's index of trials, `GET /api/experiments/{id}` (hangar [`experiment.schema.json`](https://github.com/Sean-Koval/hangar/blob/main/docs/api/experiment.schema.json)) | `ingest experiment`, `ingest export`, `experiment status` and `collect`, into `runs`, `grades` |
++| `hangar.run/v1` | One finished run's `run.json` in hangar's GCS outbox (hangar [`outbox.md`](https://github.com/Sean-Koval/hangar/blob/main/docs/api/outbox.md)), with `tests.json` (`hangar.tests/v1`) and, for a trial, `grade.json` (`hangar.grade/v1`) | `compact`, into `runs`, `test_cases`, `grades` |
++| `hangar.job_event/v1` | A fact about a job that arrives after its runs (`pr.open`, `review.first`, `pr.merge`, `pr.close`, `revert`, `abandon`, `label`), under `v1/jobs/{date}/{job_id}/events/` (`$defs.job_event` in `run.schema.json`) | `compact`, into `job_events` |
++
++How they're checked:
++
++- **Manifests and experiment indexes** are validated against the vendored JSON Schemas (below). A mismatch warns and
++  the ingest goes on; a document whose `schema` isn't `hangar.manifest/v1` or `hangar.experiment/v1` is refused.
++- **Traces** have no JSON Schema: the resource's `hangar.trace.schema` must be `hangar.trace/v1`, and unknown
++  attributes are kept in `attrs`.
++- **Outbox objects** (`run.json`, job events) aren't validated at compaction; the compactor keeps what it understands.
++  The test fixtures that stand in for them are checked against the vendored `run.schema.json`.
++
++Flightdeck also reads GitHub REST for closed pull requests (`ingest github` → `prs`) and ADRs from git
++(`check run --adrs`).
++
++### The vendored schemas
++
++`src/flightdeck/dataplane/hangar_schemas/` holds `experiment.schema.json`, `manifest.schema.json` and
++`run.schema.json`, copied from hangar commit
++[`6dc8a39`](https://github.com/Sean-Koval/hangar/commit/6dc8a395639c164dd884f10f8baa32ba2cc85c49) (2026-10-17;
++`SOURCE.json`). They lag hangar's main. Since then hangar has added, within v1:
++
++- `hangar.experiment/v1`: a variant's `harness_lock`, `harness_revision`, `harness_digest`, `pin_set` and
++  `model_source` (and `harness_lock` as a `model_concrete_basis`), a task's `task_digest`, a trial's `pin_set` and
++  `cached`, and the spec's `pin_sets`, `task_digests`, `cache_record` and `source`;
++- `hangar.run/v1`: the `pr.ready` job event, and `counted` and `agent_run_id` on test runs;
++- `hangar.manifest/v1`: nothing.
++
++So the index of an experiment whose variants run from harness locks fails the vendored check
++(`model_concrete_basis: harness_lock` isn't in its enum); ingest warns and goes on, and the new fields stay in the raw
++JSON. `python scripts/sync_hangar_schemas.py --hangar ../hangar` refreshes the copies. That refresh goes with
++accepting `harness_lock` variants in `experiment run`, which refuses them today (`VARIANT_KEYS` in
++`src/flightdeck/runners/hangar.py`), and that needs counted lines: the [line budget](decisions/0005-post-v0-budget.md)
++has none left, so both wait for a new budget ADR.
++
++## What flightdeck writes
++
++| Contract | What | Where | Defined in |
++| --- | --- | --- | --- |
++| `flightdeck.parquet/v1` | The data plane: one table per kind of record, partitioned by day | `<root>/<table>/dt=YYYY-MM-DD/part-*.parquet`, `<root>` = `FLIGHTDECK_DATA_URI` (private) | `src/flightdeck/dataplane/schema.py`; [Data plane](data-plane.md); columns below |
++| `flightdeck.spec/v1` | Behavior specs and ADR `checks:`: YAML predicates over `hangar.trace/v1` | Team specs in the private data repository; public examples in [`specs/examples/`](https://github.com/Sean-Koval/flightdeck/tree/main/specs/examples) | `src/flightdeck/specs/lang.py`; [Behavior specs](behavior-specs.md) |
++| `flightdeck.weekly/v1` | The weekly team metrics as JSON (and markdown) | `<reports>/weekly/<week>.json`, `<week>.md`, `latest.json`, `<reports>` = `FLIGHTDECK_REPORTS_URI` | [`weekly.schema.json`](https://github.com/Sean-Koval/flightdeck/blob/main/src/flightdeck/metrics/weekly.schema.json); [Data plane](data-plane.md#flightdeckweeklyv1) |
++| `hangar.experiment/v1` spec | What `experiment run` submits: tasks, variants, trials, one grader, budgets | `POST /api/experiments` on hangar | [Running experiments](runners.md) |
++| Report | One markdown comment per experiment, first line `<!-- flightdeck:report:<experiment> -->`, updated in place | The pull request or issue named by `--post` / `--to` | [Reports](reports.md) |
++
++In the private data repository flightdeck also writes `holdouts/manifest.json` and `holdouts/results/<set>.json`
++([Holdouts](holdouts.md)), the knowledge suite's `manifest.json` ([Knowledge evals](knowledge-evals.md)) and a
++rubric's `<rubric>.calibration.json` ([Judges](judges.md)).
++
++### `flightdeck.parquet/v1` columns
++
++<!-- generated:parquet by scripts/docs_reference.py -->
++
++Every table also has `run_id`, `source` and `dt` (`flightdeck.parquet/v1`; `dt` is the partition, in the path). Columns are text unless a type is given.
++
++| Flattened from hangar | Columns |
++| --- | --- |
++| `runs` | `job_id`, `session_id`, `turn` int, `experiment_id`, `trial_key`, `task_id`, `variant`, `trial` int, `person`, `repo`, `environment`, `harness`, `harness_version`, `model_id`, `outcome`, `reason`, `outcome_class`, `infra_reason`, `excluded` bool, `attempt` int, `config_digest`, `harness_digest`, `environment_digest`, `manifest_digest`, `base_sha`, `cost_usd` float, `cost_source`, `input_tokens` int, `output_tokens` int, `cache_read_tokens` int, `started_at` timestamp, `finished_at` timestamp, `verify_passed` bool, `pr_url`, `pr_number` int, `merged` bool, `merged_by`, `diff_files` list of strings, `drift` list of strings, `truncated` bool, `task_invalid` bool, `contaminated` bool, `grade_trust`, `job_source`, `job_turn` int, `job_state`, `steers` int, `questions` int, `untrusted` bool, `tainted` bool, `task_digest`, `variant_digest` |
++| `spans` | `trace_id`, `span_id`, `parent_span_id`, `job_id`, `session_id`, `environment`, `person`, `kind`, `name`, `start_ns` int, `end_ns` int, `seq` int, `seq_end` int, `status_code` int, `tool_kind`, `tool_name`, `tool_input`, `tool_output`, `tool_ok` bool, `shell_ops` list of strings, `file_repo_path`, `mcp_server`, `mcp_tool`, `skill_name`, `approval_status`, `approval_by`, `attrs` |
++| `events` | `trace_id`, `span_id`, `span_kind`, `name`, `time_ns` int, `seq` int, `file_repo_path`, `file_op`, `text`, `attrs` |
++| `manifests` | `digest`, `config_digest`, `captured_at` timestamp, `subject_kind`, `session_id`, `turn` int, `job_id`, `person`, `harness_name`, `harness_version`, `harness_locked`, `harness_mode`, `harness_digest`, `model_id`, `model_policy`, `model_provider`, `skills_effective` list of strings, `mcp_servers` list of strings, `hooks` list of strings, `approvals`, `egress_mode`, `environment_name`, `environment_spec_digest`, `environment_digest`, `knowledge_snapshot`, `repo_url`, `base_sha`, `json` |
++| `grades` | `experiment_id`, `trial_key`, `command`, `exit_code` int, `applied` bool, `seconds` float, `error`, `data`, `grader_digest` |
++| `test_cases` | `trace_id`, `test_run_id`, `suite`, `status`, `run_kind`, `trusted` bool, `exit_code` int, `total` int, `passed` int, `failed` int, `errors` int, `skipped` int, `complete` bool, `flaky` int, `time_ns` int, `case_name`, `case_status`, `case_outcome`, `sha` |
++
++| From the outbox and GitHub | Columns |
++| --- | --- |
++| `job_events` | `job_id`, `kind`, `ts` timestamp, `job_source`, `repo`, `person`, `environment`, `session_id`, `run_ids` list of strings, `pr_url`, `pr_number` int, `untrusted` bool, `reason`, `by`, `green_to_merge_seconds` float, `data` |
++| `prs` | `repo`, `number` int, `url`, `title`, `author`, `author_bot` bool, `created_at` timestamp, `merged_at` timestamp, `closed_at` timestamp, `merge_sha`, `reverts` int |
++
++| Written by flightdeck | Columns |
++| --- | --- |
++| `spec_results` | `spec_id`, `spec_source`, `scope`, `result`, `repo`, `harness_digest`, `knowledge_snapshot` |
++| `trial_reuse` | `experiment_id`, `task_id`, `variant`, `age_days` float |
++| `judge_labels` | `rubric`, `rubric_digest`, `judge`, `label` float, `rationale_digest`, `status` |
++
++<!-- /generated:parquet -->
++
++## Files a team commits
++
++| File | Read by | Keys | Lives in | Docs |
++| --- | --- | --- | --- | --- |
++| A suite (`suite.yaml`, any name) | `experiment run`, `mutate plan`, `cache sentinel` | `suite`, `tasks` (task directories or directories of them, relative to the file), `variants` (hangar's overlay: `environment`, `harness[@version]`, `model`, `approvals`, `skills`, `skills_remove`, `instructions`, `instructions_append`), `n`, `environment`, `budget_usd`, `trial_budget_usd`, `parallel` | Beside its tasks | [Running experiments](runners.md#commands) |
++| `decision.yaml` | `report experiment --decision` | `metric` (`resolved`, `cost_usd`, `tool_calls`, `wall_s`), `direction` (`higher` or `lower`), `margin` (in the metric's units), `min_tasks` (default 10), optional `rubric` | Committed before the first trial finishes | [Reports](reports.md#pre-registration) |
++| `budgets.yaml` | `experiment run`'s cost gate (`--budgets`, `FLIGHTDECK_BUDGETS`, else `./budgets.yaml`) | `month_usd`, `authors: {<login>: <usd>}` | The private data repository | [Running experiments](runners.md#the-cost-gate) |
++| `task.toml`, `[flightdeck]` | Every command that loads a task | `tags`, `sealed`, `environment`, `mined_after`, `mined_from`; `[flightdeck.source]` `repo`, `base_sha`, `base_branch`, `issue`, `verify`; `[flightdeck.grader]` `command`, `files_digest` | Each task directory (Harbor's keys stay where Harbor puts them) | [Tasks](tasks.md#layout) |
++| A rubric (YAML) | `judge label` / `calibrate` / `score` / `estimate`, and `decision.yaml`'s `rubric` | `id`, `version`, `question`, `scale` (`binary`, or `ordinal` with `levels`), `criteria`, `examples`, `judge: {model, prompt}` (a concrete model id) | The private data repository | [Judges](judges.md#a-rubric-version) |
++| An ADR with `checks:` | `check run --adrs` | `checks:` in its front matter with `status: accepted`, or in a fenced `yaml` block under a `Status: Accepted` line; each check is a spec without the header (`id`, `scope`, `applies_when`, `harness`, `assert`) | The team's repositories, `docs/decisions/` | [Behavior specs](behavior-specs.md#adr-checks-and-the-nightly-runner) |
++
++## The pin set
++
++The seam between hangar and flightdeck is a trial run against an immutable **pin set**: what the trial runs with,
++content-addressed, so a baseline pinned today re-runs identically next month (hangar
++[`docs/api/trials.md`](https://github.com/Sean-Koval/hangar/blob/main/docs/api/trials.md), `hangar.pinset/v1`).
++Flightdeck owns the sampling (which tasks, how many trials, against which pin sets, when to stop); hangar runs each
++trial as pinned. Flightdeck still submits batch experiments, whose variants hangar records as pin sets; submitting
++trials against pin sets directly is [#25](https://github.com/Sean-Koval/flightdeck/issues/25).
++
++| Field | What it pins | In hangar today | In flightdeck's data plane |
++| --- | --- | --- | --- |
++| `harness_digest` | A SHA-256 over the harness lock's identity fields (the lock projected onto the manifest's harness sections), equal to the manifest's `harness_digest` | Optional in manifests (absent from those stored before it); required with its lock in a pin set; an overlay variant's is null until its first trial finishes | `runs.harness_digest`, `manifests.harness_digest`; null for older records |
++| `environment_digest` | Image, build, effective egress, resources and isolation | Optional in manifests and in pin sets: without it a pin set pins `environment_spec_digest`, and the trial cache keys on `environment_digest`, else `environment_spec_digest` | `runs.environment_digest`; `manifests.environment_digest` and `environment_spec_digest` |
++| `model_id` | The concrete model id ([hangar#167](https://github.com/Sean-Koval/hangar/issues/167)) | Required to be concrete; null when the harness runs its own default | `runs.model_id`, `manifests.model_id` |
++| `base_sha` | Each task's base commit | Required per task in a pin set; `pins.tasks.<id>.base_sha` in the experiment index | `runs.base_sha` |
++| `grader_digest` | The grader's command, files, mode, network and timeout | In pin sets; not in the experiment index or the outbox's `grade.json` | `grades.grader_digest`: null today. The trial cache uses `task_digest`, which covers the tests and the grader command, in its place |
++| `knowledge_snapshot` | What a retrieval tool could read | Optional, once a retrieval tool exists; the manifest schema has no `knowledge` section yet | `manifests.knowledge_snapshot`: null today |
++
++Hangar's pin set also records the harness and its CLI version, the lock reference, the environment, the approvals
++policy and the egress policy's digest. Until every trial carries `harness_digest` and `environment_digest`,
++flightdeck's reports and cache fall back to `config_digest`, which mixes the two halves (and, for the cache, the
++manifest's `environment.build.id`): see the report's Pins table ([Reports](reports.md#anatomy)) and the cache key
++([Running experiments](runners.md#cache)).
+diff --git a/docs/decisions/0001-boundary-with-hangar.md b/docs/decisions/0001-boundary-with-hangar.md
+index 610c808..6302532 100644
+--- a/docs/decisions/0001-boundary-with-hangar.md
++++ b/docs/decisions/0001-boundary-with-hangar.md
+@@ -1,4 +1,4 @@
+-# 0001: Hangar runs, flightdeck judges, the governed workspace governs
++# 0001: Hangar runs, flightdeck judges, the governed workspace (now Tower) governs
+ 
+ Status: Accepted · Oct 15, 2026
+ 
+@@ -27,7 +27,7 @@ live hangar to judge runs breaks overnight.
+ 
+ Choose C.
+ 
+-1. Hangar runs. Flightdeck judges. The governed workspace governs.
++1. Hangar runs. Flightdeck judges. The governed workspace (now Tower) governs.
+ 2. Flightdeck never holds sandbox, provider or team credentials.
+ 3. Flightdeck reads only hangar's versioned interfaces and the Parquet data plane, never hangar's SQLite or data
+    directory. This holds wherever the GCS → Parquet compactor ends up living.
+diff --git a/docs/decisions/0006-holdout-custody.md b/docs/decisions/0006-holdout-custody.md
+index 8de08e7..da5ba8d 100644
+--- a/docs/decisions/0006-holdout-custody.md
++++ b/docs/decisions/0006-holdout-custody.md
+@@ -6,7 +6,7 @@ Status: Accepted · Oct 17, 2026 (agent-proposed; owner review requested)
+ 
+ Every search winner and every promotion gets measured once on held-out tasks (#13). A held-out set that anyone tuning
+ the harness can read, or that is scored repeatedly, stops measuring generalization: it becomes one more thing to fit.
+-The governed workspace already practices custody for its labelled sets, and flightdeck may reuse it:
++The governed workspace (now Tower) already practices custody for its labelled sets, and flightdeck may reuse it:
+ 
+ - `server/evals/manifest.json` lists every labelled set with its sha256, and `aw.rules_report.check_manifest`
+   (`server/aw/rules_report.py:32-46`) refuses to score a listed file whose hash differs.
+diff --git a/docs/getting-started.md b/docs/getting-started.md
+index 7372509..fad6c69 100644
+--- a/docs/getting-started.md
++++ b/docs/getting-started.md
+@@ -10,10 +10,11 @@ Flightdeck is the **Judge** in Run / Judge / Govern ([ADR-0001](decisions/0001-b
+ - It reads hangar's three versioned interfaces, `hangar.manifest/v1`, `hangar.trace/v1` and `hangar.experiment/v1`
+   ([hangar spec 0014](https://github.com/Sean-Koval/hangar/blob/main/docs/specs/0014-sister-tool-interfaces.md),
+   [hangar `docs/api/`](https://github.com/Sean-Koval/hangar/tree/main/docs/api)), from a GCS → Parquet data plane or
+-  hangar's REST API.
++  hangar's REST API. [Contracts](contracts.md) lists everything it reads and writes.
+ - It owns **sampling** (how many trials, which tasks, when to stop) and asks hangar to execute trials; hangar executes
+   `task × variant × n` against pinned conditions and does no analysis.
+-- The only runner here will be a local Docker runner for fixtures and CI.
++- The only runner here is the local Docker runner ([#18](https://github.com/Sean-Koval/flightdeck/issues/18), `--backend local`), for fixtures and CI
++  ([Running experiments](runners.md#local)).
+ 
+ ## End to end on the fixture experiment
+ 
+@@ -36,25 +37,51 @@ GITHUB_TOKEN=... uv run flightdeck report post demo/report.md --to owner/repo#12
+ `demo/` is ignored by git. The front page's recording and screenshots are this session, generated by
+ `docs/assets/build.py` ([Contributing](https://github.com/Sean-Koval/flightdeck/blob/main/CONTRIBUTING.md)).
+ 
++`check run` prints one line per spec with its counts over the day's units, and `stats compare` ends with the power
++line and the exclusions:
++
++```text
++spec	never-push-main	pass=72 fail=0 not_applicable=0 unknown=1
++spec	tests-before-commit	pass=1 fail=0 not_applicable=71 unknown=1
++...
++Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; 3 concordant, 8 discordant tasks).
++At 11 paired tasks x 3 trials the minimum detectable lift at 80% power is about 35% (simulated).
++Excluded: cancelled 1, drift 1, infra_error 1, not finished 1, task_invalid 6.
++```
++
++The fixture is built with a large effect (treat about 20 points better), and even so the interval at 11 paired tasks
++runs from +1.5 to +43.9 points. A real harness change usually moves less: see
++[what flightdeck can tell you](statistics.md#what-flightdeck-can-tell-you).
++
+ ## Against a real hangar
+ 
+ `HANGAR_TOKEN=... flightdeck ingest experiment <id> --hangar https://<your hangar>` (or `ingest job` /
+ `ingest session`), then the same `check run`, `stats compare` and `report` with the default data directory
+ (`~/.flightdeck/data`, or `FLIGHTDECK_DATA_URI`). Keep that directory private
+ ([ADR-0002](decisions/0002-public-code-private-data.md)). To plan and submit trials, see
+-[Running experiments](runners.md).
++[Running experiments](runners.md); every command and flag is in the [CLI reference](cli.md).
++
++A worked setup to start from: the [`flightdeck/`](https://github.com/Sean-Koval/team-harness/tree/main/flightdeck) folder of the team-harness repo has a suite
++(`flightdeck/suite.yaml`: stable against candidate, the ai-dlc workflow plugin off and on), a pre-registered
++`decision.yaml` and behavior specs. It ships no tasks, so
++`flightdeck experiment run flightdeck/suite.yaml --dry-run` stops at `no task under tasks` until you add one
++(`flightdeck task new flightdeck/tasks/<id>`, then set `[flightdeck] environment` in its `task.toml`, or `environment`
++in the suite).
+ 
+ ## Status and code map
+ 
+-v0, pre-release. The analysis code stays within a counted line budget (`scripts/loc_budget.py`, enforced in CI,
+-[ADR-0005](decisions/0005-post-v0-budget.md)) and has to change one real team decision before anything else, a UI
++v0, pre-release. The analysis code stays within a counted line budget: 3,785 non-blank, non-comment lines under
++`src/flightdeck/` (`scripts/loc_budget.py`, enforced in CI; code ported from ai-dlc and hangar is reported but not
++counted). It started at 1,500 and was raised by ADRs [0003](decisions/0003-line-budget.md),
++[0004](decisions/0004-local-runner-budget.md) and [0005](decisions/0005-post-v0-budget.md); it is full, and any
++increase needs a new ADR. Flightdeck has to change one real team decision ([#20](https://github.com/Sean-Koval/flightdeck/issues/20)) before anything else, a UI
+ included, gets built.
+ 
+ | Module | What |
+ | --- | --- |
+ | `flightdeck.dataplane` | `flightdeck.parquet/v1` tables (runs, spans, events, manifests, grades, test_cases), flatteners from hangar's manifest, OTLP trace and experiment index, DuckDB views; `flightdeck query`. See [Data plane](data-plane.md) |
+ | `flightdeck.dataplane.ingest` | `flightdeck ingest export\|experiment\|job\|session`: hangar REST or `hangar experiment export` into local Parquet, idempotent, validated against vendored hangar schemas. See [Data plane](data-plane.md#ingest) |
+-| `flightdeck.stats` | Wilson, pass@k, pass^k, clean-run bound, paired task bootstrap, $ per resolved task, McNemar counts, the r1 power simulation; `flightdeck stats compare` with exclusions and saturated tasks. See [Statistics](statistics.md) |
++| `flightdeck.stats` | Wilson, pass@k, pass^k, clean-run bound, paired task bootstrap, $ per resolved task, McNemar counts, a power simulation (`simulate_power`); `flightdeck stats compare` with exclusions and saturated tasks. See [Statistics](statistics.md) |
+ | `flightdeck.report` | `flightdeck report experiment`: the markdown report with a pre-registered verdict, posted as one PR or issue comment. See [Reports](reports.md) |
+ | `flightdeck.specs` | `flightdeck.spec/v1` behavior specs: YAML predicates over `hangar.trace/v1`, a Python reference evaluator and a DuckDB compiler, the trusted-test rule; `flightdeck spec lint\|test`; the nightly runner over the data plane with ADR `checks:`, change-point alerts and `flightdeck check run\|diff`. Mutation scoring of suites: `flightdeck mutate plan\|run\|score`. See [Behavior specs](behavior-specs.md) |
+ | `flightdeck.tasks` | Harbor-compatible task directories: load, check and digest them, map them onto a `hangar.experiment/v1` spec; `flightdeck task new\|check\|digest`; `flightdeck task import-aidlc` for ai-dlc evaluation suites; sealed holdout custody, `flightdeck holdout brief\|seal\|score\|canary-scan` ([Holdouts](holdouts.md)); the knowledge gold set, `flightdeck knowledge seal\|score` ([Knowledge evals](knowledge-evals.md)); rubric judges, `flightdeck judge label\|calibrate\|score\|estimate` ([Judges](judges.md)); the semver smoke task in `tasks/smoke/`. See [Tasks](tasks.md) |
+diff --git a/docs/holdouts.md b/docs/holdouts.md
+index d37e91d..fdd0fdf 100644
+--- a/docs/holdouts.md
++++ b/docs/holdouts.md
+@@ -1,5 +1,10 @@
+ # Holdouts
+ 
++!!! note "Status"
++    Code merged ([#52](https://github.com/Sean-Koval/flightdeck/pull/52)); issue [#13](https://github.com/Sean-Koval/flightdeck/issues/13) stays open until two blind writers produce the first sealed set
++    (at least 20 regression tasks), the age key pair and its offline backup exist, and the manifest's
++    `min_hangar_version` names the first hangar release with grader isolation.
++
+ A sealed holdout is a set of tasks that nobody tuning a harness has seen, scored **once**, when a search winner or a
+ promotion needs one honest number. Custody is what keeps it unseen: hashes that refuse an edited file, canaries that
+ detect a leak, writers who never read the code they're testing, and an approver who isn't the candidate's author. The
+diff --git a/docs/index.md b/docs/index.md
+index fdb66d7..73f16d6 100644
+--- a/docs/index.md
++++ b/docs/index.md
+@@ -8,6 +8,14 @@
+ [Get started](getting-started.md){ .md-button .md-button--primary } [Suite overview](https://sean-koval.github.io/agent-factory/){ .md-button }
+ </div>
+ 
++**Is:** the Judge. It reads hangar's outbox (GCS → Parquet → DuckDB), or an experiment, job or session over
++REST, plans the trials, owns the sampling (which tasks, how many trials, when to stop) and posts a verdict where the change is
++reviewed. **Isn't:** a runner (beyond a local Docker runner for fixtures and CI), a dashboard, a leaderboard or a
++credential holder. **What it can see:** at about 500 trials a month, outcome changes of about 15 points or more (the
++share of tasks resolved going from 40% to 55%). Smaller changes are judged by process metrics (tool calls, cost, wall
++time), behavior specs and, later, trace-mined micro-evals ([#33](https://github.com/Sean-Koval/flightdeck/issues/33)). See
++[what flightdeck can tell you](statistics.md#what-flightdeck-can-tell-you).
++
+ ## See it work
+ 
+ The verdict, posted as one pull-request comment that is updated in place. This one comes from the synthetic fixture
+@@ -41,49 +49,79 @@ reads hangar's versioned interfaces and asks hangar to run the trials it plans.
+ ## Use cases
+ 
+ - **Bump the CLI lock with evidence.** A harness maintainer opens the canary PR that moves claude-code to a new
+-  version, runs the regression suite on both locks with `flightdeck experiment run`, and gets a comment on the PR such as
+-  *non-inferior on resolved, −0.8 pp, CI −4.1…+2.5* or *No decision: underpowered*, with the cost per resolved task
+-  beside it.
++  version, runs the regression suite on the old lock and the new one with `flightdeck experiment run`, and gets one
++  comment on the PR with the pre-registered verdict and the cost per resolved task of each. At 50 tasks × 3 trials, a
++  bump that changes nothing typically reads *No decision: the interval on resolved spans the margin (−0.7 pp, CI
++  −10.0…+8.7, margin −5.0)*: 300 trials can't prove a 5-point margin. A regression of 20 points comes out *worse*
++  about 4 times in 5. Today: both arms run the CLI version hangar's lock pins (`harness@version`), so variants can
++  differ in model, skills, instructions and approvals but not in CLI version; lock against lock once the regression
++  suite ([#12](https://github.com/Sean-Koval/flightdeck/issues/12)) and `harness_lock` variants ([hangar#135](https://github.com/Sean-Koval/hangar/issues/135)) land in flightdeck.
+ - **Decide whether a workflow plugin pays for itself.** A team lead A/Bs the ai-dlc plugin on and off across 30 tasks.
+-  Trials are paired by task, so the answer needs a fraction of the runs an unpaired comparison would, and the verdict
+-  follows a `decision.yaml` committed before the first trial, so nobody moves the goalposts afterwards.
++  Trials are paired by task, so the answer needs a fraction of the runs an unpaired comparison would (at 30 tasks it
++  can see a change of about 20 points), and the verdict follows a `decision.yaml` committed before the first trial, so
++  nobody moves the goalposts afterwards.
+ - **Catch a behavior regression nobody tested for.** A platform engineer writes "never push to main" and "run trusted
+-  tests before committing" as behavior specs. The nightly `flightdeck check run` scores every turn and opens an issue
+-  when a violation rate jumps, naming the harness digest that changed that day.
++  tests before committing" as behavior specs. Scheduled nightly, `flightdeck check run` scores every turn and opens an
++  issue when a violation rate jumps, naming the harness digest that changed that day (the schedule lives in the
++  team's private data repository; [#15](https://github.com/Sean-Koval/flightdeck/issues/15)).
+ 
+ ## Quickstart
+ 
+-Needs [uv](https://docs.astral.sh/uv/) and git. Five commands, on the fixture experiment (no hangar, no team data):
++Needs [uv](https://docs.astral.sh/uv/) and git. Six commands, on the fixture experiment (no hangar, no team data):
+ 
+ ```sh
+ git clone https://github.com/Sean-Koval/flightdeck && cd flightdeck
+ uv run python scripts/fixture_export.py demo/export        # what `hangar experiment export <id> -o DIR` writes
+ uv run flightdeck ingest export demo/export --out demo/plane
++uv run flightdeck check run --data demo/plane --date 2025-10-16 --specs specs/examples/team-default.yaml
+ uv run flightdeck stats compare job-expdemo --data demo/plane
+ uv run flightdeck report experiment job-expdemo --data demo/plane --decision demo/export/decision.yaml
+ ```
+ 
++Once uv has installed the dependencies (the first `uv run` does that), it takes a few seconds. Expect, among the
++output:
++
++```text
++experiment-job-expdemo: 73 runs, 331 spans, 710 events, 2 manifests, 70 grades, 213 test_cases -> demo/plane
++spec	never-push-main	pass=72 fail=0 not_applicable=0 unknown=1
++Paired difference treat - control: **+21.2 pp**, 95% CI +1.5 pp to +43.9 pp (task bootstrap; 11 tasks, 63 trials; ...)
++**Verdict**: treat is better than control on resolved (+21.2 pp, CI +1.5…+43.9, margin -5.0).
++```
++
++The fixture is built with a large effect so that 11 tasks can show it; the report also gets a Behavior specs section
++from `check run`.
++
+ Against a real hangar, ingest with `HANGAR_TOKEN=... flightdeck ingest experiment <id> --hangar https://<your hangar>`
+ and post with `--post owner/repo#n`. [Getting started](getting-started.md) has the rest.
+ 
+ ## Features
+ 
+-| Feature | What you get | Docs |
+-| --- | --- | --- |
+-| Ingest | Hangar REST or `hangar experiment export` into `flightdeck.parquet/v1` (runs, spans, events, manifests, grades, test cases), idempotent; `flightdeck query` over DuckDB | [Data plane](data-plane.md) |
+-| Paired statistics | Task bootstrap, Wilson, pass@k and pass^k, $ per resolved task, a power estimate; exclusions (`infra_error` from hangar, cancelled, drift) always printed | [Statistics](statistics.md) |
+-| Behavior specs | YAML predicates over `hangar.trace/v1` that count only trusted test runs; ADR `checks:`; nightly runner with change-point alerts | [Behavior specs](behavior-specs.md) |
+-| Reports | Markdown with a pre-registered verdict, pins, outcome, process, cost and spec pass rates, posted as one PR comment | [Reports](reports.md) |
+-| Experiments | Suites of Harbor-compatible tasks submitted to hangar with concrete model pins and a cost gate | [Running experiments](runners.md), [Tasks](tasks.md) |
+-| Small by design | A counted line budget for the analysis code, enforced in CI; every raise is a measured ADR | [ADR-0005](decisions/0005-post-v0-budget.md) |
+-
+-Vocabulary (run, turn, trial, check vs grader) is in [Concepts](concepts.md).
++| Feature | What you get | Status | Docs |
++| --- | --- | --- | --- |
++| Ingest | Hangar REST or `hangar experiment export` into `flightdeck.parquet/v1` (runs, spans, events, manifests, grades, test cases), idempotent; `flightdeck query` over DuckDB | Shipped ([#7](https://github.com/Sean-Koval/flightdeck/issues/7)) | [Data plane](data-plane.md) |
++| Compactor | Hangar's GCS outbox into the Parquet data plane, nightly on Cloud Run, while the sandbox pools are off | Shipped ([#5](https://github.com/Sean-Koval/flightdeck/issues/5)); needs hangar's outbox turned on (`HANGAR_OUTBOX_URL`, off by default) | [Data plane](data-plane.md#compactor) |
++| Paired statistics | Task bootstrap, Wilson, pass@k and pass^k, $ per resolved task, a power estimate; exclusions (`infra_error` from hangar, cancelled, drift) always printed | Shipped ([#8](https://github.com/Sean-Koval/flightdeck/issues/8)) | [Statistics](statistics.md) |
++| Behavior specs | YAML predicates over `hangar.trace/v1` that count only trusted test runs | Shipped ([#14](https://github.com/Sean-Koval/flightdeck/issues/14)) | [Behavior specs](behavior-specs.md) |
++| Nightly checks | `check run` over a day of the data plane, ADR `checks:`, change-point alerts | Code merged; [#15](https://github.com/Sean-Koval/flightdeck/issues/15) open until it is scheduled with a real team ADR | [Behavior specs](behavior-specs.md#adr-checks-and-the-nightly-runner) |
++| Reports | Markdown with a pre-registered verdict, pins, outcome, process, cost and spec pass rates, posted as one PR comment | Shipped ([#9](https://github.com/Sean-Koval/flightdeck/issues/9)) | [Reports](reports.md) |
++| Experiments | Suites of Harbor-compatible tasks submitted to hangar with concrete model pins and a cost gate; a local Docker backend for fixtures and CI | Shipped ([#11](https://github.com/Sean-Koval/flightdeck/issues/11), [#18](https://github.com/Sean-Koval/flightdeck/issues/18)); `harness_lock` variants not yet | [Running experiments](runners.md), [Tasks](tasks.md) |
++| Weekly metrics | The team's weekly scorecard, one SQL definition over Parquet, as JSON for hangar's digest | Shipped ([#6](https://github.com/Sean-Koval/flightdeck/issues/6)) | [Weekly metrics](metrics.md) |
++| Judges | Rubric judges used only once calibrated against people (κ ≥ 0.6), estimates by prediction-powered inference | Shipped ([#27](https://github.com/Sean-Koval/flightdeck/issues/27)) | [Judges](judges.md) |
++| Sealed holdouts | Hash-manifested, canaried task sets written blind and scored once | Code merged; [#13](https://github.com/Sean-Koval/flightdeck/issues/13) open until the first set is sealed | [Holdouts](holdouts.md) |
++| Knowledge evals | A 40-question gold set scored on correctness and citation validity | Code merged; [#21](https://github.com/Sean-Koval/flightdeck/issues/21) open until the gold set is written and scored | [Knowledge evals](knowledge-evals.md) |
++| Trial cache | Reuse trials whose inputs haven't changed; a nightly drift sentinel | Code merged; [#24](https://github.com/Sean-Koval/flightdeck/issues/24) open until the sentinel runs nightly | [Running experiments](runners.md#cache) |
++| Mutation scoring | Remove one harness component at a time and check that a grader or spec notices | Code merged; [#16](https://github.com/Sean-Koval/flightdeck/issues/16) open until the first live run | [Behavior specs](behavior-specs.md#mutation-scoring) |
++| Small by design | 3,785 counted lines of analysis code, enforced in CI; raised from 1,500 by ADRs 0003–0005 | The budget is full: any increase needs a new ADR | [ADR-0005](decisions/0005-post-v0-budget.md) |
++
++Vocabulary (run, turn, trial, check vs grader) is in [Concepts](concepts.md); every command and flag in the
++[CLI reference](cli.md); what flightdeck reads, writes and pins in [Contracts](contracts.md).
+ 
+ 
+ ## Where to go next
+ 
+ - [Getting started](getting-started.md): the boundary, the fixture end to end, a real hangar, the code map.
+ - [Concepts](concepts.md): the vocabulary (run, turn, trial, check vs grader).
++- [CLI](cli.md) and [Contracts](contracts.md): every command and flag; what flightdeck reads, writes and pins.
+ - [Decisions](decisions/0001-boundary-with-hangar.md): the boundary with hangar, the public-code, private-data split
+   and the line budget.
+ - [Source on GitHub](https://github.com/Sean-Koval/flightdeck).
+diff --git a/docs/knowledge-evals.md b/docs/knowledge-evals.md
+index d2b9520..72d3ae8 100644
+--- a/docs/knowledge-evals.md
++++ b/docs/knowledge-evals.md
+@@ -1,5 +1,9 @@
+ # Knowledge evals
+ 
++!!! note "Status"
++    Code merged ([#54](https://github.com/Sean-Koval/flightdeck/pull/54)); issue [#21](https://github.com/Sean-Koval/flightdeck/issues/21) stays open until the 40 questions are written, sealed and both
++    baselines scored once in the private data repository.
++
+ The knowledge plan builds no team retrieval service unless a gold set shows the baselines, repo search and Claude
+ Projects, **losing by at least 15 points** on correctness or citation validity. People write the gold set (40
+ questions); flightdeck seals it, scores each arm once, and keeps it as the regression gate for any retrieval tool a
+@@ -46,7 +50,7 @@ flightdeck knowledge score suites/knowledge-gold-v1 --arm baseline-repo-search -
+   [--baseline baseline-repo-search --candidate retrieval]
+ ```
+ 
+-- **Correctness**: every required fact is present. Until a rubric judge is calibrated (#27, κ ≥ 0.6), two people
++- **Correctness**: every required fact is present. Until a rubric judge is calibrated ([#27](https://github.com/Sean-Koval/flightdeck/issues/27), κ ≥ 0.6), two people
+   rate each answer (`labels/<arm>.jsonl`, `correct` true or false); the majority decides and a tie counts as
+   incorrect. The report prints Cohen's κ between the first two raters.
+ - **Citation validity**: an answer is valid when it cites at least one source and every citation is valid. Each
+@@ -61,4 +65,4 @@ flightdeck knowledge score suites/knowledge-gold-v1 --arm baseline-repo-search -
+   plain words: "*baseline* is shown to lose by at least 15 points on ..." when an interval's lower bound reaches +15
+   points, else "*baseline* is not shown to lose by 15 points".
+ 
+-Link the report from #21 and from the knowledge ADR once both baselines are scored.
++Link the report from [#21](https://github.com/Sean-Koval/flightdeck/issues/21) and from the knowledge ADR once both baselines are scored.
+diff --git a/docs/reports.md b/docs/reports.md
+index 3acf554..c4f4856 100644
+--- a/docs/reports.md
++++ b/docs/reports.md
+@@ -45,6 +45,11 @@ margin: -0.05         # non-inferiority margin, in the metric's units (a proport
+ min_tasks: 10         # fewer paired tasks: no decision
+ ```
+ 
++A worked example is `flightdeck/decision.yaml` in the [team-harness repo](https://github.com/Sean-Koval/team-harness/tree/main/flightdeck) (resolved, higher, margin
++−0.05, at least 10 tasks), next to `flightdeck/suite.yaml` and its specs; add a task before its `--dry-run` works (`flightdeck task new
++flightdeck/tasks/<id>`). Choose the margin with the [power table](statistics.md#what-flightdeck-can-tell-you) in
++mind: with 50 tasks × 3 trials and no real change, a −0.05 margin gives a verdict only about one time in five.
++
+ The report prints a verdict only when the file is committed as it is and the last commit that changed it is older
+ than the first finished trial: the git commit time, not the file's modification time, which any copy or checkout
+ resets. An uncommitted or locally edited `decision.yaml` gives **No verdict**. The rule:
+diff --git a/docs/runners.md b/docs/runners.md
+index 4790d01..90c3d8a 100644
+--- a/docs/runners.md
++++ b/docs/runners.md
+@@ -12,7 +12,7 @@ class Backend(Protocol):
+     def collect(self, run_set: str) -> Path           # ingests runs, grades, traces and manifests
+ ```
+ 
+-The CLI and suites call only this interface (a test double proves it), so pin-set trials (`POST /api/trials`, #25)
++The CLI and suites call only this interface (a test double proves it), so pin-set trials (`POST /api/trials`, [#25](https://github.com/Sean-Koval/flightdeck/issues/25))
+ can replace today's backend without touching them.
+ 
+ **`HangarBatchBackend`** uses hangar's batch experiments (hangar spec 0014 §4): `POST /api/experiments` with tasks ×
+@@ -61,14 +61,16 @@ The tasks become the experiment's tasks and its one grader (docs/tasks.md#on-han
+ - **Models.** Every variant names a concrete model id. Policies (`frontier`, `balanced`, `frontier@openai`),
+   aliases (`*-latest`, OpenRouter's `~…`) and family names without a version (`opus`, `sonnet`, `gpt-5`,
+   `claude-opus-5`) are refused before anything is sent, because the provider can move them between two trials. The rule
+-  is hangar's `modelpolicy.is_concrete` (#167), ported to `src/flightdeck/ported/modelpolicy.py` and checked against
++  is hangar's `modelpolicy.is_concrete` ([hangar#167](https://github.com/Sean-Koval/hangar/issues/167)), ported to `src/flightdeck/ported/modelpolicy.py` and checked against
+   hangar's own test table (`tests/fixtures/hangar/model_concreteness.json`): a concrete id names a version or a date
+   (`claude-opus-5-5`, `claude-opus-4-5-20251101`, `gpt-6.1-sol`, `gpt-4o-2024-08-06`, `gemini-3.8-flash`,
+   `openrouter/anthropic/claude-opus-5.5`). `run`, `status` and `ingest` share it. Without the provider's model list
+   flightdeck decides by shape only, so an id hangar accepts because its provider lists it (`claude-opus-5`) needs
+   `--allow-model ID`; `hangar env list` shows what a policy resolves to today.
+ - **Harness versions.** `harness@version` must be the version hangar's lock pins (`harnesses.lock.yaml`); hangar
+-  refuses the experiment otherwise, and `run` prints hangar's message.
++  refuses the experiment otherwise, and `run` prints hangar's message. Variants that name a harness lock
++  (`harness_lock: name@sha256:...`, which hangar accepts since [hangar#135](https://github.com/Sean-Koval/hangar/issues/135))
++  are refused here for now (`harness_lock isn't a hangar variant field`); see [Contracts](contracts.md#the-vendored-schemas).
+ - **After the start**, `status` checks the index's pins: every task has a `base_sha`, no variant's model was pinned to
+   an alias, and variants that asked for the same model got the same id. Any of these is a pin problem and `status`
+   exits 1.
+@@ -101,6 +103,10 @@ tables and replace each other's rows rather than duplicating them.
+ 
+ ## Cache
+ 
++!!! note "Status"
++    Code merged ([#55](https://github.com/Sean-Koval/flightdeck/pull/55)); issue [#24](https://github.com/Sean-Koval/flightdeck/issues/24) stays open until the drift sentinel is scheduled nightly in the
++    private data repository.
++
+ Tokens cost far more than compute (about $2-3 a trial against well under a cent), so a trial whose inputs haven't
+ changed is reused rather than re-run. `experiment run <suite> --cache --data <dir>` looks each planned
+ `(task, variant)` up in the data plane and submits only what is missing; code: `src/flightdeck/runners/cache.py`.
+diff --git a/docs/statistics.md b/docs/statistics.md
+index 984bc69..eb25794 100644
+--- a/docs/statistics.md
++++ b/docs/statistics.md
+@@ -2,14 +2,42 @@
+ 
+ How flightdeck turns trials into numbers a team can decide on. Code: `src/flightdeck/stats/core.py`.
+ 
++## What flightdeck can tell you
++
++At the team's scale, about 500 trials a month, an A/B of a harness change can show:
++
++- **An outcome change of about 15 points or more.** For example, a change that moves the share of tasks resolved
++  from 40% to 55%. With 50 tasks run 3 times in each arm (300 trials), a 15-point change is detected about 4 times in
++  5, a 10-point change about half the time and a 5-point change about 1 time in 5. With 30 tasks the smallest change
++  seen 4 times in 5 is about 20 points; with 20 tasks, about 25.
++- **"Not worse" only with many tasks.** The 95% interval on resolved is about 19 points wide at 50 tasks × 3 trials,
++  24 at 30 tasks and 29 at 20. For a non-inferiority verdict at a 5-point margin, the whole interval has to sit
++  above −5 points. When nothing really changed, that happens about 1 time in 5 at 50 tasks (19% of 20,000 simulated
++  experiments: 16% *non-inferior*, 3% *better*); the other 4 times the report says *No decision*, which is the honest
++  answer at that size, not a failure. Seeing 5-point changes, or a 5-point margin, takes about 400 tasks × 3 trials
++  per arm (2,400 trials, about five months at this scale; an interval about 7 points wide).
++- **Smaller changes in process metrics.** Tool calls, cost and wall time are numbers on every trial rather than a
++  pass or a fail, and each comes with its own paired interval, which is often far narrower than the outcome's.
++- **Behavior.** Whether each behavior spec holds, as a pass rate per variant, and a jump in a spec's nightly
++  violation rate ([behavior specs](behavior-specs.md)).
++
++What it can't show at this budget is an outcome change of a few points. Those are judged by process metrics,
++behavior specs and, later, trace-mined skill micro-evals ([#33](https://github.com/Sean-Koval/flightdeck/issues/33)).
++
++The numbers come from flightdeck's own code on one model of tasks (each task's base rate drawn from Beta(1.2, 1.2),
++3 trials per task and arm, no real change for the interval widths): `simulate_power` for detection (a one-sided z test
++at α = 0.025, the same bar as a 95% interval whose lower bound is above zero; 80% power), and `paired_bootstrap` with
++the report's verdict rule for the intervals. Every `stats compare` prints the smallest change its own experiment can
++detect.
++
+ ## Pair by task
+ 
+ At about 500 trials a month, an outcome A/B is only worth running **paired by task**: every task runs in both
+ arms, and the comparison resamples tasks. Tasks differ far more from each other than trials of one task do, so
+ unpaired comparisons (or trial-level resampling) mostly measure which tasks each arm happened to get.
+ 
+-The panel's r1 simulation (`stats.core.simulate_power`; task base rates from Beta(1.2, 1.2), one-sided z test at
+-α = 0.05), 50 tasks × 3 trials per arm:
++A simulation (`stats.core.simulate_power`; task base rates from Beta(1.2, 1.2), one-sided z test at α = 0.025),
++50 tasks × 3 trials per arm:
+ 
+ | Lift | Paired power | Unpaired power |
+ | --- | --- | --- |
+@@ -31,7 +59,7 @@ budget can't see them. `tests/test_stats.py::test_power_reproduces_the_r1_table`
+ | `trial_bootstrap(per_task)` | The naive trial-level interval | Contrast only: it is too narrow when tasks differ |
+ | `dollars_per_resolved(per_task)` | Total cost / resolved count (ratio of sums), task bootstrap | Cost efficiency. Trials with unknown cost are excluded and counted |
+ | `mcnemar_discordant(pairs)` | Concordant and discordant task counts, exact McNemar p | Reported with every outcome comparison; feeds adaptive allocation later |
+-| `cohen_kappa(pairs)` | Cohen's κ for two raters' binary labels | Rater agreement on the knowledge gold set; judges' calibration (#27) |
++| `cohen_kappa(pairs)` | Cohen's κ for two raters' binary labels | Rater agreement on the knowledge gold set; judges' calibration ([#27](https://github.com/Sean-Koval/flightdeck/issues/27)) |
+ 
+ Every result is an `Interval` carrying its estimate, bounds, level, number of tasks and trials, the seed, and a
+ note. Fewer than 10 paired tasks is labelled *underpowered: do not decide on this*. No p-value is reported without
+@@ -47,7 +75,7 @@ flightdeck stats compare <experiment> [--a control] [--b treat] [--metric resolv
+ Code: `src/flightdeck/stats/compare.py`. Per variant: trials and the resolve rate with its Wilson interval (or the
+ metric's mean), and dollars per resolved task with its task-bootstrap interval. Then the paired difference B − A with
+ its 95% task-bootstrap interval, the numbers of tasks and trials, concordant and discordant tasks (resolved), a power
+-line (the smallest lift the r1 simulation detects at 80% power with this many tasks and trials, cached per n), the
++line (the smallest lift `simulate_power` detects at 80% power with this many tasks and trials, cached per n), the
+ resolved definition used, the exclusions with counts, and the saturated tasks. `tool_calls` counts the trial's
+ `tool.call` spans; `wall_s` is the trial's finish minus start.
+ 
+diff --git a/mkdocs.yml b/mkdocs.yml
+index 341848a..cecb3c7 100644
+--- a/mkdocs.yml
++++ b/mkdocs.yml
+@@ -65,7 +65,6 @@ exclude_docs: |
+   assets/report.md
+   assets/build.py
+ 
+-# Guides (reports, tasks, behavior specs, runners) join the nav as their pages land on main.
+ nav:
+   - Home: index.md
+   - Get started:
+@@ -80,6 +79,8 @@ nav:
+       - Behavior specs: behavior-specs.md
+       - Reports: reports.md
+   - Reference:
++      - CLI: cli.md
++      - Contracts: contracts.md
+       - Data plane: data-plane.md
+       - Weekly metrics: metrics.md
+       - Statistics: statistics.md
+diff --git a/scripts/docs_reference.py b/scripts/docs_reference.py
+new file mode 100644
+index 0000000..3a55e6b
+--- /dev/null
++++ b/scripts/docs_reference.py
+@@ -0,0 +1,197 @@
++#!/usr/bin/env python3
++"""Generate the docs' reference sections from the code, so they can't drift from it.
++
++- `docs/cli.md`: every command group, command, argument and option of the `flightdeck` Typer app (`flightdeck.cli`);
++- the `flightdeck.parquet/v1` column tables in `docs/contracts.md`, between the `generated:parquet` markers, from
++  `src/flightdeck/dataplane/schema.py`.
++
++`tests/test_docs_reference.py` fails when either is stale. Run it after changing a command, an option or a column:
++
++    uv run python scripts/docs_reference.py [--check]
++"""
++
++from __future__ import annotations
++
++import argparse
++import sys
++from pathlib import Path
++from typing import Any
++
++ROOT = Path(__file__).resolve().parent.parent
++CLI_MD = ROOT / "docs" / "cli.md"
++CONTRACTS_MD = ROOT / "docs" / "contracts.md"
++BEGIN, END = "<!-- generated:parquet by scripts/docs_reference.py -->", "<!-- /generated:parquet -->"
++KINDS = {"str": "text", "int": "integer", "float": "number", "path": "path", "file": "path", "boolean": "flag"}
++ARROW = {"string": "", "int64": "int", "double": "float", "bool": "bool", "timestamp[ms, tz=UTC]": "timestamp",
++         "list<item: string>": "list of strings"}
++# Where each group (or top-level command) is explained; options without a description are described there.
++GUIDES = {"compact": ("Data plane: compactor", "data-plane.md#compactor"),
++          "query": ("Data plane: querying", "data-plane.md#querying"),
++          "ingest": ("Data plane: ingest", "data-plane.md#ingest"),
++          "stats": ("Statistics", "statistics.md#flightdeck-stats-compare"), "report": ("Reports", "reports.md"),
++          "spec": ("Behavior specs", "behavior-specs.md"),
++          "check": ("Behavior specs: nightly runner", "behavior-specs.md#adr-checks-and-the-nightly-runner"),
++          "mutate": ("Behavior specs: mutation scoring", "behavior-specs.md#mutation-scoring"),
++          "task": ("Tasks", "tasks.md"), "holdout": ("Holdouts", "holdouts.md"),
++          "knowledge": ("Knowledge evals", "knowledge-evals.md"), "experiment": ("Running experiments", "runners.md"),
++          "cache": ("Running experiments: cache", "runners.md#cache"), "metrics": ("Weekly metrics", "metrics.md"),
++          "judge": ("Judges", "judges.md")}
++
++
++def guide(name: str) -> str:
++    return "[{}]({})".format(*GUIDES[name]) if name in GUIDES else ""
++
++
++# Read with os.environ rather than as an option's envvar (grep `os.environ` under src/flightdeck/).
++ENVIRONMENT = [
++    ("HANGAR_TOKEN", "Bearer token for hangar REST: `ingest experiment|job|session`, `experiment run|status|collect`."),
++    ("GITHUB_TOKEN", "`report post` and `report experiment --post` (`issues:write` / `pull_requests:write`; `gist` "
++     "for `--gist`), and `ingest github` (read-only)."),
++    ("GITHUB_API_URL", "GitHub API root for posting reports (default `https://api.github.com`)."),
++    ("FLIGHTDECK_AUTHOR", "Also read by `mutate run`, whose cost gate charges that author's sub-cap."),
++    ("ANTHROPIC_API_KEY", "Local backend only, for a real-model `claude-code@<version>` trial (an API key, never a "
++     "subscription login); never used in CI."),
++]
++
++
++def md(text: str | None) -> str:
++    """One line of markdown: outside `code`, the characters HTML or a table would eat are escaped."""
++    parts = " ".join((text or "").split()).split("`")
++    esc = (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("|", "&#124;"), ("*", "\\*"))
++    for i in range(0, len(parts), 2):
++        for a, b in esc:
++            parts[i] = parts[i].replace(a, b)
++    return "`".join(parts)
++
++
++def walk(cmd: Any, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], Any]]:
++    """(path, command) for every visible command under `cmd`, groups expanded, in registration order."""
++    subs = getattr(cmd, "commands", None)
++    if subs is None:
++        return [(path, cmd)]
++    leaves = [(path + (n,), c) for n, c in subs.items() if not c.hidden and getattr(c, "commands", None) is None]
++    groups = [(n, c) for n, c in subs.items() if not c.hidden and getattr(c, "commands", None) is not None]
++    return leaves + [x for n, c in groups for x in walk(c, path + (n,))]
++
++
++def usage(path: tuple[str, ...], cmd: Any) -> str:
++    args = []
++    for p in cmd.params:
++        if p.param_type_name == "argument":
++            name = p.name.upper() + ("..." if p.nargs == -1 else "")
++            args.append(name if p.required else f"[{name}]")
++    opts = any(p.param_type_name == "option" and not p.hidden for p in cmd.params)
++    return " ".join(["flightdeck", *path, *(["[OPTIONS]"] if opts else []), *args])
++
++
++def row(p: Any) -> str:
++    kind: str = KINDS.get(p.type.name) or str(p.type.name)
++    if p.param_type_name == "argument":
++        name = f"`{p.name.upper()}`"
++        kind += ", one or more" if p.nargs == -1 else ""
++    else:
++        name = ", ".join(f"`{o}`" for o in p.opts) + "".join(f" / `{o}`" for o in p.secondary_opts)
++        kind += ", repeatable" if p.multiple else ""
++    if p.required:
++        default = "required"
++    elif p.default is None or p.default == "" or p.default == []:
++        default = ""
++    elif isinstance(p.default, bool):
++        default = "on" if p.default else "off"
++    else:
++        default = f"`{p.default}`"
++    envs = [p.envvar] if isinstance(p.envvar, str) else list(p.envvar or [])
++    env = ", ".join(f"`{e}`" for e in envs)
++    return f"| {name} | {kind} | {default} | {env} | {md(getattr(p, 'help', None))} |"
++
++
++def cli_reference() -> str:
++    import typer.main
++
++    from flightdeck.cli import app
++
++    root = typer.main.get_command(app)
++    subs: dict[str, Any] = getattr(root, "commands", {})
++    out = ["# CLI reference", "",
++           "Every command, argument and option of `flightdeck`, generated from the code by `uv run python "
++           "scripts/docs_reference.py` (`tests/test_docs_reference.py` fails when this page is stale). Every command "
++           "also takes `--help`. Options with an environment variable read it when the option isn't given; an option "
++           "without a description here is explained in its group's guide.", "",
++           "| Group | What it does | Commands | Guide |", "| --- | --- | --- | --- |"]
++    top = [n for n, c in subs.items() if getattr(c, "commands", None) is None and not c.hidden]
++    out.append("| (none) | Top-level commands | " + ", ".join(f"[`{n}`](#flightdeck-{n})" for n in top) + " | "
++               + ", ".join(f"`{n}`: {guide(n)}" for n in top if n in GUIDES) + " |")
++    for n, c in subs.items():
++        if getattr(c, "commands", None) is not None and not c.hidden:
++            cmds = ", ".join(f"[`{s}`](#flightdeck-{n}-{s})" for s in c.commands)
++            out.append(f"| [`{n}`](#flightdeck-{n}) | {md(c.help)} | {cmds} | {guide(n)} |")
++    group = None
++    for path, cmd in walk(root, ()):
++        if len(path) > 1 and path[0] != group:
++            group = path[0]
++            out += ["", f"## `flightdeck {group}`", "", md(subs[group].help) + f" Guide: {guide(group)}."]
++        elif len(path) == 1 and group is None:
++            group = ""
++            out += ["", "## Top-level commands"]
++        more = f" Guide: {guide(path[0])}." if len(path) == 1 and path[0] in GUIDES else ""
++        out += ["", f"### `flightdeck {' '.join(path)}`", "", md(cmd.help) + more, "", "```", usage(path, cmd), "```"]
++        params = [p for p in cmd.params if not getattr(p, "hidden", False)]
++        if params:
++            out += ["", "| Argument or option | Type | Default | Environment | Description |",
++                    "| --- | --- | --- | --- | --- |", *map(row, params)]
++    out += ["", "## Environment", "",
++            "Besides the options' environment variables above, flightdeck reads these directly:", "",
++            "| Variable | Used for |", "| --- | --- |", *(f"| `{k}` | {v} |" for k, v in ENVIRONMENT)]
++    return "\n".join(out) + "\n"
++
++
++def parquet_columns() -> str:
++    from flightdeck.dataplane import schema
++
++    out = [BEGIN, "", f"Every table also has `run_id`, `source` and `dt` (`{schema.VERSION}`; `dt` is the partition, "
++           "in the path). Columns are text unless a type is given.", ""]
++    for title, tables in (("Flattened from hangar", schema.TABLES), ("From the outbox and GitHub", schema.OUTBOX),
++                          ("Written by flightdeck", schema.DERIVED)):
++        out += [f"| {title} | Columns |", "| --- | --- |"]
++        for name, sch in tables.items():
++            cols = [f"`{f.name}`" + (f" {ARROW[str(f.type)]}" if ARROW[str(f.type)] else "")
++                    for f in sch if f.name not in ("run_id", "source", "dt")]
++            out.append(f"| `{name}` | {', '.join(cols)} |")
++        out.append("")
++    return "\n".join(out + [END])
++
++
++def contracts(text: str) -> str:
++    head, sep, rest = text.partition(BEGIN)
++    if not sep or END not in rest:
++        raise SystemExit(f"{CONTRACTS_MD}: missing the {BEGIN} ... {END} markers")
++    return head + parquet_columns() + rest.split(END, 1)[1]
++
++
++def stale() -> list[str]:
++    """The generated files that differ from what the code generates now."""
++    out = []
++    if not CLI_MD.is_file() or CLI_MD.read_text(encoding="utf-8") != cli_reference():
++        out.append(str(CLI_MD.relative_to(ROOT)))
++    text = CONTRACTS_MD.read_text(encoding="utf-8")
++    if contracts(text) != text:
++        out.append(str(CONTRACTS_MD.relative_to(ROOT)))
++    return out
++
++
++def main(argv: list[str] | None = None) -> int:
++    ap = argparse.ArgumentParser(description="Generate the docs' CLI reference and Parquet columns.")
++    ap.add_argument("--check", action="store_true", help="Exit 1 when a generated file is stale; write nothing.")
++    args = ap.parse_args(argv)
++    if args.check:
++        bad = stale()
++        print(f"stale: {', '.join(bad)} (run `uv run python scripts/docs_reference.py`)" if bad else "up to date")
++        return 1 if bad else 0
++    CLI_MD.write_text(cli_reference(), encoding="utf-8")
++    CONTRACTS_MD.write_text(contracts(CONTRACTS_MD.read_text(encoding="utf-8")), encoding="utf-8")
++    print(f"wrote {CLI_MD.relative_to(ROOT)} and the columns in {CONTRACTS_MD.relative_to(ROOT)}")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/src/flightdeck/stats/compare.py b/src/flightdeck/stats/compare.py
+index c06c39b..43860fe 100644
+--- a/src/flightdeck/stats/compare.py
++++ b/src/flightdeck/stats/compare.py
+@@ -76,7 +76,7 @@ def value(t: dict[str, Any], metric: str) -> float | None:
+ 
+ @cache
+ def mde(tasks: int, trials: int, power: float = 0.8) -> float | None:
+-    """The smallest lift (5 pp steps) the r1 simulation detects at `power` with this many paired tasks and trials."""
++    """The smallest lift (5 pp steps) simulate_power detects at `power` with this many paired tasks and trials."""
+     for pp in range(5, 55, 5):
+         if simulate_power(tasks, trials, pp / 100, sims=400) >= power:
+             return pp / 100
+@@ -141,7 +141,7 @@ def compare(trials: list[dict[str, Any]], metric: str, a: str, b: str, seed: int
+             n_trials = max(1, round(c.diff.n_trials / (2 * len(paired))))
+             m = mde(len(paired), n_trials)
+             c.power = (f"At {len(paired)} paired tasks x {n_trials} trials the minimum detectable lift at 80% power "
+-                       f"is about {m:.0%} (r1 simulation)." if m else
++                       f"is about {m:.0%} (simulated)." if m else
+                        f"At {len(paired)} paired tasks x {n_trials} trials no lift up to 50 pp reaches 80% power.")
+     return c
+ 
+diff --git a/src/flightdeck/stats/core.py b/src/flightdeck/stats/core.py
+index be16793..9c14458 100644
+--- a/src/flightdeck/stats/core.py
++++ b/src/flightdeck/stats/core.py
+@@ -171,9 +171,9 @@ def cohen_kappa(pairs: Sequence[tuple[bool, bool]]) -> float:
+ 
+ def simulate_power(tasks: int, trials: int, delta: float, sims: int = 2000, seed: int = 0, paired: bool = True,
+                    alpha: float = 0.05) -> float:
+-    """Power of a one-sided z test at `alpha` for a `delta` lift, with task base rates from Beta(1.2, 1.2).
++    """Power of a one-sided z test at `alpha` / 2 for a `delta` lift, task base rates from Beta(1.2, 1.2).
+ 
+-    The panel's r1 simulation: paired uses every task in both arms; unpaired splits tasks between arms.
++    The power table in docs/statistics.md: paired uses every task in both arms; unpaired splits tasks between arms.
+     """
+     rng = np.random.default_rng(seed)
+     z = NormalDist().inv_cdf(1 - alpha / 2)

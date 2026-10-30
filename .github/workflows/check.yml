@@ -34,5 +34,7 @@ jobs:
         run: python scripts/check_registry.py .
       - name: Behavior specs lint
         run: flightdeck spec lint flightdeck/specs/*.yaml
+      - name: Task check (regression-v0)
+        run: flightdeck task check flightdeck/suites/regression-v0/tasks/*/
       - name: Hook tests
         run: python -m pytest -q tests

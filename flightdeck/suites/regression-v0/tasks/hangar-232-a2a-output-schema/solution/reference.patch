@@ -1,0 +1,139 @@
+diff --git a/docs/a2a.md b/docs/a2a.md
+index 41ac2bb..07ae00c 100644
+--- a/docs/a2a.md
++++ b/docs/a2a.md
+@@ -51,7 +51,24 @@ A message turns into a job like this:
+ | `messageId` | Idempotency key: resending a message returns the same task |
+ | `contextId` you choose | Kept on the job (label `a2a.context`), so later messages in that context find it |
+ 
+-With no `repo`, hangar uses `HANGAR_A2A_DEFAULT_REPO`, and then the environment's repo. Limits are the jobs limits: 64 KB of instructions, 50 context items and 2 MB of context, plus 100 parts and `HANGAR_A2A_MAX_REQUEST_BYTES` per request. `output_schema` is rejected with a clear error until structured results land (spec 0011 §2, workstream E).
++With no `repo`, hangar uses `HANGAR_A2A_DEFAULT_REPO`, and then the environment's repo. Limits are the jobs limits: 64 KB of instructions, 50 context items and 2 MB of context, plus 100 parts and `HANGAR_A2A_MAX_REQUEST_BYTES` per request. 
++
++### Structured results
++
++To get JSON back, give the task a JSON Schema: `output_schema` in the metadata, or `metadata.schema` on a text part (the spec's §6.8 way; the metadata wins when both are set). It is the jobs `output_schema` ([context exchange](context-exchange.md)):
++
++- **Checked at submit.** It must be a JSON Schema object, valid for its draft, and at most 64 KB; otherwise `SendMessage` answers `InvalidParamsError` (-32602) saying which, and no task starts.
++- **The agent writes the result** with `hangar-agent result '<json>'` (or into `out/result.json`), and hangar validates it after the turn (up to 1 MB, `HANGAR_EXCHANGE_MAX_RESULT_KB`).
++- **A result that is missing or doesn't match** (an invalid JSON file, or up to five schema violations, each with its path) gets one repair run in the same conversation, asking for the result alone. If that still fails, the task finishes without it: no `Structured result` artifact, and the job's `result_error` (`get_job`, `GET /api/jobs/{id}`) says what was wrong.
++- **A valid result** comes back as the `Structured result` artifact (below), and in the job's `result.data` for MCP, REST and callbacks.
++
++```json
++{"message": {"role": "ROLE_USER", "messageId": "m-1",
++             "parts": [{"text": "Which test is flaky, and why?",
++                        "metadata": {"schema": {"type": "object", "required": ["test"],
++                                                "properties": {"test": {"type": "string"}, "cause": {"type": "string"}}}}}]},
++ "metadata": {"hangar": {"repo": "acme/app"}}}
++```
+ 
+ `SendMessage` blocks until the task finishes or needs input, as the spec asks, for up to `HANGAR_A2A_MAX_WAIT_SECONDS` (30 minutes), and then returns the task as it stands. Coding jobs take minutes, so prefer `SendStreamingMessage`, push notifications, or `configuration.returnImmediately: true` (0.3: `blocking: false`) and polling with `GetTask`.
+ 
+@@ -81,7 +98,7 @@ What comes back on a task:
+   - `Summary`: the agent's `RESULT.md` (secrets redacted);
+   - `Pull request` (or `Branch` if no PR was opened): a text part with the link, and a data part with `prUrl`, `prNumber`, `branch`, `baseBranch`, `headSha`, `commits` and `verifyExitCode`;
+   - `Diffstat`;
+-  - `Structured result`: a data part, once structured results exist.
++  - `Structured result`: the agent's result as a data part (`mediaType: application/json`), when the task asked for one with a schema and the result matched it ([structured results](#structured-results)).
+ - **History:** what was asked (the instructions, then each follow-up) and each turn's summary. Use `historyLength` to trim it.
+ - **`metadata.hangar`:** the job id, state, reason, repo, branch, environment, harness, model and number of turns.
+ 
+diff --git a/docs/jobs.md b/docs/jobs.md
+index d12a264..7592d81 100644
+--- a/docs/jobs.md
++++ b/docs/jobs.md
+@@ -182,6 +182,7 @@ The same happens on its own after a control-plane restart (a deploy) that took t
+ 
+ - **Watch:** attach to the job's sandbox terminal from the dashboard, or with `hangar sb attach <sandbox_id>` (the run is tmux session `terminal_session`).
+ - **Steer:** follow up from the API, MCP, CLI or a PR comment. Each follow-up is a new agent turn with your message and the previous summary, on the same branch. The PR updates in place. While a Claude Code or Codex turn runs, you can also steer or interrupt it, and answer its tool approvals when its environment uses `approvals: ask` (`POST /api/jobs/{id}/steer`, `/interrupt`, `/approvals`; MCP `steer_turn`, `answer_approval`; see [steering](steering.md)). An interrupt with a message carries on with it; without one, the job pauses in `needs_input` until you follow up or cancel, and nothing is delivered.
++- **The summary:** the prompt asks the agent for a short summary in `RESULT.md` in the job's directory (`hangar-agent done "<summary>"` writes it there too), never in the repo; the [`repo-conventions` skill](https://github.com/Sean-Koval/hangar/blob/main/envs/skills/repo-conventions/SKILL.md) says the same. It becomes the turn's summary, the PR's and the A2A `Summary` artifact. An agent that writes none still leaves a summary: the job's is then the end of the agent's output (its last 3,000 characters, redacted), which normally holds its final message. A `RESULT.md` left at the repo root instead is dropped from the PR ([scratch files](repo-policy.md#agent-scratch-files)).
+ - **Take over:** work in the sandbox yourself. Your commits go out with the next follow-up's delivery.
+ - After a turn the sandbox stays up while anyone is using it, and at least `keep_minutes` (default 120). Then it is checkpointed and released.
+ 
+diff --git a/docs/upgrading.md b/docs/upgrading.md
+index d24139c..49caa2a 100644
+--- a/docs/upgrading.md
++++ b/docs/upgrading.md
+@@ -2,6 +2,8 @@
+ 
+ Guides, newest first:
+ 
++- [**The repo-conventions hand-off**](#the-repo-conventions-hand-off-143) (#143): prebuild the images that bake the
++  skill in.
+ - [**Claude Code plugins from a seed**](#claude-code-plugins-from-a-seed-136) (#136): nothing to do unless you want plugins.
+ - [**The safe release**](#the-safe-release-120132) (#120–#132): secure defaults for intake jobs, API keys for
+   automated work, one approval rule, sealed graders, taint gates, new manifest fields and the `extends` merge rules.
+@@ -13,6 +15,18 @@ Guides, newest first:
+ 
+ Both are written for the GKE install from [gke.md](gke.md): one zonal cluster, gVisor sandboxes, the control plane with SQLite on the `hangar-data` PVC, checkpoints in the session bucket, site settings in the `hangar-site` config map, and `deploy/gke/up.sh` / `power.sh`. [CHANGELOG.md](../CHANGELOG.md) lists what each adds.
+ 
++## The repo-conventions hand-off (#143)
++
++The `repo-conventions` skill told the agent to put its hand-off summary in its final message, while the job prompt
++asks for `RESULT.md` in the job's directory. Its step 5 now says the same as the prompt: `hangar-agent done
++"<summary>"` or the task's `RESULT.md` path, never the repo, and the final message only when the task names neither.
++
++The skill is baked into the images of `claude-python`, `codex-node`, `polyglot` and `hangar` (and any environment that
++lists it), so their image tags change once, as they did for #82: prebuild with `hangar images plan` / `hangar images
++build` before the rollout. Their manifests' `harness_digest` changes too (the skill is part of the harness), so a
++harness lock frozen from one of them before this release reports drift when thawed there
++([harness locks](harness-lock.md)): freeze it again after the rollout.
++
+ ## Claude Code plugins from a seed (#136)
+ 
+ Nothing to do: an environment without `plugins:` behaves as before, and its manifests keep their digests
+diff --git a/envs/skills/repo-conventions/SKILL.md b/envs/skills/repo-conventions/SKILL.md
+index a7946cc..5c8e522 100644
+--- a/envs/skills/repo-conventions/SKILL.md
++++ b/envs/skills/repo-conventions/SKILL.md
+@@ -10,6 +10,8 @@ description: Conventions for working in hangar sandboxes - branching, commits, t
+    `main`, create `agent/<short-task-name>` first.
+ 3. **Test early**: find and run the test command before changing code so you know the baseline.
+ 4. **Commit small**: one logical change per commit, imperative subject line under 72 chars.
+-5. **Hand off**: end with a short summary in your final message: what changed, how it was
+-   verified, and anything left undone. Don't add notes files (`HANDOFF.md`, `NOTES.md`) to the
+-   repo: hangar keeps the summary, and files nobody asked for end up in the pull request.
++5. **Hand off**: write the summary where hangar asks, never into the repo: `hangar-agent done "<summary>"`,
++   or the `RESULT.md` path your task names. Say what changed, how it was verified, and anything left
++   undone, then end your turn. If your task names neither, put the summary in your final message.
++   Don't add notes files (`HANDOFF.md`, `NOTES.md`, a `RESULT.md` at the repo root) to the repo:
++   files nobody asked for end up in the pull request.
+diff --git a/skills/hangar/SKILL.md b/skills/hangar/SKILL.md
+index 647ff2a..3a7676c 100644
+--- a/skills/hangar/SKILL.md
++++ b/skills/hangar/SKILL.md
+@@ -58,9 +58,10 @@ Use one attempt by default. Each parallel attempt uses its own sandbox and agent
+ budget; a judge can incur additional work. Use the requested count and scope.
+ Jobs and sessions already provision sandboxes; do not create an extra one first.
+ 
+-For a ticket, prepare a handoff with: **ticket ID/title and source URL; problem;
+-acceptance criteria; repo and relevant base branch; constraints; verification
+-command; requested deliverable**. Attach necessary logs or files through
++For a ticket, prepare a handoff (the text you pass as `instructions`, not a
++file) with: **ticket ID/title and source URL; problem; acceptance criteria; repo
++and relevant base branch; constraints; verification command; requested
++deliverable**. Attach necessary logs or files through
+ `context`. Keep secrets out of the handoff.
+ 
+ Read [the call examples](references/workflows.md) for supported argument shapes.
+diff --git a/src/hangar/a2a.py b/src/hangar/a2a.py
+index 23369d3..1e96497 100644
+--- a/src/hangar/a2a.py
++++ b/src/hangar/a2a.py
+@@ -36,7 +36,7 @@ from pydantic import BaseModel, ValidationError
+ 
+ from hangar.auth import TokenAuth, bearer_from_headers
+ from hangar.config import Settings
+-from hangar.exchange import open_question
++from hangar.exchange import ExchangeError, open_question
+ from hangar.jobs import Caller, JobError, JobNotFound, JobService, SubmitJob, _internal
+ from hangar.models import ContextItem, Job, new_id
+ from hangar.vault import Vault
+@@ -441,7 +441,7 @@ class A2AServer:
+             return e
+         if isinstance(e, JobNotFound):
+             return _not_found("task")
+-        if isinstance(e, JobError):
++        if isinstance(e, JobError | ExchangeError):  # ExchangeError: a bad output_schema or context item (#143)
+             return _invalid(str(e))
+         if isinstance(e, ValidationError):
+             return _invalid("; ".join(f"{'.'.join(map(str, x['loc'])) or 'request'}: {x['msg']}"

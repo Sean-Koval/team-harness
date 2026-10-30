@@ -1,0 +1,1095 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 9216db0..ac88895 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -58,7 +58,7 @@ flightdeck counts. If a change needs more room, cut something or argue for a hig
+ | `flightdeck.runners` | The experiment submission client: suite plans to `hangar.experiment/v1` specs, a cost gate, `flightdeck experiment run\|status\|collect`. See [Running experiments](docs/runners.md) |
+ | `flightdeck.ported` | Code moved in and kept close to its source, outside the line budget: hangar's model-concreteness rule and trace classifier; ai-dlc's local runner, evaluation contracts and suite checks |
+ 
+-v0 is pre-release. Flightdeck has to change one real team decision ([#20](https://github.com/Sean-Koval/flightdeck/issues/20))
++v0 is pre-release. flightdeck has to change one real team decision ([#20](https://github.com/Sean-Koval/flightdeck/issues/20))
+ before anything else, a UI included, gets built.
+ 
+ ## Running the smoke tasks locally
+diff --git a/README.md b/README.md
+index 9787026..a801f26 100644
+--- a/README.md
++++ b/README.md
+@@ -5,16 +5,19 @@
+ 
+ # flightdeck
+ 
+-**Did that harness change actually help our coding agents, or did we just get lucky on a few runs?** Flightdeck
+-answers that from the runs [hangar](https://github.com/Sean-Koval/hangar) already records, as a verdict posted on the
++**Did that harness change actually help the coding agents, or was it luck on a few runs?** flightdeck answers
++that from the runs [hangar](https://github.com/Sean-Koval/hangar) already records, as a verdict posted on the
+ pull request where the change is reviewed.
+ 
+-> **The verdict** is one of five words: *better*, *non-inferior*, *worse*, *No decision* or *No verdict*. It says how
++> **The verdict** is one of five words: "better", "non-inferior", "worse", "No decision" or "No verdict". It says how
+ > the candidate arm did against the control arm on one metric, with the paired difference and its 95% interval:
+-> *candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)*. The rule that picks
++> "candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)". The rule that picks
+ > the word is committed before the first trial, so nobody moves the goalposts.
+ 
+-<img alt="The finished terminal session on the fixture experiment: flightdeck ingests the export, compares the two arms paired by task and writes a report, ending on the verdict, candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)." src="docs/assets/demo-still.svg" width="660" height="537">
++<picture>
++  <source media="(max-width: 600px)" srcset="docs/assets/demo-phone.svg" width="379" height="401">
++  <img alt="The finished terminal session on the fixture experiment: flightdeck ingests the export, compares the two arms paired by task and writes a report, ending on the verdict, candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)." src="docs/assets/demo-still.svg" width="660" height="537">
++</picture>
+ 
+ ## Six commands
+ 
+@@ -34,7 +37,7 @@ uv run flightdeck report experiment job-expdemo --data demo/plane \
+ The last line printed is the verdict above. Against a real hangar, ingest with
+ `HANGAR_TOKEN=... flightdeck ingest experiment <id> --hangar https://<your hangar>` and post with `--post owner/repo#n`.
+ 
+-## Read on
++## Read next
+ 
+ - [Docs](https://sean-koval.github.io/flightdeck/): what flightdeck is and isn't, where it sits in the
+   [agent factory](https://sean-koval.github.io/agent-factory/), and what is shipped.
+diff --git a/docs/assets/build.py b/docs/assets/build.py
+index d7a189f..0d17337 100644
+--- a/docs/assets/build.py
++++ b/docs/assets/build.py
+@@ -9,11 +9,14 @@ temporary directory, under the quickstart's paths (`demo/export`, `demo/plane`),
+   `ingest -> stats compare -> report` (`check run` feeds the report's Behavior specs section but is not shown), opens
+   on the finished session with the verdict, holds it for `HOLD` seconds, then replays the typing; the loop is under
+   20 s and 80 columns wide, so it reads at the hero's width; `demo-still.svg`: its finished frame, for the README;
++  `demo-phone.svg`: the key lines (the paired difference, the power line, the verdict) as a still 44 columns wide,
++  which the README and the docs home show on screens under 600 px so the text stays 13 px;
+ - `stats-compare.svg`: the `stats compare` output as a still terminal;
+ - `report.md` and `report-comment[-full]-{dark,light}.html`: the report, and the report rendered as a GitHub
+   pull-request comment in GitHub's dark and light palettes, on a 760 px page so it reads inside a docs column: the top
+   (the verdict and the Outcome table, for the README and the docs home) and the whole comment (for Reports), then
+-  the `.png` screenshots of them;
++  the `.png` screenshots of them, shown at their native 816 px; `report-comment-phone-{dark,light}`: the comment's top
++  (verdict, experiment, rule) in GitHub's narrow layout, 358 px wide, for screens under 600 px;
+ - `suite.svg`: where flightdeck sits in the suite, and `flow-data-plane.svg`, `flow-experiment.svg`,
+   `flow-holdout.svg` and `paired-by-task.svg` for the guides, drawn with agent-factory's diagram conventions
+   (Airframe tokens with Night fallbacks, so they follow the theme when inlined with `--8<--`), with theme-v12's
+@@ -58,6 +61,7 @@ COMMANDS = [  # (command, shown in the recording); the paths are the quickstart'
+      "    --decision demo/export/decision.yaml --out demo/report.md", True),  # two lines, as the quickstart shows it
+ ]
+ COLS, ROWS = 80, 30  # terminal size; output lines wrap at COLS
++PHONE_COLS = 44  # the phone still's width: 44 columns read at 13 px in a 360 px column
+ HOLD = 5.0  # seconds the finished session (with the verdict) shows before the typing replays
+ FONTS = ("https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900"
+          "&family=DM+Mono:wght@400;500&family=Red+Hat+Text:wght@400..700&display=swap")
+@@ -90,12 +94,12 @@ def session(tmp: Path) -> list[tuple[str, str]]:
+     return out
+ 
+ 
+-def wrap(text: str) -> list[str]:
++def wrap(text: str, cols: int = COLS) -> list[str]:
+     lines = []
+     for line in text.splitlines() or [""]:
+-        while len(line) > COLS:
+-            cut = line.rfind(" ", 0, COLS)
+-            cut = cut if cut > COLS // 2 else COLS
++        while len(line) > cols:
++            cut = line.rfind(" ", 0, cols)
++            cut = cut if cut > cols // 2 else cols
+             lines.append(line[:cut])
+             line = "  " + line[cut:].lstrip()
+         lines.append(line)
+@@ -146,14 +150,15 @@ TERM_ICON = ('<g fill="none" stroke-width="1.5" stroke-linecap="square" stroke-l
+              '<path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></g>')  # Airframe's `terminal` icon, 20px grid drawn at 14px
+ 
+ 
+-def terminal(lines: list[tuple[float, str, str]], total: float | None, title: str) -> str:
++def terminal(lines: list[tuple[float, str, str]], total: float | None, title: str, cols: int = COLS) -> str:
+     """A terminal window on Airframe's Terminal contract: always dark, DM Mono on `terminal-bg`, a bar with the product
+     and scope in mono capitals, output in `terminal-fg`, the prompt and cursor in `brand`, and color on one kind of line
+     only (`terminal-err` for the failed role). The bar reads `title` as `product|scope|scope`. With `total` (the
+     replay's length), the finished session shows first and holds `HOLD` seconds, then lines appear at their times and
+-    commands type out, looping every `HOLD + total` seconds; without it, a still of every line."""
++    commands type out, looping every `HOLD + total` seconds; without it, a still of every line. `cols` sets the
++    width."""
+     t = NIGHT
+-    w, h = round(COLS * CW + 2 * PAD), round(BAR + PAD + len(lines) * LH + PAD / 2)
++    w, h = round(cols * CW + 2 * PAD), round(BAR + PAD + len(lines) * LH + PAD / 2)
+     loop = HOLD + (total or 0)
+     pc = lambda sec: f"{100 * sec / loop:.3f}%"  # noqa: E731  a moment in the loop as a keyframe percentage
+     css = [f".t{{font:13px {MONO};fill:{t['terminal-fg']};white-space:pre}}.p{{fill:{t['brand']}}}"
+@@ -197,6 +202,20 @@ def terminal(lines: list[tuple[float, str, str]], total: float | None, title: st
+             f'aria-label="{esc(label)}"><style>{"".join(css)}</style>{"".join(body)}</svg>\n')
+ 
+ 
++def phone(steps: list[tuple[str, str]]) -> list[tuple[float, str, str]]:
++    """The key lines for a phone, wrapped at `PHONE_COLS` so they keep the 13 px text at a phone's column width: the
++    paired difference and the power line from `stats compare`, then `report` and its verdict."""
++    stats, report = (next(s for s in steps if s[0].startswith(p)) for p in ("flightdeck stats", "flightdeck report"))
++    keep = [p for p in stats[1].split("\n\n") if p.startswith(("Paired difference", "At "))]
++    lines: list[tuple[float, str, str]] = []
++    for cmd, output in ((stats[0], "\n\n".join(keep)), (report[0], report[1])):
++        parts = [x for part in cmd.split(" \\\n") for x in wrap(part.strip(), PHONE_COLS - 4)]
++        lines += [(0, "cmd" if i == 0 else "cmd2", x.strip() + (" \\" if i < len(parts) - 1 else ""))
++                  for i, x in enumerate(parts)]
++        lines += [(0, "out", x) for x in wrap(output, PHONE_COLS)] + [(0, "out", "")]
++    return lines[:-1] + [(0, "cmd", "")]
++
++
+ # ---------------------------------------------------------------------------------------------------- the PR comment
+ # GitHub's own palettes (primer, 2025): the report is read as a comment on github.com, so the picture shows that frame.
+ GH = {"light": {"bg": "#ffffff", "fg": "#1f2328", "muted": "#59636e", "line": "#d1d9e0", "well": "#f6f8fa",
+@@ -222,18 +241,22 @@ background:linear-gradient(var(--fade),var(--bg))}
+ """
+ 
+ 
+-def comment_page(report: str, theme: str, top: bool) -> str:
++def comment_page(report: str, theme: str, top: bool, phone: bool = False) -> str:
+     """The report as GitHub renders a PR comment (GFM tables, the hidden marker stays hidden) in that GitHub theme:
+     with `top`, only the verdict and the Outcome table, fading out; otherwise the whole comment. A 760 px page (GitHub's
+-    is 880) so the text still reads once a 686 px docs column scales it."""
++    is 880), shown at its native 816 px. With `phone`, the comment as GitHub's narrow layout shows it (no avatar
++    column) on a 358 px page, cut after the rule, for screens under 600 px."""
+     from markdown_it import MarkdownIt
+ 
+-    body = MarkdownIt("commonmark", {"html": True}).enable("table").render(report.split("\n### Process")[0] if top
+-                                                                           else report)
+-    root = ";".join(f"--{k}:{v}" for k, v in GH[theme].items()) + ";--w:760px"
+-    return (f'<!doctype html><html><head><meta charset="utf-8"><style>:root{{{root}}}{GH_CSS}</style></head><body>'
+-            '<div class="page"><div class="row"><div class="avatar">fd</div><div class="comment"><div class="head">'
+-            f'<b>dev-a</b> commented</div><div class="md{" fade" if top else ""}">{body}</div></div></div></div>'
++    text = report.split("\n### Outcome")[0] if phone else report.split("\n### Process")[0] if top else report
++    body = MarkdownIt("commonmark", {"html": True}).enable("table").render(text)
++    root = ";".join(f"--{k}:{v}" for k, v in GH[theme].items()) + (";--w:334px" if phone else ";--w:760px")
++    avatar = "" if phone else '<div class="avatar">fd</div>'
++    narrow = ".page{padding:12px}.md h2{font-size:1.25em}" if phone else ""
++    return (f'<!doctype html><html><head><meta charset="utf-8"><style>:root{{{root}}}{GH_CSS}{narrow}</style></head>'
++            f'<body><div class="page"><div class="row">{avatar}<div class="comment"><div class="head">'
++            f'<b>dev-a</b> commented</div><div class="md{" fade" if top and not phone else ""}">{body}</div></div>'
++            "</div></div>"
+             "</body></html>\n")
+ 
+ 
+@@ -306,8 +329,10 @@ class Diagram:
+ 
+ 
+ def suite() -> str:
+-    """Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides; Tower (planned) governs. Three
+-    boxes in a row, Tower a one-line strip under them, the roles on the eyebrows (no product hues)."""
++    """Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides; Tower governs. Three boxes in a
++    row, Tower a one-line strip under them, the roles on the eyebrows (no product hues). Tower is built (policy
++    decisions, approvals, signed receipts); only flightdeck's promotion approval through it is planned, so that edge
++    alone is dashed and says so."""
+     d = Diagram("suite", 720, 420, "Where flightdeck sits · run / judge / decide")
+     y, h, bw = 56, 276, 160
+     xs = (24, 280, 536)
+@@ -326,12 +351,14 @@ def suite() -> str:
+     d.edge(f"M{xs[0] + bw} {y + 110} H{xs[1] - 4}", "runs, traces,|the index", 232, y + 88)
+     d.edge(f"M{xs[1]} {y + 200} H{xs[0] + bw + 4}", "trials to run:|tasks × arms × n", 232, y + 222)
+     d.edge(f"M{xs[1] + bw} {y + 110} H{xs[2] - 4}", "the report", 488, y + 100)
+-    d.box(24, 358, 672, 40, "", "", (), "plan")
+-    d.text(38, 383, "Govern · planned", "l")
+-    d.text(140, 383, "Tower: policy decisions, approvals, receipts", "s")
+-    d.edge(f"M{xs[2] + bw // 2} {y + h} V354", "promotion approval", xs[2] + bw // 2 - 8, y + h + 16, "plan", "end")
+-    return d.svg("Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides; Tower, planned, "
+-                 "governs promotions")
++    d.box(24, 358, 672, 40, "", "", ())
++    d.text(38, 383, "Govern", "l")
++    d.text(96, 383, "Tower: policy decisions, approvals, signed receipts", "s")
++    d.edge(f"M{xs[2] + bw // 2} {y + h} V354", "promotion approval · planned", xs[2] + bw // 2 - 8, y + h + 16, "plan",
++           "end")
++    return d.svg("Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides; Tower governs "
++                 "risky actions with policy decisions, approvals and signed receipts; promotion approval through "
++                 "Tower is planned")
+ 
+ 
+ def flow_data_plane() -> str:
+@@ -451,16 +478,18 @@ def main() -> None:
+         "demo.cast": cast(steps),
+         "demo.svg": terminal(lines, total, "flightdeck|fixture experiment|12 tasks × 2 variants × 3 trials"),
+         "demo-still.svg": terminal(lines, None, "flightdeck|fixture experiment|12 tasks × 2 variants × 3 trials"),
++        "demo-phone.svg": terminal(phone(steps), None, "flightdeck|fixture experiment", PHONE_COLS),
+         "stats-compare.svg": terminal([(0, "cmd", stats[0])] + [(0, "out", x) for x in wrap(stats[1])], None,
+                                       "flightdeck|stats compare"),
+         "report.md": report,
+         **{f"report-comment{k}-{t}.html": comment_page(report, t, not k) for k in ("", "-full")
+            for t in ("dark", "light")},
++        **{f"report-comment-phone-{t}.html": comment_page(report, t, True, True) for t in ("dark", "light")},
+         "suite.svg": suite(), "flow-data-plane.svg": flow_data_plane(), "flow-experiment.svg": flow_experiment(),
+         "flow-holdout.svg": flow_holdout(), "paired-by-task.svg": paired_by_task(),
+     }
+-    pages = {f"report-comment{k}-{t}.png": (files[f"report-comment{k}-{t}.html"], "div.page") for k in ("", "-full")
+-             for t in ("dark", "light")}
++    pages = {f"report-comment{k}-{t}.png": (files[f"report-comment{k}-{t}.html"], "div.page")
++             for k in ("", "-full", "-phone") for t in ("dark", "light")}
+     files["sources.sha256"] = "".join(f"{hashlib.sha256(p.encode()).hexdigest()}  {n}\n"
+                                       for n, (p, _) in sorted(pages.items()))
+     for name, text in files.items():
+diff --git a/docs/assets/demo-phone.svg b/docs/assets/demo-phone.svg
+new file mode 100644
+index 0000000..152030a
+--- /dev/null
++++ b/docs/assets/demo-phone.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 379 401" width="379" height="401" role="img" aria-label="flightdeck, fixture experiment"><style>.t{font:13px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#E6E7E3;white-space:pre}.p{fill:#FFC400}.c{fill:#FFFFFF}.x{fill:#FF4D4D}.b{font:500 10.5px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;fill:#8E9297}.b1{fill:#E6E7E3}</style><rect width="379" height="401" rx="12" fill="#0A0A0A"/><rect x=".5" y=".5" width="378" height="400" rx="12" fill="none" stroke="#E6E7E3" stroke-opacity=".08"/><path d="M0 34.5H379" stroke="#E6E7E3" stroke-opacity=".09"/><g stroke="#8E9297" fill="none" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" transform="translate(14,10.0) scale(.7)"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></g><text class="b b1" x="42" y="20.75">FLIGHTDECK</text><text class="b" x="127" y="20.75">FIXTURE EXPERIMENT</text><text class="t" x="18" y="64.8" textLength="312.0" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck stats compare job-expdemo \</tspan></text><text class="t" x="18" y="81.8" textLength="148.2" lengthAdjust="spacingAndGlyphs"><tspan class="p">&gt; </tspan><tspan class="c">--data demo/plane</tspan></text><text class="t" x="18" y="98.8">Paired difference candidate − control:</text><text class="t" x="18" y="115.8">  +21.2 pp (95% CI +1.5 pp to +43.9 pp;</text><text class="t" x="18" y="132.8">  task bootstrap, 11 tasks, 63 trials; 3</text><text class="t" x="18" y="149.8">  concordant, 8 discordant tasks).</text><text class="t" x="18" y="166.8"></text><text class="t" x="18" y="183.8">At 11 paired tasks × 3 trials the minimum</text><text class="t" x="18" y="200.8">  detectable lift at 80% power is about 35</text><text class="t" x="18" y="217.8">  pp (simulated).</text><text class="t" x="18" y="234.8"></text><text class="t" x="18" y="251.8" textLength="249.6" lengthAdjust="spacingAndGlyphs"><tspan class="p">$ </tspan><tspan class="c">flightdeck report experiment \</tspan></text><text class="t" x="18" y="268.8" textLength="257.4" lengthAdjust="spacingAndGlyphs"><tspan class="p">&gt; </tspan><tspan class="c">job-expdemo --data demo/plane \</tspan></text><text class="t" x="18" y="285.8" textLength="312.0" lengthAdjust="spacingAndGlyphs"><tspan class="p">&gt; </tspan><tspan class="c">--decision demo/export/decision.yaml \</tspan></text><text class="t" x="18" y="302.8" textLength="171.6" lengthAdjust="spacingAndGlyphs"><tspan class="p">&gt; </tspan><tspan class="c">--out demo/report.md</tspan></text><text class="t" x="18" y="319.8">candidate is better than control on</text><text class="t" x="18" y="336.8">  resolved: +21.2 pp (95% CI +1.5 to +43.9,</text><text class="t" x="18" y="353.8">  margin −5.0)</text><text class="t" x="18" y="370.8">wrote demo/report.md (73 lines)</text><text class="t" x="18" y="387.8"><tspan class="p">$ ▌</tspan></text></svg>
+diff --git a/docs/assets/report-comment-dark.html b/docs/assets/report-comment-dark.html
+index 0cae155..6f49e01 100644
+--- a/docs/assets/report-comment-dark.html
++++ b/docs/assets/report-comment-dark.html
+@@ -16,7 +16,7 @@ width:max-content;max-width:100%;overflow:auto}.md th,.md td{border:1px solid va
+ background:linear-gradient(var(--fade),var(--bg))}
+ </style></head><body><div class="page"><div class="row"><div class="avatar">fd</div><div class="comment"><div class="head"><b>dev-a</b> commented</div><div class="md fade"><!-- flightdeck:report:job-expdemo -->
+ <h2>candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)</h2>
+-<p><code>job-expdemo</code>: candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
++<p>FDK-EXP-0531 (<code>job-expdemo</code>): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
+ <p>Rule, pre-registered in <code>decision.yaml</code>: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.</p>
+ <h3>Outcome</h3>
+ <table>
+diff --git a/docs/assets/report-comment-full-dark.html b/docs/assets/report-comment-full-dark.html
+index 68d75e0..a946e11 100644
+--- a/docs/assets/report-comment-full-dark.html
++++ b/docs/assets/report-comment-full-dark.html
+@@ -16,7 +16,7 @@ width:max-content;max-width:100%;overflow:auto}.md th,.md td{border:1px solid va
+ background:linear-gradient(var(--fade),var(--bg))}
+ </style></head><body><div class="page"><div class="row"><div class="avatar">fd</div><div class="comment"><div class="head"><b>dev-a</b> commented</div><div class="md"><!-- flightdeck:report:job-expdemo -->
+ <h2>candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)</h2>
+-<p><code>job-expdemo</code>: candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
++<p>FDK-EXP-0531 (<code>job-expdemo</code>): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
+ <p>Rule, pre-registered in <code>decision.yaml</code>: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.</p>
+ <h3>Outcome</h3>
+ <table>
+diff --git a/docs/assets/report-comment-full-light.html b/docs/assets/report-comment-full-light.html
+index 50ce098..0c1d3f8 100644
+--- a/docs/assets/report-comment-full-light.html
++++ b/docs/assets/report-comment-full-light.html
+@@ -16,7 +16,7 @@ width:max-content;max-width:100%;overflow:auto}.md th,.md td{border:1px solid va
+ background:linear-gradient(var(--fade),var(--bg))}
+ </style></head><body><div class="page"><div class="row"><div class="avatar">fd</div><div class="comment"><div class="head"><b>dev-a</b> commented</div><div class="md"><!-- flightdeck:report:job-expdemo -->
+ <h2>candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)</h2>
+-<p><code>job-expdemo</code>: candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
++<p>FDK-EXP-0531 (<code>job-expdemo</code>): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
+ <p>Rule, pre-registered in <code>decision.yaml</code>: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.</p>
+ <h3>Outcome</h3>
+ <table>
+diff --git a/docs/assets/report-comment-light.html b/docs/assets/report-comment-light.html
+index cfabbf2..4443e36 100644
+--- a/docs/assets/report-comment-light.html
++++ b/docs/assets/report-comment-light.html
+@@ -16,7 +16,7 @@ width:max-content;max-width:100%;overflow:auto}.md th,.md td{border:1px solid va
+ background:linear-gradient(var(--fade),var(--bg))}
+ </style></head><body><div class="page"><div class="row"><div class="avatar">fd</div><div class="comment"><div class="head"><b>dev-a</b> commented</div><div class="md fade"><!-- flightdeck:report:job-expdemo -->
+ <h2>candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)</h2>
+-<p><code>job-expdemo</code>: candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
++<p>FDK-EXP-0531 (<code>job-expdemo</code>): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
+ <p>Rule, pre-registered in <code>decision.yaml</code>: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.</p>
+ <h3>Outcome</h3>
+ <table>
+diff --git a/docs/assets/report-comment-phone-dark.html b/docs/assets/report-comment-phone-dark.html
+new file mode 100644
+index 0000000..96ece61
+--- /dev/null
++++ b/docs/assets/report-comment-phone-dark.html
+@@ -0,0 +1,21 @@
++<!doctype html><html><head><meta charset="utf-8"><style>:root{--bg:#0d1117;--fg:#f0f6fc;--muted:#9198a1;--line:#3d444d;--well:#151b23;--code:#656c7633;--fade:rgba(13,17,23,0);--w:334px}
++body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",
++"Noto Sans",Helvetica,Arial,sans-serif}.page{width:var(--w);padding:24px 28px}.row{display:flex;gap:14px}
++.avatar{width:40px;height:40px;border-radius:50%;background:var(--well);border:1px solid var(--line);
++box-sizing:border-box;flex:none;color:var(--muted);text-align:center;
++font:600 14px/38px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
++.comment{flex:1;border:1px solid var(--line);border-radius:6px;overflow:hidden}.head{background:var(--well);
++border-bottom:1px solid var(--line);padding:8px 16px;color:var(--muted);font-size:14px}.head b{color:var(--fg)}
++.md{padding:16px}.md h2{font-size:1.5em;border-bottom:1px solid var(--line);padding-bottom:.3em;margin:0 0 16px;
++font-weight:600}.md h3{font-size:1.25em;margin:24px 0 12px;font-weight:600}.md p{margin:0 0 12px}
++.md code{font:85% ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);
++padding:.2em .4em;border-radius:6px}.md table{border-collapse:collapse;margin:0 0 14px;display:block;
++width:max-content;max-width:100%;overflow:auto}.md th,.md td{border:1px solid var(--line);padding:6px 13px}
++.md th{font-weight:600}.md tr:nth-child(2n){background:var(--well)}.fade{position:relative}
++.fade:after{content:"";position:absolute;left:0;right:0;bottom:0;height:90px;
++background:linear-gradient(var(--fade),var(--bg))}
++.page{padding:12px}.md h2{font-size:1.25em}</style></head><body><div class="page"><div class="row"><div class="comment"><div class="head"><b>dev-a</b> commented</div><div class="md"><!-- flightdeck:report:job-expdemo -->
++<h2>candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)</h2>
++<p>FDK-EXP-0531 (<code>job-expdemo</code>): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
++<p>Rule, pre-registered in <code>decision.yaml</code>: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.</p>
++</div></div></div></div></body></html>
+diff --git a/docs/assets/report-comment-phone-light.html b/docs/assets/report-comment-phone-light.html
+new file mode 100644
+index 0000000..dd30936
+--- /dev/null
++++ b/docs/assets/report-comment-phone-light.html
+@@ -0,0 +1,21 @@
++<!doctype html><html><head><meta charset="utf-8"><style>:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--well:#f6f8fa;--code:#818b981f;--fade:rgba(255,255,255,0);--w:334px}
++body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",
++"Noto Sans",Helvetica,Arial,sans-serif}.page{width:var(--w);padding:24px 28px}.row{display:flex;gap:14px}
++.avatar{width:40px;height:40px;border-radius:50%;background:var(--well);border:1px solid var(--line);
++box-sizing:border-box;flex:none;color:var(--muted);text-align:center;
++font:600 14px/38px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
++.comment{flex:1;border:1px solid var(--line);border-radius:6px;overflow:hidden}.head{background:var(--well);
++border-bottom:1px solid var(--line);padding:8px 16px;color:var(--muted);font-size:14px}.head b{color:var(--fg)}
++.md{padding:16px}.md h2{font-size:1.5em;border-bottom:1px solid var(--line);padding-bottom:.3em;margin:0 0 16px;
++font-weight:600}.md h3{font-size:1.25em;margin:24px 0 12px;font-weight:600}.md p{margin:0 0 12px}
++.md code{font:85% ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);
++padding:.2em .4em;border-radius:6px}.md table{border-collapse:collapse;margin:0 0 14px;display:block;
++width:max-content;max-width:100%;overflow:auto}.md th,.md td{border:1px solid var(--line);padding:6px 13px}
++.md th{font-weight:600}.md tr:nth-child(2n){background:var(--well)}.fade{position:relative}
++.fade:after{content:"";position:absolute;left:0;right:0;bottom:0;height:90px;
++background:linear-gradient(var(--fade),var(--bg))}
++.page{padding:12px}.md h2{font-size:1.25em}</style></head><body><div class="page"><div class="row"><div class="comment"><div class="head"><b>dev-a</b> commented</div><div class="md"><!-- flightdeck:report:job-expdemo -->
++<h2>candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)</h2>
++<p>FDK-EXP-0531 (<code>job-expdemo</code>): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).</p>
++<p>Rule, pre-registered in <code>decision.yaml</code>: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.</p>
++</div></div></div></div></body></html>
+diff --git a/docs/assets/report.md b/docs/assets/report.md
+index cd5f6ea..d6888c2 100644
+--- a/docs/assets/report.md
++++ b/docs/assets/report.md
+@@ -1,7 +1,7 @@
+ <!-- flightdeck:report:job-expdemo -->
+ ## candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)
+ 
+-`job-expdemo`: candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).
++FDK-EXP-0531 (`job-expdemo`): candidate (the review skill) against control (no skills), 12 tasks, 73 trials, seed 0. The arms differ in config_digest (pins at the end).
+ 
+ Rule, pre-registered in `decision.yaml`: resolved, higher is better, margin −5.0 pp, at least 10 paired tasks.
+ 
+diff --git a/docs/assets/sources.sha256 b/docs/assets/sources.sha256
+index f8035c3..4edd807 100644
+--- a/docs/assets/sources.sha256
++++ b/docs/assets/sources.sha256
+@@ -1,4 +1,6 @@
+-e25ad147bd250b7d077690cac9c2f8a09d0053028141ea9e0fe0ba6725133e9e  report-comment-dark.png
+-46634299c68419b4d4813a7f2aa729527daf800543ede47bc769506329156a33  report-comment-full-dark.png
+-f64df0fcd74f8a18e8aa263c7d967911519945443ffeb1cf4b41d23b35192fbb  report-comment-full-light.png
+-69661d5bd1995546153ae2d464f0311dd772b3f8831dc3429a4d98c8e32cf14d  report-comment-light.png
++874ac2a4e1ddb83c27ef0890b76bbd88dd30747417ce11fc39a14dc78d02fde7  report-comment-dark.png
++d5fdc79b69d5143a424faf1d4ead92670d351e5064af7f3df090f78ebc17aa53  report-comment-full-dark.png
++3ee61e9c1ad38770b1a3bbf957d61351e75ee55e2a61ae8ff21a1e1867720ead  report-comment-full-light.png
++6092a3c1e98349585e674a3fea718c1c891625c64e9968d7994ac37b8bab2cc3  report-comment-light.png
++1ad2a2e32b2ef2fba811fbb84e6f60579c932f8778a5eeb026404dd5a9fff8b5  report-comment-phone-dark.png
++3f6153e5f7a36a4742b7c2cd9515782a962fb99dc79f20c27e844102509ccb2d  report-comment-phone-light.png
+diff --git a/docs/assets/suite.svg b/docs/assets/suite.svg
+index ea7cbac..665213f 100644
+--- a/docs/assets/suite.svg
++++ b/docs/assets/suite.svg
+@@ -1 +1 @@
+-<svg class="fd-d" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" width="720" height="420" style="max-width:100%;height:auto" role="img" aria-label="Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides; Tower, planned, governs promotions"><style>.fd-d .n{font:700 15px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #FFFFFF)}.fd-d .s{font:700 13px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #FFFFFF)}.fd-d .b{font:400 13px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-muted, #A6A6A6)}.fd-d .e{font:400 11px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .l{font:500 11px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .k{font:500 11px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--af-fg, #FFFFFF)}.fd-d .edge{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25}.fd-d .plan{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25;stroke-dasharray:5 4}</style><defs><marker id="suite-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--af-fg-subtle, #8A8A8A)"/></marker></defs><rect width="720" height="420" fill="var(--af-canvas, #000000)"/><text class="l" x="24" y="30">Where flightdeck sits · run / judge / decide</text><rect x="24" y="56" width="160" height="276" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><text class="l" x="38" y="78">Run</text><text class="n" x="38" y="100">hangar</text><text class="b" x="38" y="122">runs coding agents</text><text class="b" x="38" y="140">in sandboxes;</text><text class="b" x="38" y="158">records manifests,</text><text class="b" x="38" y="176">traces and the</text><text class="b" x="38" y="194">experiment index.</text><text class="b" x="38" y="212">Runs the trials it</text><text class="b" x="38" y="230">is asked for, pinned;</text><text class="b" x="38" y="248">does no analysis.</text><rect x="280" y="56" width="160" height="276" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="l" x="294" y="78">Judge</text><text class="n" x="294" y="100">flightdeck</text><rect x="292" y="116" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="134">ingest</text><text class="e" x="304" y="148">REST or an export</text><rect x="292" y="166" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="184">data plane</text><text class="e" x="304" y="198">Parquet · DuckDB</text><path class="edge" d="M360 156 V164" marker-end="url(#suite-arrow)"/><rect x="292" y="216" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="234">stats · check</text><text class="e" x="304" y="248">paired by task · specs</text><path class="edge" d="M360 206 V214" marker-end="url(#suite-arrow)"/><rect x="292" y="266" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="284">report</text><text class="e" x="304" y="298">a pre-registered rule</text><path class="edge" d="M360 256 V264" marker-end="url(#suite-arrow)"/><rect x="536" y="56" width="160" height="276" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><text class="l" x="550" y="78">Decide</text><text class="n" x="550" y="100">the pull request</text><text class="b" x="550" y="122">one comment, updated</text><text class="b" x="550" y="140">in place: verdict,</text><text class="b" x="550" y="158">pins, outcome, cost,</text><text class="b" x="550" y="176">behavior specs.</text><text class="b" x="550" y="194">A reviewer decides;</text><text class="b" x="550" y="212">the approver is</text><text class="b" x="550" y="230">never the author.</text><path class="edge" d="M184 166 H276" marker-end="url(#suite-arrow)"/><text class="e" x="232" y="144" text-anchor="middle">runs, traces,</text><text class="e" x="232" y="159" text-anchor="middle">the index</text><path class="edge" d="M280 256 H188" marker-end="url(#suite-arrow)"/><text class="e" x="232" y="278" text-anchor="middle">trials to run:</text><text class="e" x="232" y="293" text-anchor="middle">tasks × arms × n</text><path class="edge" d="M440 166 H532" marker-end="url(#suite-arrow)"/><text class="e" x="488" y="156" text-anchor="middle">the report</text><rect x="24" y="358" width="672" height="40" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line-strong, #6B6B6B)" stroke-dasharray="4 4" fill-opacity="0"/><text class="n" x="38" y="384"></text><text class="l" x="38" y="383" text-anchor="start">Govern · planned</text><text class="s" x="140" y="383" text-anchor="start">Tower: policy decisions, approvals, receipts</text><path class="plan" d="M616 332 V354" marker-end="url(#suite-arrow)"/><text class="e" x="608" y="348" text-anchor="end">promotion approval</text></svg>
++<svg class="fd-d" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" width="720" height="420" style="max-width:100%;height:auto" role="img" aria-label="Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides; Tower governs risky actions with policy decisions, approvals and signed receipts; promotion approval through Tower is planned"><style>.fd-d .n{font:700 15px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #FFFFFF)}.fd-d .s{font:700 13px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #FFFFFF)}.fd-d .b{font:400 13px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-muted, #A6A6A6)}.fd-d .e{font:400 11px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .l{font:500 11px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .k{font:500 11px 'DM Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--af-fg, #FFFFFF)}.fd-d .edge{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25}.fd-d .plan{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25;stroke-dasharray:5 4}</style><defs><marker id="suite-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--af-fg-subtle, #8A8A8A)"/></marker></defs><rect width="720" height="420" fill="var(--af-canvas, #000000)"/><text class="l" x="24" y="30">Where flightdeck sits · run / judge / decide</text><rect x="24" y="56" width="160" height="276" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><text class="l" x="38" y="78">Run</text><text class="n" x="38" y="100">hangar</text><text class="b" x="38" y="122">runs coding agents</text><text class="b" x="38" y="140">in sandboxes;</text><text class="b" x="38" y="158">records manifests,</text><text class="b" x="38" y="176">traces and the</text><text class="b" x="38" y="194">experiment index.</text><text class="b" x="38" y="212">Runs the trials it</text><text class="b" x="38" y="230">is asked for, pinned;</text><text class="b" x="38" y="248">does no analysis.</text><rect x="280" y="56" width="160" height="276" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="l" x="294" y="78">Judge</text><text class="n" x="294" y="100">flightdeck</text><rect x="292" y="116" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="134">ingest</text><text class="e" x="304" y="148">REST or an export</text><rect x="292" y="166" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="184">data plane</text><text class="e" x="304" y="198">Parquet · DuckDB</text><path class="edge" d="M360 156 V164" marker-end="url(#suite-arrow)"/><rect x="292" y="216" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="234">stats · check</text><text class="e" x="304" y="248">paired by task · specs</text><path class="edge" d="M360 206 V214" marker-end="url(#suite-arrow)"/><rect x="292" y="266" width="136" height="40" rx="8" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="304" y="284">report</text><text class="e" x="304" y="298">a pre-registered rule</text><path class="edge" d="M360 256 V264" marker-end="url(#suite-arrow)"/><rect x="536" y="56" width="160" height="276" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><text class="l" x="550" y="78">Decide</text><text class="n" x="550" y="100">the pull request</text><text class="b" x="550" y="122">one comment, updated</text><text class="b" x="550" y="140">in place: verdict,</text><text class="b" x="550" y="158">pins, outcome, cost,</text><text class="b" x="550" y="176">behavior specs.</text><text class="b" x="550" y="194">A reviewer decides;</text><text class="b" x="550" y="212">the approver is</text><text class="b" x="550" y="230">never the author.</text><path class="edge" d="M184 166 H276" marker-end="url(#suite-arrow)"/><text class="e" x="232" y="144" text-anchor="middle">runs, traces,</text><text class="e" x="232" y="159" text-anchor="middle">the index</text><path class="edge" d="M280 256 H188" marker-end="url(#suite-arrow)"/><text class="e" x="232" y="278" text-anchor="middle">trials to run:</text><text class="e" x="232" y="293" text-anchor="middle">tasks × arms × n</text><path class="edge" d="M440 166 H532" marker-end="url(#suite-arrow)"/><text class="e" x="488" y="156" text-anchor="middle">the report</text><rect x="24" y="358" width="672" height="40" rx="12" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><text class="n" x="38" y="384"></text><text class="l" x="38" y="383" text-anchor="start">Govern</text><text class="s" x="96" y="383" text-anchor="start">Tower: policy decisions, approvals, signed receipts</text><path class="plan" d="M616 332 V354" marker-end="url(#suite-arrow)"/><text class="e" x="608" y="348" text-anchor="end">promotion approval · planned</text></svg>
+diff --git a/docs/behavior-specs.md b/docs/behavior-specs.md
+index 4c7a00e..4c24432 100644
+--- a/docs/behavior-specs.md
++++ b/docs/behavior-specs.md
+@@ -143,7 +143,7 @@ optionally for one day.
+ Each matcher is written once and yields both a Python predicate and a SQL expression. `tests/test_specs.py` checks
+ that both evaluators agree on 50 random synthetic exports for every operator and scope.
+ 
+-### Hangar's reference predicates
++### hangar's reference predicates
+ 
+ [`specs/examples/hangar-reference.yaml`](https://github.com/Sean-Koval/flightdeck/blob/main/specs/examples/hangar-reference.yaml)
+ writes hangar's four in this language. They are: tests before the commit, no edits outside `src/`, asked before
+@@ -240,7 +240,7 @@ ratio, an offline change-point). It alerts only when the rate rose and the two W
+ 
+ The alert names the `harness_digest` and `knowledge_snapshot` values first seen on the change day and links example
+ runs. With `--alerts-repo` it opens or comments on one issue per check, labelled `flightdeck:violation`, through the
+-operator's `gh` login. Flightdeck holds no credentials.
++operator's `gh` login. flightdeck holds no credentials.
+ 
+ Violations go to the Friday review. A check that fails on most runs is wrong, or badly compiled into the harness.
+ Mute it only by editing the ADR, which needs two people.
+diff --git a/docs/cli.md b/docs/cli.md
+index d06ff66..213a321 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -55,7 +55,7 @@ flightdeck ingest experiment [OPTIONS] EXP_ID
+ | Argument or option | Type | Default | Environment | Description |
+ | --- | --- | --- | --- | --- |
+ | `EXP_ID` | text | required |  |  |
+-| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL; token from HANGAR_TOKEN. |
++| `--hangar` | text |  | `HANGAR_URL` | hangar base URL; token from HANGAR_TOKEN. |
+ | `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
+ 
+ ### `flightdeck ingest job`
+@@ -69,7 +69,7 @@ flightdeck ingest job [OPTIONS] JOB_ID
+ | Argument or option | Type | Default | Environment | Description |
+ | --- | --- | --- | --- | --- |
+ | `JOB_ID` | text | required |  |  |
+-| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL; token from HANGAR_TOKEN. |
++| `--hangar` | text |  | `HANGAR_URL` | hangar base URL; token from HANGAR_TOKEN. |
+ | `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
+ 
+ ### `flightdeck ingest session`
+@@ -84,7 +84,7 @@ flightdeck ingest session [OPTIONS] NAME
+ | --- | --- | --- | --- | --- |
+ | `NAME` | text | required |  |  |
+ | `--turn` | integer |  |  | Only this turn. |
+-| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL; token from HANGAR_TOKEN. |
++| `--hangar` | text |  | `HANGAR_URL` | hangar base URL; token from HANGAR_TOKEN. |
+ | `--out` | text | `~/.flightdeck/data` | `FLIGHTDECK_DATA_URI` | Data plane directory. |
+ 
+ ### `flightdeck ingest github`
+@@ -143,7 +143,7 @@ flightdeck report experiment [OPTIONS] EXPERIMENT
+ | `--candidate`, `--b` | text | `candidate` |  | The arm with the change under judgement. |
+ | `--decision` | path |  |  | Pre-registered decision.yaml; the verdict needs it. |
+ | `--details` / `--no-details` | flag | off |  | Per-task rows and trial links (keep off for public repos). |
+-| `--hangar` | text |  | `HANGAR_URL` | Hangar base URL for trial links. |
++| `--hangar` | text |  | `HANGAR_URL` | hangar base URL for trial links. |
+ | `--out` | path |  |  | Also write the report here. |
+ | `--post` | text |  |  | owner/repo#n: post as a PR or issue comment (token: GITHUB_TOKEN). |
+ | `--seed` | integer | `0` |  |  |
+diff --git a/docs/concepts.md b/docs/concepts.md
+index 5fed995..cf38bf9 100644
+--- a/docs/concepts.md
++++ b/docs/concepts.md
+@@ -5,22 +5,22 @@ a word differently, the entry says so.
+ 
+ | Term | Meaning | Source |
+ | --- | --- | --- |
+-| **verdict** | What a report says about an experiment, in one of five words: *better*, *non-inferior*, *worse*, *No decision* (the interval spans the margin, or too few paired tasks) or *No verdict* (no valid `decision.yaml`). The report's headline: the candidate arm against the control arm on one metric, with the paired difference and its interval beside it. See [reports.md](reports.md#pre-registration) | flightdeck report |
+-| **decision.yaml** | The pre-registered rule a verdict follows: `metric`, `direction`, `margin`, `min_tasks`. Committed before the first trial finishes; the commit time, not the file's, is what counts. Written, edited or committed later: *No verdict* | [reports.md](reports.md#pre-registration) |
++| **verdict** | What a report says about an experiment, in one of five words: "better", "non-inferior", "worse", "No decision" (the interval spans the margin, or too few paired tasks) or "No verdict" (no valid `decision.yaml`). The report's headline: the candidate arm against the control arm on one metric, with the paired difference and its interval beside it. See [reports.md](reports.md#pre-registration) | flightdeck report |
++| **decision.yaml** | The pre-registered rule a verdict follows: `metric`, `direction`, `margin`, `min_tasks`. Committed before the first trial finishes; the commit time, not the file's, is what counts. Written, edited or committed later: No verdict | [reports.md](reports.md#pre-registration) |
+ | **variant** / **arm** | One configuration under comparison in an experiment (a harness, model, skill set or instruction). Every trial belongs to one. A comparison has two arms | `hangar.experiment/v1` |
+ | **control** / **candidate** | The two default arms: *control* is what runs today, *candidate* is the change under judgement. The verdict is always *candidate against control* (`--baseline` and `--candidate` rename them); the report names each arm as hangar's experiment described it | `flightdeck stats compare` |
+-| **margin** | The pre-registered non-inferiority margin, in the metric's units (a proportion for resolved: `-0.05` is 5 points worse). An interval wholly above it is *non-inferior*; wholly below it is *worse* | `decision.yaml` |
++| **margin** | The pre-registered non-inferiority margin, in the metric's units (a proportion for resolved: `-0.05` is 5 points worse). An interval wholly above it is non-inferior; wholly below it is worse | `decision.yaml` |
+ | **pp** | Percentage points: the difference between two rates. Resolved going from 40% to 55% is +15 pp (not +37%) | reports, `stats compare` |
+-| **CI** | The 95% confidence interval around a paired difference, from a task bootstrap. A verdict reads the interval, never the point estimate alone: *better* means the whole interval is above zero | [statistics.md](statistics.md) |
+-| **runtime** | The agent CLI or loop (Claude Code, Codex, pi, Antigravity) at a version. Hangar calls this the *harness* in its manifest (`harness.name`, `harness.version`) | hangar `harnesses.lock.yaml`, manifest `harness` |
++| **CI** | The 95% confidence interval around a paired difference, from a task bootstrap. A verdict reads the interval, never the point estimate alone: "better" means the whole interval is above zero | [statistics.md](statistics.md) |
++| **runtime** | The agent CLI or loop (Claude Code, Codex, pi, Antigravity) at a version. hangar calls this the *harness* in its manifest (`harness.name`, `harness.version`) | hangar `harnesses.lock.yaml`, manifest `harness` |
+ | **harness** | A git directory of native files (`AGENTS.md`, skills, one plugin, per-runtime fragments) plus a `harness.lock` pinning each component's digest, the CLI version and the concrete model. Identity: `harness_digest = sha256(canonical lock)`. Not portable across runtimes; its components are. Note: hangar's manifest `harness` section names the runtime, and its `config_digest` mixes harness and environment | team plan; hangar manifest |
+ | **environment** | Image, services, egress, resources and credential policy a sandbox gets (`environment_digest`). Not part of the harness | hangar manifest `environment`, `egress`, `resources` |
+ | **session** | A hangar conversation over time, with its sandbox and checkpoints | hangar `docs/sessions.md` |
+-| **turn** / **run** | One agent invocation: `hangar.run.id`, one `invoke_agent` span with `hangar.kind = turn`. Flightdeck's `runs` table has one row per turn or per trial | `hangar.trace/v1` |
++| **turn** / **run** | One agent invocation: `hangar.run.id`, one `invoke_agent` span with `hangar.kind = turn`. flightdeck's `runs` table has one row per turn or per trial | `hangar.trace/v1` |
+ | **job** | A hangar unit of delivered work: turns, verify, git, PR. Its `source` says where it came from (api, jira, github, ..., experiment) | hangar jobs |
+ | **work item** | The ticket or issue a job serves (Jira, GitHub) | |
+ | **trial** | One job run for `(task, variant, n)` under pinned conditions, keyed `<task>/<variant>/<n>` | `hangar.experiment/v1` |
+-| **experiment** | A batch of trials across tasks and variants. Hangar runs it; flightdeck designs and judges it | hangar spec 0014 §4 |
++| **experiment** | A batch of trials across tasks and variants. hangar runs it; flightdeck designs and judges it | hangar spec 0014 §4 |
+ | **pin set** | The immutable `{harness_digest, environment_digest, model_id, base_sha, grader_digest, knowledge_snapshot?}` a trial runs against | team plan |
+ | **task** | A Harbor task directory: `task.toml` (flightdeck's keys under `[flightdeck]`), `instruction.md`, `environment/`, hidden `tests/`, optional `solution/`. Identity: `task_digest`. See [tasks.md](tasks.md) | hangar spec 0008; Harbor |
+ | **suite** | A versioned list of tasks and specs | |
+diff --git a/docs/contracts.md b/docs/contracts.md
+index 2221e0d..6ea84b7 100644
+--- a/docs/contracts.md
++++ b/docs/contracts.md
+@@ -27,7 +27,7 @@ How they're checked:
+ - **Outbox objects** (`run.json`, job events) aren't validated at compaction; the compactor keeps what it understands.
+   The test fixtures that stand in for them are checked against the vendored `run.schema.json`.
+ 
+-Flightdeck also reads GitHub REST for closed pull requests (`ingest github` → `prs`) and ADRs from git
++flightdeck also reads GitHub REST for closed pull requests (`ingest github` → `prs`) and ADRs from git
+ (`check run --adrs`).
+ 
+ ### The vendored schemas
+@@ -115,8 +115,8 @@ The seam between hangar and flightdeck is a trial run against an immutable **pin
+ content-addressed. So a baseline pinned today re-runs identically next month (hangar
+ [`docs/api/trials.md`](https://github.com/Sean-Koval/hangar/blob/main/docs/api/trials.md), `hangar.pinset/v1`).
+ 
+-Flightdeck owns the sampling: which tasks, how many trials, against which pin sets, when to stop. Hangar runs each
+-trial as pinned. Flightdeck still submits batch experiments, whose variants hangar records as pin sets; submitting
++flightdeck owns the sampling: which tasks, how many trials, against which pin sets, when to stop. hangar runs each
++trial as pinned. flightdeck still submits batch experiments, whose variants hangar records as pin sets; submitting
+ trials against pin sets directly is [#25](https://github.com/Sean-Koval/flightdeck/issues/25).
+ 
+ | Field | What it pins | In hangar today | In flightdeck's data plane |
+@@ -128,7 +128,7 @@ trials against pin sets directly is [#25](https://github.com/Sean-Koval/flightde
+ | `grader_digest` | The grader's command, files, mode, network and timeout | In pin sets; not in the experiment index or the outbox's `grade.json` | `grades.grader_digest`: null today. The trial cache uses `task_digest`, which covers the tests and the grader command, in its place |
+ | `knowledge_snapshot` | What a retrieval tool could read | Optional, once a retrieval tool exists; the manifest schema has no `knowledge` section yet | `manifests.knowledge_snapshot`: null today |
+ 
+-Hangar's pin set also records the harness and its CLI version, the lock reference, the environment, the approvals
++hangar's pin set also records the harness and its CLI version, the lock reference, the environment, the approvals
+ policy and the egress policy's digest.
+ 
+ Until every trial carries `harness_digest` and `environment_digest`, flightdeck's reports and cache fall back to
+diff --git a/docs/data-plane.md b/docs/data-plane.md
+index 978f88b..8e1c7e2 100644
+--- a/docs/data-plane.md
++++ b/docs/data-plane.md
+@@ -1,6 +1,6 @@
+ # Data plane
+ 
+-Flightdeck reads hangar's runs from Parquet files, never from a live hangar, so reports work while hangar's sandbox
++flightdeck reads hangar's runs from Parquet files, never from a live hangar, so reports work while hangar's sandbox
+ pools are off. The contract is `flightdeck.parquet/v1`.
+ 
+ <div class="af-figure" markdown>
+@@ -8,7 +8,7 @@ pools are off. The contract is `flightdeck.parquet/v1`.
+ <figcaption>Two ways in (the nightly compactor, ingest on demand), one set of tables out</figcaption>
+ </div>
+ 
+-Hangar writes each finished run once to a GCS outbox (`hangar.run/v1`, hangar `docs/api/outbox.md`). The nightly
++hangar writes each finished run once to a GCS outbox (`hangar.run/v1`, hangar `docs/api/outbox.md`). The nightly
+ [compactor](#compactor) turns it into these tables, and DuckDB queries them (ADR-0001 point 3). For one experiment's
+ results right away, the same flatteners run over `hangar experiment export` and REST exports ([ingest](#ingest)).
+ 
+@@ -54,7 +54,7 @@ Tapes stay objects under hangar's `v1/tapes/`; they are not compacted.
+ 
+ ### What flightdeck writes itself
+ 
+-Flightdeck stamps `runs.task_digest` (the task directory's digest, [Tasks](tasks.md#digests)) and
++flightdeck stamps `runs.task_digest` (the task directory's digest, [Tasks](tasks.md#digests)) and
+ `runs.variant_digest` (the variant as planned: its hangar overlay and environment) on the trials it submitted, when it
+ collects them. They key the [trial cache](runners.md#cache).
+ 
+@@ -83,7 +83,7 @@ OTLP/JSON per opentelemetry-proto 1.11.1: `intValue` is a decimal string, lists
+ `kvlistValue` becomes a dict. Unknown attributes are kept in `attrs`, never an error, since hangar adds fields within
+ v1. A different `hangar.trace.schema`, manifest or experiment schema is refused.
+ 
+-Hangar redacts every export. The flatteners also mask anything that still looks like a credential (private keys,
++hangar redacts every export. The flatteners also mask anything that still looks like a credential (private keys,
+ GitHub, Anthropic/OpenAI, AWS and Slack tokens) as `***`, and clip event text to 2,000 characters.
+ 
+ ## Ingest
+@@ -119,7 +119,7 @@ Pins that break hangar's model rule are warned about, as `experiment status` rep
+ running has `outcome` null, and statistics leave it out.
+ 
+ Drifted trials (`trials[].drift`) are kept, with `drift` set; `flightdeck stats compare` excludes them unless
+-`--include-drift`. Hangar's #127 anti-forgery fields land in `runs.task_invalid`, `runs.contaminated` and
++`--include-drift`. hangar's #127 anti-forgery fields land in `runs.task_invalid`, `runs.contaminated` and
+ `runs.grade_trust`.
+ 
+ ### Idempotent
+@@ -139,7 +139,7 @@ export or `raw/` directory.
+ 
+ ### Tokens
+ 
+-Hangar scopes every record to its owner (spec 0014 §1). A member token sees its own experiments, jobs and sessions;
++hangar scopes every record to its owner (spec 0014 §1). A member token sees its own experiments, jobs and sessions;
+ an admin token sees everyone's; a `jobs` token sees what it submitted. A 404 means missing *or not yours*, and is
+ reported that way.
+ 
+@@ -165,7 +165,7 @@ fsspec URL. `gs://` needs the `gcs` extra.
+ 
+ ### Complete runs only
+ 
+-It reads `v1/runs/{date}/{session_id}.{run_id}/` directories that have a `run.json`. Hangar uploads that file after
++It reads `v1/runs/{date}/{session_id}.{run_id}/` directories that have a `run.json`. hangar uploads that file after
+ the run's other objects, so a directory without one is still arriving and waits for a later night.
+ 
+ A run's rows come from `run.json` (the `runs` row, laid over the trace's turn row), `trace.otlp.json` (spans,
+@@ -208,7 +208,7 @@ Within the lookback window the next night does this on its own, so a deletion is
+ **Deploy:**
+ `sh deploy/compactor/setup.sh --project <p> --runs-bucket <hangar's run_bucket> --data-bucket <team>-flightdeck`
+ ([its README](https://github.com/Sean-Koval/flightdeck/tree/main/deploy/compactor#deploy); `--dry-run` first).
+-Hangar's GKE terraform makes the outbox bucket (output `run_bucket`), and its `deploy/gke/up.sh` turns the outbox on.
++hangar's GKE terraform makes the outbox bucket (output `run_bucket`), and its `deploy/gke/up.sh` turns the outbox on.
+ 
+ **Check a night:** the job's log prints rows per table per date, or `unchanged`.
+ `flightdeck query --data gs://<team>-flightdeck/parquet/v1 "select dt, count(*) from runs group by dt"` reads what it
+@@ -217,7 +217,7 @@ wrote.
+ ## `flightdeck.weekly/v1`
+ 
+ [`flightdeck metrics weekly`](metrics.md) writes `<reports>/weekly/<week>.json`, `<week>.md` and `latest.json`, with
+-`FLIGHTDECK_REPORTS_URI` = `gs://<team>-flightdeck/reports`. Hangar's standup line and digest read `latest.json` and
++`FLIGHTDECK_REPORTS_URI` = `gs://<team>-flightdeck/reports`. hangar's standup line and digest read `latest.json` and
+ never recompute.
+ 
+ JSON Schema:
+@@ -242,7 +242,7 @@ A table without files is an empty view of its schema. Timestamps are shown in UT
+ 
+ For `gs://`, install the `gcs` extra (`uv sync --extra gcs`, or `pip install 'flightdeck[gcs]'`). DuckDB then reads
+ through gcsfs with your Google application-default credentials (`gcloud auth application-default login`). Without it,
+-DuckDB's `httpfs` is loaded and the caller supplies a DuckDB GCS secret (HMAC keys). Flightdeck holds no credentials
++DuckDB's `httpfs` is loaded and the caller supplies a DuckDB GCS secret (HMAC keys). flightdeck holds no credentials
+ either way.
+ 
+ ```sh
+diff --git a/docs/getting-started.md b/docs/getting-started.md
+index bc3ea01..7d4c7a2 100644
+--- a/docs/getting-started.md
++++ b/docs/getting-started.md
+@@ -77,7 +77,7 @@ To plan and submit trials, see [Running experiments](runners.md). The
+ [team-harness repo](https://github.com/Sean-Koval/team-harness/tree/main/flightdeck) has a suite, a pre-registered
+ `decision.yaml` and behavior specs to start from; add a task before its `--dry-run` works.
+ 
+-Flightdeck holds no sandbox code and no credentials. It reads hangar's three versioned interfaces and the Parquet
++flightdeck holds no sandbox code and no credentials. It reads hangar's three versioned interfaces and the Parquet
+ data plane ([ADR-0001](decisions/0001-boundary-with-hangar.md), [Contracts](contracts.md)).
+ 
+ ## See also
+diff --git a/docs/holdouts.md b/docs/holdouts.md
+index e314be5..01fc635 100644
+--- a/docs/holdouts.md
++++ b/docs/holdouts.md
+@@ -68,7 +68,7 @@ Commit `manifest.json` on its own: adding or changing entries is its own commit.
+ When a candidate needs its number, decrypt the set. Submit it as an experiment pinned to the candidate
+ (`flightdeck experiment run`, one variant), and collect it into the data plane.
+ 
+-Sealed tasks never run on the local backend; it refuses them. Hangar's grader must run with egress `none`, or a patch
++Sealed tasks never run on the local backend; it refuses them. hangar's grader must run with egress `none`, or a patch
+ can exfiltrate the hidden tests.
+ 
+ ### 4. Score once
+@@ -110,7 +110,7 @@ gcloud storage cp gs://<team>-flightdeck/sealed/reg-2.tar.age - \
+   | age -d -i <(gcloud secrets versions access latest --secret flightdeck-holdout-key) | tar -C holdouts/sealed -x
+ ```
+ 
+-Flightdeck holds no key and no credential ([ADR-0001](decisions/0001-boundary-with-hangar.md)); the operator runs
++flightdeck holds no key and no credential ([ADR-0001](decisions/0001-boundary-with-hangar.md)); the operator runs
+ these. **Losing the key loses every sealed set.** Keep a second copy of the private key offline, printed, in the team
+ safe. Test a restore when a set is sealed.
+ 
+diff --git a/docs/index.md b/docs/index.md
+index 64b0c53..c14b732 100644
+--- a/docs/index.md
++++ b/docs/index.md
+@@ -10,21 +10,24 @@ hide:
+ 
+ # Did that harness change actually help?
+ 
+-<p class="af-lede">Flightdeck answers that from the runs hangar already records: paired statistics, behavior specs and a <a href="#the-verdict">verdict</a> posted on the pull request where the change is reviewed.</p>
++<p class="af-lede">flightdeck answers that from the runs hangar already records: paired statistics, behavior specs and a <a href="#the-verdict">verdict</a> posted on the pull request where the change is reviewed.</p>
+ 
+ [Get started](getting-started.md){ .md-button .md-button--primary } [Suite overview](https://sean-koval.github.io/agent-factory/){ .md-button }
+ </div>
+ <figure class="af-hero__visual">
++<picture>
++<source media="(max-width: 600px)" srcset="assets/demo-phone.svg" width="379" height="401">
+ <img src="assets/demo.svg" alt="A terminal session on the fixture experiment: flightdeck ingests the export, compares the variants paired by task and writes a report, printing its verdict, candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0). It opens on the finished session and then replays the typing." width="660" height="537">
+-<figcaption>ingest, stats compare, report on the fixture experiment, recorded by docs/assets/build.py</figcaption>
++</picture>
++<figcaption>The fixture experiment in a terminal: compare the arms, write the report, read the verdict</figcaption>
+ </figure>
+ </div>
+ 
+ <div id="the-verdict" markdown>
+ !!! verdict "The verdict"
+-    One of five words: *better*, *non-inferior*, *worse*, *No decision* or *No verdict*. It says how the candidate
++    One of five words: "better", "non-inferior", "worse", "No decision" or "No verdict". It says how the candidate
+     arm did against the control arm on one metric, with the paired difference and its 95% interval beside it:
+-    *candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)*. The rule that picks the word
++    "candidate is better than control on resolved: +21.2 pp (95% CI +1.5 to +43.9, margin −5.0)". The rule that picks the word
+     (`decision.yaml`: metric, direction, margin, minimum tasks) is committed before the first trial, so nobody moves
+     the goalposts. [Concepts](concepts.md) has the words; [Reports](reports.md#pre-registration) has the rule.
+ </div>
+@@ -39,10 +42,16 @@ hide:
+ The verdict, posted as one pull-request comment that is updated in place. This one comes from the synthetic fixture
+ experiment (12 tasks × 2 variants × 3 trials):
+ 
+-<figure class="af-figure" markdown>
+-![The top of the flightdeck report as a pull-request comment: the headline is the verdict, candidate is better than control on resolved, +21.2 pp (95% CI +1.5 to +43.9, margin −5.0); under it the experiment, what differs between the arms, the pre-registered rule, and the Outcome table with 10 of 32 and 16 of 31 resolved, Wilson intervals and dollars per resolved task](assets/report-comment-dark.png#only-dark){ width=816 height=656 }
+-![The top of the flightdeck report as a pull-request comment: the headline is the verdict, candidate is better than control on resolved, +21.2 pp (95% CI +1.5 to +43.9, margin −5.0); under it the experiment, what differs between the arms, the pre-registered rule, and the Outcome table with 10 of 32 and 16 of 31 resolved, Wilson intervals and dollars per resolved task](assets/report-comment-light.png#only-light){ width=816 height=656 }
+-<figcaption>The top of the report on the pull request, from the fixture experiment</figcaption>
++<figure class="af-figure fd-native" style="--fd-native: 816px">
++<picture>
++<source media="(max-width: 600px)" srcset="assets/report-comment-phone-dark.png" width="358" height="368">
++<img src="assets/report-comment-dark.png#only-dark" alt="The top of the flightdeck report as a pull-request comment: the headline is the verdict, candidate is better than control on resolved, +21.2 pp (95% CI +1.5 to +43.9, margin −5.0); under it the experiment FDK-EXP-0531 with its real ID job-expdemo, what differs between the arms, the pre-registered rule, and the Outcome table with 10 of 32 and 16 of 31 resolved, Wilson intervals and dollars per resolved task" width="816" height="656">
++</picture>
++<picture>
++<source media="(max-width: 600px)" srcset="assets/report-comment-phone-light.png" width="358" height="368">
++<img src="assets/report-comment-light.png#only-light" alt="The top of the flightdeck report as a pull-request comment: the headline is the verdict, candidate is better than control on resolved, +21.2 pp (95% CI +1.5 to +43.9, margin −5.0); under it the experiment FDK-EXP-0531 with its real ID job-expdemo, what differs between the arms, the pre-registered rule, and the Outcome table with 10 of 32 and 16 of 31 resolved, Wilson intervals and dollars per resolved task" width="816" height="656">
++</picture>
++<figcaption>The verdict as a pull-request comment: the headline, then experiment FDK-EXP-0531 and its rule</figcaption>
+ </figure>
+ 
+ The recording above is the run that produced it: `ingest → stats compare → report`. [Getting started](getting-started.md)
+@@ -50,14 +59,15 @@ has the six commands and what each printed.
+ 
+ ## Where it sits
+ 
+-<div class="af-figure" markdown>
++<figure class="af-figure" markdown>
+ --8<-- "docs/assets/suite.svg"
+-</div>
++<figcaption>hangar runs the trials, flightdeck judges them, the pull request decides; Tower governs risky actions</figcaption>
++</figure>
+ 
+-Flightdeck holds no sandbox code and no credentials ([ADR-0001](decisions/0001-boundary-with-hangar.md)). It reads
++flightdeck holds no sandbox code and no credentials ([ADR-0001](decisions/0001-boundary-with-hangar.md)). It reads
+ hangar's versioned interfaces and asks hangar to run the trials it plans.
+ 
+-## Three things people use it for
++## Use cases
+ 
+ - **Bump the CLI lock with evidence.** Run the regression suite on the old lock and the new one; the canary PR gets one
+   comment with the pre-registered verdict and the cost per resolved task of each.
+@@ -66,7 +76,7 @@ hangar's versioned interfaces and asks hangar to run the trials it plans.
+ - **Catch a behavior regression nobody tested for.** Write "never push to main" as a behavior spec. Nightly,
+   `check run` scores every turn and opens an issue when the violation rate jumps, naming the harness digest that changed.
+ 
+-## Where to go next
++## Read next
+ 
+ - [Getting started](getting-started.md): six commands on the fixture, what they showed, then a real hangar.
+ - [Concepts](concepts.md): the vocabulary, and what is shipped.
+diff --git a/docs/judges.md b/docs/judges.md
+index 6abd80b..bf00a80 100644
+--- a/docs/judges.md
++++ b/docs/judges.md
+@@ -41,7 +41,7 @@ their order too.
+ 
+ ### 2. Judge
+ 
+-Flightdeck holds no model credentials ([ADR-0001](decisions/0001-boundary-with-hangar.md)), so the judge runs
++flightdeck holds no model credentials ([ADR-0001](decisions/0001-boundary-with-hangar.md)), so the judge runs
+ elsewhere, on an API key with a spend cap. That is a hangar job, or an operator's script. It writes one line per run:
+ `{"run_id", "label", "rationale"}`. Judge calls on tainted runs are allowed, and labelled by the run's own flag.
+ 
+diff --git a/docs/knowledge-evals.md b/docs/knowledge-evals.md
+index a751a2e..66b6da6 100644
+--- a/docs/knowledge-evals.md
++++ b/docs/knowledge-evals.md
+@@ -6,7 +6,7 @@ Each arm is scored once.
+ The knowledge plan builds no team retrieval service unless the gold set shows the baselines **losing by at least
+ 15 points** on correctness or citation validity. The baselines are repo search and Claude Projects.
+ 
+-Flightdeck seals the set, scores each arm once, and keeps it as the regression gate for any retrieval tool a harness
++flightdeck seals the set, scores each arm once, and keeps it as the regression gate for any retrieval tool a harness
+ later pins. Code: `src/flightdeck/tasks/knowledge.py`, `flightdeck knowledge ...`.
+ 
+ ## The suite
+diff --git a/docs/metrics.md b/docs/metrics.md
+index 0417a41..bf9f1d5 100644
+--- a/docs/metrics.md
++++ b/docs/metrics.md
+@@ -1,6 +1,6 @@
+ # Weekly team metrics
+ 
+-The team's weekly scorecard, defined once here and computed by one SQL file over the data plane. Hangar's standup
++The team's weekly scorecard, defined once here and computed by one SQL file over the data plane. hangar's standup
+ line and Slack digest read the rendered numbers, never their own.
+ 
+ This page is the definition; hangar's standup line and Slack digest (hangar#168) cite it and read `latest.json`. The
+@@ -131,7 +131,7 @@ The decision recorded for #6: facts hangar knows come from hangar, facts only Gi
+ | PR opened, first review, merged (with green-to-merge), closed, abandoned (with reason) | hangar's outbox job events | `job_events` |
+ | All merged PRs on the team's repos, reverts | GitHub REST, nightly (`flightdeck ingest github`) | `prs` |
+ 
+-The issue's alternative, hangar emitting review and revert job events, is half taken. Hangar already emits
++The issue's alternative, hangar emitting review and revert job events, is half taken. hangar already emits
+ `review.first` and has reserved a `revert` event. When hangar emits `revert`, the revert view switches to it, and the
+ `prs` table remains only for agent share.
+ 
+diff --git a/docs/reports.md b/docs/reports.md
+index 54d59ec..441b03b 100644
+--- a/docs/reports.md
++++ b/docs/reports.md
+@@ -1,9 +1,9 @@
+ # Reports
+ 
+-A decision about a harness change gets made where the change is reviewed: usually a pull request. Flightdeck's report
++A decision about a harness change gets made where the change is reviewed: usually a pull request. flightdeck's report
+ is a markdown comment there, not a dashboard.
+ 
+-Hangar's canary lock-bump PRs are the typical place. Code: `src/flightdeck/report/markdown.py`.
++hangar's canary lock-bump PRs are the typical place. Code: `src/flightdeck/report/markdown.py`.
+ 
+ ```sh
+ flightdeck report experiment <id> [options]
+@@ -15,30 +15,31 @@ powered off. Its options:
+ 
+ - `--baseline control`, `--candidate candidate`: the two arms. The verdict is always the candidate against the
+   baseline.
+-- `--decision decision.yaml`: the pre-registered rule. Without it the report says *No verdict*.
++- `--decision decision.yaml`: the pre-registered rule. Without it the report says No verdict.
+ - `--out report.md`: write the report as markdown and print the verdict. Without it the report prints as a terminal
+   readout.
+ - `--post owner/repo#n`: post it as one comment, updated in place (`GITHUB_TOKEN`). `--full-url URL` or `--gist` say
+   where the full text lives when a comment is clipped.
+ - `--details`: per-task rows and trial links; keep it off for public repositories. `--hangar URL`: the trial links.
+ 
+-<figure class="af-figure" markdown>
+-![The whole flightdeck report as a pull-request comment: the verdict as its headline, the experiment and the rule, then the Outcome, Process and Cost tables, the behavior-spec pass rates, the exclusions and drift, and the pins collapsed at the end](assets/report-comment-full-dark.png#only-dark){ width=816 height=1638 }
+-![The whole flightdeck report as a pull-request comment: the verdict as its headline, the experiment and the rule, then the Outcome, Process and Cost tables, the behavior-spec pass rates, the exclusions and drift, and the pins collapsed at the end](assets/report-comment-full-light.png#only-light){ width=816 height=1638 }
+-<figcaption>A whole report on a pull request (fixture experiment)</figcaption>
++<figure class="af-figure fd-native" style="--fd-native: 816px" markdown>
++[![The whole flightdeck report as a pull-request comment: the verdict as its headline, experiment FDK-EXP-0531 with its real ID and the rule, then the Outcome, Process and Cost tables, the behavior-spec pass rates, the exclusions and drift, and the pins collapsed at the end](assets/report-comment-full-dark.png#only-dark){ width=816 height=1659 }](assets/report-comment-full-dark.png)
++[![The whole flightdeck report as a pull-request comment: the verdict as its headline, experiment FDK-EXP-0531 with its real ID and the rule, then the Outcome, Process and Cost tables, the behavior-spec pass rates, the exclusions and drift, and the pins collapsed at the end](assets/report-comment-full-light.png#only-light){ width=816 height=1659 }](assets/report-comment-full-light.png)
++<figcaption>The whole report as a pull-request comment: verdict, Outcome, Process and Cost, behavior specs, exclusions, pins</figcaption>
+ </figure>
+ 
+ ## Anatomy
+ 
+ ### 1. The verdict is the headline
+ 
+-In plain words from the pre-registered rule (below), with the numbers beside it: *candidate is non-inferior to control
+-on resolved: −2.0 pp (95% CI −4.0 to +1.0, margin −5.0)*, or *No decision: underpowered*. Without a valid
+-`decision.yaml` the headline is **No verdict**, and the numbers follow anyway.
++In plain words from the pre-registered rule (below), with the numbers beside it: "candidate is non-inferior to control
++on resolved: −2.0 pp (95% CI −4.0 to +1.0, margin −5.0)", or "No decision: underpowered". Without a valid
++`decision.yaml` the headline is *No verdict*, and the numbers follow anyway.
+ 
+ ### 2. One line on the experiment
+ 
+-The arms, as hangar's experiment described them; how many tasks and trials; the seed; and which pins differ between
++The experiment's tail number first, `FDK-EXP-0531`, with the real ID, which the CLI takes, beside it. Then the arms, as hangar's
++experiment described them; how many tasks and trials; the seed; and which pins differ between
+ the arms. Then the rule as pre-registered: metric, direction, margin, minimum tasks.
+ 
+ ### 3. Outcome, Process and Cost
+@@ -91,13 +92,13 @@ Choose the margin with the [power table](statistics.md#what-flightdeck-can-tell-
+ 
+ The report prints a verdict only when two things hold. The file is committed as it is, and the last commit that
+ changed it is older than the first finished trial. The git commit time counts, not the file's modification time, which any copy or
+-checkout resets. An uncommitted or locally edited `decision.yaml` gives **No verdict**.
++checkout resets. An uncommitted or locally edited `decision.yaml` gives *No verdict*.
+ 
+ ### The rule
+ 
+-Fewer than `min_tasks` paired tasks, or an underpowered interval, is *No decision: underpowered*. An interval wholly
+-above zero is *better*; wholly above the margin is *non-inferior*; wholly below it is *worse*. Anything else is
+-*No decision*.
++Fewer than `min_tasks` paired tasks, or an underpowered interval, is No decision: underpowered. An interval wholly
++above zero is better; wholly above the margin is non-inferior; wholly below it is worse. Anything else is
++No decision.
+ 
+ ## Posting
+ 
+diff --git a/docs/runners.md b/docs/runners.md
+index 3882f57..7f0f80e 100644
+--- a/docs/runners.md
++++ b/docs/runners.md
+@@ -1,6 +1,6 @@
+ # Running experiments
+ 
+-Flightdeck decides what to run; hangar runs it. A runner hands flightdeck's plan to hangar and brings the results back
++flightdeck decides what to run; hangar runs it. A runner hands flightdeck's plan to hangar and brings the results back
+ into the data plane.
+ 
+ <div class="af-figure" markdown>
+@@ -28,14 +28,14 @@ touching them.
+ Uses hangar's batch experiments (hangar spec 0014 §4). `POST /api/experiments` submits tasks × variants × a fixed trial
+ count; `GET /api/experiments/{id}` returns the `hangar.experiment/v1` index.
+ 
+-`HANGAR_URL` names hangar and `HANGAR_TOKEN` is the bearer token. Flightdeck checks nothing about credentials: hangar
++`HANGAR_URL` names hangar and `HANGAR_TOKEN` is the bearer token. flightdeck checks nothing about credentials: hangar
+ refuses subscription logins for experiments and owns API keys and their spend caps.
+ 
+-Hangar caps one experiment at 100 tasks, 8 variants, 20 trials per task and variant, and 200 trials in all
++hangar caps one experiment at 100 tasks, 8 variants, 20 trials per task and variant, and 200 trials in all
+ (`HANGAR_EXPERIMENT_MAX_TRIALS`). A larger plan becomes several experiments named `<suite>-<suite_run>-<i>`. Their
+ ids joined by `+` are the run-set id, and the plan's `budget_usd` is split between them by task count.
+ 
+-Hangar does the interleaving, isolation and pinning. Experiments queue as eval-class work (after 20:00, within API
++hangar does the interleaving, isolation and pinning. Experiments queue as eval-class work (after 20:00, within API
+ headroom), so `status` can say `queued` for hours. A trial whose agent asks a question is cancelled, since nobody is
+ there to answer; it counts as `cancelled`, not as a failure.
+ 
+@@ -83,7 +83,7 @@ to `src/flightdeck/ported/modelpolicy.py` and checked against hangar's own test
+ `claude-opus-4-5-20251101`, `gpt-6.1-sol`, `gpt-4o-2024-08-06`, `gemini-3.8-flash`,
+ `openrouter/anthropic/claude-opus-5.5`. `run`, `status` and `ingest` share the rule.
+ 
+-Flightdeck has no provider model list, so it decides by shape only. An id hangar accepts because its provider lists it
++flightdeck has no provider model list, so it decides by shape only. An id hangar accepts because its provider lists it
+ (`claude-opus-5`) needs `--allow-model ID`. `hangar env list` shows what a policy resolves to today.
+ 
+ ### Harness versions
+@@ -109,7 +109,7 @@ data plane's `runs` (`--data` / `FLIGHTDECK_DATA_URI`), else `--assume` (default
+ author's remaining sub-cap. The refusal names the cap and its file. Spend so far is this calendar month's experiment
+ `cost_usd` in `runs`: the team's, and the author's where `person` is the author.
+ 
+-The gate is advisory and early. Hangar's own budgets (per trial, per experiment, daily) still enforce.
++The gate is advisory and early. hangar's own budgets (per trial, per experiment, daily) still enforce.
+ 
+ `budgets.yaml` is team configuration and lives in the private data repository, not here. `run` finds it through
+ `--budgets`, `FLIGHTDECK_BUDGETS`, else `./budgets.yaml` when present:
+diff --git a/docs/statistics.md b/docs/statistics.md
+index 4bdd271..693b5a7 100644
+--- a/docs/statistics.md
++++ b/docs/statistics.md
+@@ -21,7 +21,7 @@ The 95% interval on resolved is about 19 points wide at 50 tasks × 3 trials, 24
+ non-inferiority verdict at a 5-point margin, the whole interval has to sit above −5 points.
+ 
+ When nothing really changed, that happens about 1 time in 5 at 50 tasks: 19% of 20,000 simulated experiments, 16%
+-*non-inferior* and 3% *better*. The other 4 times the report says *No decision*. At that size it is the honest answer,
++non-inferior and 3% better. The other 4 times the report says No decision. At that size it is the honest answer,
+ not a failure.
+ 
+ Seeing 5-point changes, or a 5-point margin, takes about 400 tasks × 3 trials per arm. That is 2,400 trials, about
+@@ -44,7 +44,7 @@ trace-mined skill micro-evals ([#33](https://github.com/Sean-Koval/flightdeck/is
+ 
+ ### Where the numbers come from
+ 
+-Flightdeck's own code, on one model of tasks. Each task's base rate is drawn from Beta(1.2, 1.2), with 3 trials per
++flightdeck's own code, on one model of tasks. Each task's base rate is drawn from Beta(1.2, 1.2), with 3 trials per
+ task and arm, and no real change for the interval widths.
+ 
+ `simulate_power` gives detection: a one-sided z test at α = 0.025, the same bar as a 95% interval whose lower bound
+@@ -89,7 +89,7 @@ budget can't see them. `tests/test_stats.py::test_power_reproduces_the_r1_table`
+ | `cohen_kappa(pairs)` | Cohen's κ for two raters' binary labels | Rater agreement on the knowledge gold set; judges' calibration ([#27](https://github.com/Sean-Koval/flightdeck/issues/27)) |
+ 
+ Every result is an `Interval` carrying its estimate, bounds, level, number of tasks and trials, the seed, and a note.
+-Fewer than 10 paired tasks is labelled *underpowered: do not decide on this*. No p-value is reported without its
++Fewer than 10 paired tasks is labelled "underpowered: do not decide on this". No p-value is reported without its
+ interval and n.
+ 
+ ## `flightdeck stats compare`
+@@ -116,8 +116,8 @@ this many tasks and trials, cached per n.
+ First match wins:
+ 
+ - `not finished`: pending or running.
+-- `infra_error`: hangar's `outcome_class = infra_error`, or `excluded`. Hangar retries it as the next attempt under
+-  the same key. Flightdeck never infers it from a failure reason; a null class is unknown, not infrastructure.
++- `infra_error`: hangar's `outcome_class = infra_error`, or `excluded`. hangar retries it as the next attempt under
++  the same key. flightdeck never infers it from a failure reason; a null class is unknown, not infrastructure.
+ - `cancelled`, or `outcome_class = cancelled`.
+ - `human`: a person stepped in.
+ - `task_invalid`: the task failed hangar's base check.
+diff --git a/docs/stylesheets/product.css b/docs/stylesheets/product.css
+index 165c40d..dcd3890 100644
+--- a/docs/stylesheets/product.css
++++ b/docs/stylesheets/product.css
+@@ -1 +1,17 @@
+ :root, [data-md-color-scheme] { --af-product: var(--af-product-flightdeck); }
++
++/* A <picture> swaps in a phone crop under 600 px (the terminal's key lines, the comment's top) so text stays legible;
++   it takes the hero's and the figure's image rules. */
++.af-hero__visual > picture, .md-typeset figure.af-figure > picture { display: block; }
++.af-hero__visual > picture > img { display: block; width: 100%; height: auto; border-radius: var(--af-radius-card); box-shadow: 0 0 0 1px var(--af-line); }
++.md-typeset figure.af-figure > picture > img { width: 100%; height: auto; }  /* display stays the scheme's (#only-dark) */
++/* A diagram inlined with --8<-- lands in a paragraph; it fills the column like a figure's image. */
++.md-typeset figure.af-figure > p > svg { width: 100%; height: auto; display: block; }
++/* A capture shown at its native size, never scaled up: the figure is as wide as the capture (`--fd-native`, set on
++   the figure; the PR comment is GitHub's 816 px comment) and the column, whichever is narrower. */
++.md-typeset figure.af-figure.fd-native { max-width: min(100%, var(--fd-native, 100%)); }
++.md-typeset figure.af-figure.fd-native > a { display: block; }
++.md-typeset figure.af-figure.fd-native > a > img { width: 100%; height: auto; display: block; }
++@media (forced-colors: active) {
++  .af-hero__visual > picture > img { box-shadow: none; outline: 1px solid CanvasText; }
++}
+diff --git a/docs/tasks.md b/docs/tasks.md
+index ec625c8..e2df759 100644
+--- a/docs/tasks.md
++++ b/docs/tasks.md
+@@ -3,9 +3,9 @@
+ A task is graded work: an instruction for the agent, the environment it works in, and hidden tests that decide the
+ reward.
+ 
+-Flightdeck's format is [Harbor](https://github.com/harbor-framework/harbor)'s task directory. So public Harbor
++flightdeck's format is [Harbor](https://github.com/harbor-framework/harbor)'s task directory. So public Harbor
+ datasets (Terminal-Bench and others in Harbor's registry) load without a converter, and flightdeck's tasks run on
+-Harbor. Hangar's spec 0008 chose this format for graded work; flightdeck owns it. Code: `src/flightdeck/tasks/`.
++Harbor. hangar's spec 0008 chose this format for graded work; flightdeck owns it. Code: `src/flightdeck/tasks/`.
+ 
+ ## Layout
+ 
+@@ -83,17 +83,17 @@ it, so a changed hidden test is always a deliberate, reviewed edit.
+ ## On hangar
+ 
+ `to_hangar(tasks)` builds the `tasks` and `grader` of a `hangar.experiment/v1` spec (hangar
+-`src/hangar/experiments.py`, `Task` and `Grader`). Hangar runs one grader per experiment. So every task's tests go
++`src/hangar/experiments.py`, `Task` and `Grader`). hangar runs one grader per experiment. So every task's tests go
+ into its `Grader.files` as `<id>/tests/...`, and the command is
+ `cd "$HANGAR_HIDDEN_TESTS/$HANGAR_TASK" && <command>`. Each trial runs its own task's command from that task's
+ pristine copy.
+ 
+-Hangar's limits are checked before submitting. Task ids match `^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$` (a longer Harbor
++hangar's limits are checked before submitting. Task ids match `^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$` (a longer Harbor
+ id gets a stable short form). Instructions run up to 64,000 characters. Grader files are at most 64 and 1 MB in all
+ (`MAX_GRADER_FILES`), text only; a reference patch is up to 1 MB. Tasks whose grader commands differ go in separate
+ experiments.
+ 
+-Hangar runs the grader in a sealed sandbox (no credential, egress `none`), writes the files outside the repo and adds
++hangar runs the grader in a sealed sandbox (no credential, egress `none`), writes the files outside the repo and adds
+ a canary comment to each. A `test.sh` command is recorded as `trust: low`, since hangar can only vouch for its own
+ `hangar-grade pytest` runner. The safe pattern below is what keeps such a grade honest.
+ 
+@@ -115,7 +115,7 @@ A trial's patch can try to forge its grade. It can write the reward file, or add
+    richer detail goes to stdout and `$HANGAR_GRADE_OUT`. Exit non-zero when the reward is 0, since hangar reads the
+    exit code.
+ 
+-Code under test still runs inside the test process and can lie through it. Hangar's base-must-fail check (a
++Code under test still runs inside the test process and can lie through it. hangar's base-must-fail check (a
+ `solution/reference.patch` must pass, the base must fail), canaries and `touched_tests` are the detectors for that.
+ 
+ ## The semver smoke task
+@@ -128,7 +128,7 @@ matching. It has 116 hidden unittest cases in 13 categories, generated from node
+ writes `reward.json` and prints `RESULT {passed, total, by_category, failed}`. `solution/semver.py` is a reference
+ that scores 116 of 116. Every hangar trial so far scored 116 of 116, so it tests the plumbing, not the agents.
+ 
+-To run it on hangar, set `[flightdeck.source] repo` and `base_sha` to an empty repository's first commit. Hangar
++To run it on hangar, set `[flightdeck.source] repo` and `base_sha` to an empty repository's first commit. hangar
+ applies and grades a trial's patch only on a repo.
+ 
+ ## The csv-validator fixture
+diff --git a/src/flightdeck/dataplane/ingest.py b/src/flightdeck/dataplane/ingest.py
+index fa94b35..5e6d5ec 100644
+--- a/src/flightdeck/dataplane/ingest.py
++++ b/src/flightdeck/dataplane/ingest.py
+@@ -150,7 +150,7 @@ def write_unit(tables: Tables, out: str, unit: str) -> dict[str, int]:
+ 
+ app = typer.Typer(help="Pull hangar runs and experiments into the data plane.", no_args_is_help=True)
+ OUT = typer.Option(DEFAULT_OUT, "--out", envvar="FLIGHTDECK_DATA_URI", help="Data plane directory.")
+-HANGAR = typer.Option(None, "--hangar", envvar="HANGAR_URL", help="Hangar base URL; token from HANGAR_TOKEN.")
++HANGAR = typer.Option(None, "--hangar", envvar="HANGAR_URL", help="hangar base URL; token from HANGAR_TOKEN.")
+ TURN = typer.Option(None, help="Only this turn.")
+ 
+ 
+diff --git a/src/flightdeck/ported/tails.py b/src/flightdeck/ported/tails.py
+new file mode 100644
+index 0000000..5f328bf
+--- /dev/null
++++ b/src/flightdeck/ported/tails.py
+@@ -0,0 +1,47 @@
++"""Tail numbers: ported from hangar `src/hangar/tails.py` (KAN-114), with flightdeck's prefix, so a person reads
++`FDK-EXP-…` for an experiment the way they read `HGR-JOB-…` for a hangar job (agent-factory `airframe/guide/brand.md`,
++"Tail-number IDs").
++
++The code is Crockford base32 of a 53-bit hash (cyrb53) of the whole real ID, four characters. Display only: commands,
++the report's marker, URLs and the data plane keep the real ID; text a person reads (the PR comment) leads with the tail
++and keeps the real ID beside it, since a comment has no hover and a person may paste the ID into the CLI.
++"""
++
++from __future__ import annotations
++
++ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
++PRODUCT = "FDK"
++MIN, MAX = 4, 10
++_M32 = 0xFFFFFFFF
++
++
++def _imul(a: int, b: int) -> int:
++    return (a * b) & _M32
++
++
++def hash53(s: str) -> int:
++    """cyrb53 over the string's UTF-16 code units, as JavaScript's charCodeAt reads them."""
++    h1, h2 = 0xDEADBEEF, 0x41C6CE57
++    units = s.encode("utf-16-le")
++    for i in range(0, len(units), 2):
++        c = units[i] | units[i + 1] << 8
++        h1 = _imul(h1 ^ c, 2654435761)
++        h2 = _imul(h2 ^ c, 1597334677)
++    h1 = _imul(h1 ^ (h1 >> 16), 2246822507) ^ _imul(h2 ^ (h2 >> 13), 3266489909)
++    h2 = _imul(h2 ^ (h2 >> 16), 2246822507) ^ _imul(h1 ^ (h1 >> 13), 3266489909)
++    return 4294967296 * (2097151 & h2) + (h1 & _M32)
++
++
++def code(identifier: str, n: int = MIN) -> str:
++    h = hash53(identifier)
++    return "".join(ALPHABET[(h >> (45 - 5 * i)) & 31] for i in range(min(n, MAX)))
++
++
++def tail(identifier: str, kind: str = "EXP") -> str:
++    """job-expdemo -> FDK-EXP-…: the product prefix, the kind segment and the code."""
++    return f"{PRODUCT}-{kind + '-' if kind else ''}{code(identifier)}"
++
++
++def label(identifier: str, kind: str = "EXP") -> str:
++    """For Markdown a person reads: the tail, then the real ID in code (`FDK-EXP-… (`job-expdemo`)`)."""
++    return f"{tail(identifier, kind)} (`{identifier}`)"
+diff --git a/src/flightdeck/report/markdown.py b/src/flightdeck/report/markdown.py
+index 6355d4d..fc8d799 100644
+--- a/src/flightdeck/report/markdown.py
++++ b/src/flightdeck/report/markdown.py
+@@ -16,6 +16,7 @@ import typer
+ 
+ from flightdeck import judges
+ from flightdeck.dataplane.flatten import SECRET
++from flightdeck.ported.tails import label
+ from flightdeck.stats import compare as stats
+ from flightdeck.stats.compare import Comparison, compare, exclusion, exclusions, fmt, load_trials, plain, ratio, render
+ 
+@@ -96,7 +97,7 @@ def render_report(con: Any, exp_id: str, a: str = "control", b: str = "candidate
+     tasks, about = {t["task_id"] for t in trials}, {t["variant"]: t["variant_description"] for t in trials}
+     arms = " against ".join(f"{x} ({about[x]})" if about.get(x) else x for x in (b, a))  # as hangar describes them
+     out = [marker(exp_id), f"## {head}", "",
+-           f"`{exp_id}`: {arms}, {len(tasks)} tasks, {len(trials)} trials, seed {seed}. The arms differ in "
++           f"{label(exp_id)}: {arms}, {len(tasks)} tasks, {len(trials)} trials, seed {seed}. The arms differ in "
+            + (", ".join(differ) if differ else "no recorded pin") + " (pins at the end)."]
+     if rule:
+         metric = rule.get("metric", "resolved")
+@@ -201,7 +202,7 @@ app = typer.Typer(help="The verdict as a report, posted on the pull request.", n
+ POST = typer.Option(None, "--post", help="owner/repo#n: post as a PR or issue comment (token: GITHUB_TOKEN).")
+ DECISION = typer.Option(None, help="Pre-registered decision.yaml; the verdict needs it.")
+ DETAILS = typer.Option(False, help="Per-task rows and trial links (keep off for public repos).")
+-HANGAR = typer.Option(None, envvar="HANGAR_URL", help="Hangar base URL for trial links.")
++HANGAR = typer.Option(None, envvar="HANGAR_URL", help="hangar base URL for trial links.")
+ OUT = typer.Option(None, help="Also write the report here.")
+ FULL = typer.Option(None, "--full-url", help="Where the full report is (https), linked when a comment is clipped.")
+ GIST = typer.Option(False, "--gist", help="Link a clipped comment to a secret gist of the full report.")

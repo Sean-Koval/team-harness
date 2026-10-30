@@ -1,0 +1,65 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cf44de8..89a48c5 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -73,7 +73,7 @@ Six engineers on three repos: planned work comes in through Jira, the inbox reac
+ 
+ **`@hangar adr` drafts a decision record from a Slack thread** (#170). In a thread on a mapped channel, `@hangar adr [title]` runs a job that adds one `docs/decisions/NNNN-<slug>.md` in the [ADR format](docs/templates/adr.md). The thread reaches the agent only as the untrusted, redacted `slack-thread.md`, the agent has egress `none`, and hangar opens the PR after the turn: a draft (the job is tainted) titled `ADR: <title>`, labelled `agent-drafted` and `adr`, linking the thread. Hangar checks the file as the job's verify (one new file, the next number, frontmatter and sections, and valid YAML in an optional `checks:` block, which flightdeck runs). A change outside `docs/decisions/` opens as a draft with a packet warning. An agent-drafted PR never lands on its requester's approval, whatever `self_approval` says. For any PR, removing or changing a line of an existing ADR's `checks:` block makes the packet's risk `high`. A repo without `docs/decisions/` is refused ([slack.md](docs/slack.md#hangar-adr-a-thread-becomes-a-decision-record), [landing.md](docs/landing.md#agent-drafted-adrs)).
+ 
+-**Fixes:** `hangar doctor` no longer fails a fresh laptop install on the intake posture: without the git gateway it warns until an intake front door is configured, then fails naming those doors, with one fix command (#236, PR #247). `hangar harness freeze --out DIR` checks a directory that already holds a lock against it first, and refuses to overwrite uncommitted edits there unless `--force` (#251). `deploy.yml` deploys again: GitHub dropped the control-plane job's image output because it contained the `HANGAR_REGISTRY` secret, so every approved rollout set an empty image and rolled back; only the digest now crosses jobs and the deploy job rebuilds the reference, refusing an empty or partial one before touching the cluster. A server too old to report its power state no longer makes a merge's deploy skip when the state job read the cluster's labels as up. On GKE, exec streams use their own Kubernetes API client: two execs connecting at once could leave the shared client on the websocket transport for good, after which every pod list and read failed with `Handshake status 200 OK`, stopping the reconciler, hangar-envd and sandbox readiness (found by the first live acceptance run). The acceptance backup check accepts the server's `GCS bucket gs://…` wording. Open-egress sandboxes on GKE get hangar's git gateway (and an in-cluster OTel collector) in `/etc/hosts`: Agent Sandbox's managed policy resolves internet names only, so with the gateway on every clone failed with `Could not resolve host: hangar-gateway.hangar.svc`. An environment saved through the API that extends a shipped one finds the skills it inherits: their paths are relative to the parent's file, not the child's on the data volume (`skill path not found: skills/repo-conventions`).
++**Fixes:** `hangar doctor` no longer fails a fresh laptop install on the intake posture: without the git gateway it warns until an intake front door is configured, then fails naming those doors, with one fix command (#236, PR #247). `hangar harness freeze --out DIR` checks a directory that already holds a lock against it first, and refuses to overwrite uncommitted edits there unless `--force` (#251). `deploy.yml` deploys again: GitHub dropped the control-plane job's image output because it contained the `HANGAR_REGISTRY` secret, so every approved rollout set an empty image and rolled back; only the digest now crosses jobs and the deploy job rebuilds the reference, refusing an empty or partial one before touching the cluster. A server too old to report its power state no longer makes a merge's deploy skip when the state job read the cluster's labels as up. On GKE, exec streams use their own Kubernetes API client: two execs connecting at once could leave the shared client on the websocket transport for good, after which every pod list and read failed with `Handshake status 200 OK`, stopping the reconciler, hangar-envd and sandbox readiness (found by the first live acceptance run). The acceptance backup check accepts the server's `GCS bucket gs://…` wording. Open-egress sandboxes on GKE get hangar's git gateway (and an in-cluster OTel collector) in `/etc/hosts`: Agent Sandbox's managed policy resolves internet names only, so with the gateway on every clone failed with `Could not resolve host: hangar-gateway.hangar.svc`. An environment saved through the API that extends a shipped one finds the skills it inherits: their paths are relative to the parent's file, not the child's on the data volume (`skill path not found: skills/repo-conventions`). A harness registry in a subdirectory of a repo (`HANGAR_HARNESS_REPO` set to a directory inside a checkout) resolves older revisions again: `name@rN`, `name@sha256:` and channels on a lock that isn't the current one read the registry's history relative to the registry, not the repo's root (#228).
+ 
+ ### The safe release (P1, #120–#132; [docs/upgrading.md](docs/upgrading.md#the-safe-release-120132))
+ 
+diff --git a/docs/harness-lock.md b/docs/harness-lock.md
+index bd702b2..cb37995 100644
+--- a/docs/harness-lock.md
++++ b/docs/harness-lock.md
+@@ -146,7 +146,9 @@ runs from one too: `{harness_lock: "team-default@sha256:…"}`, by digest ([jobs
+ **The registry.** `HANGAR_HARNESS_REPO` is the team harness repo ([below](#the-team-harness-repo)): locks at
+ `harnesses/<name>/harness.lock` (or `<name>/harness.lock`), channels in `channels.yaml`
+ (`{team-default: {stable: "sha256:..."}}`). A reference is `name` (the current lock), `name@rN`, `name@sha256:...` or
+-`name@<channel>`; a revision or digest that isn't the checkout's current one is found in its git history.
++`name@<channel>`; a revision or digest that isn't the checkout's current one is found in its git history. The
++registry can also be a subdirectory of a larger repo: its paths, and the history lookups, are relative to that
++directory.
+ `GET /api/harness-locks/{ref}` shows what a reference resolves to.
+ 
+ **The claim** is refused, with what to do, when:
+diff --git a/src/hangar/harness_thaw.py b/src/hangar/harness_thaw.py
+index 6a4d91e..cb39ee6 100644
+--- a/src/hangar/harness_thaw.py
++++ b/src/hangar/harness_thaw.py
+@@ -95,6 +95,14 @@ def _git(root: Path, *args: str) -> str | None:
+     return r.stdout if r.returncode == 0 else None
+ 
+ 
++def _blob(commit: str, rel: str) -> str:
++    """`git show`'s name for the file at `rel` (relative to the registry) in `commit`. A bare `<commit>:<path>` is
++    read from the repository's root, so it misses whenever HANGAR_HARNESS_REPO is a subdirectory of a repo (#228:
++    agent-factory's examples/team-harness was one, until it moved to its own repo); `./` makes the path relative to
++    `git -C`'s directory, as `log --` and `ls-tree` already read theirs."""
++    return f"{commit}:./{rel}"
++
++
+ def _lock_dir(root: Path, name: str) -> Path:
+     for d in (root / HARNESSES_DIR / name, root / name):
+         if (d / harness_lock.LOCK_FILE).is_file():
+@@ -144,7 +152,7 @@ def resolve(settings: Any, ref: str) -> Resolved:
+     if ok(current):
+         return Resolved(ref, name, current, harness_lock.harness_digest(current), rel)
+     for commit in (_git(root, "log", "--format=%H", "--", rel) or "").split():  # the registry's history
+-        text = _git(root, "show", f"{commit}:{rel}")
++        text = _git(root, "show", _blob(commit, rel))
+         with contextlib.suppress(yaml.YAMLError, ValueError, TypeError):
+             old = yaml.safe_load(text or "")
+             if not harness_lock.problems(old) and ok(old):
+@@ -238,7 +246,7 @@ def _registry_files(root: Path, r: Resolved) -> dict[str, bytes]:
+         if not rel or not needed(rel) or not harness_lock.safe_path(rel):
+             continue
+         try:
+-            p = subprocess.run(["git", "-C", str(root), "show", f"{r.commit}:{full}"], capture_output=True, timeout=20)
++            p = subprocess.run(["git", "-C", str(root), "show", _blob(r.commit, full)], capture_output=True, timeout=20)
+         except (OSError, subprocess.TimeoutExpired):
+             continue
+         if p.returncode == 0:

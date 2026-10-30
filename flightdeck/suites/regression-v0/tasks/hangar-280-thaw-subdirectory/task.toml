@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#280,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-280-thaw-subdirectory"
+version = "1.0.0"
+description = "A harness registry can live in a subdirectory of a larger repository (for example `examples/team-harness/`). There, history lookups fail: `team@stable`, `team@r1` and `team@sha256:...` raise"
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-19"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/280"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "abb506f0d760b7197c229700a588582db4e49432"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:a456942e4b4fc554d3b2c9f80790deb7df750129733dc65e824447fea100d138"

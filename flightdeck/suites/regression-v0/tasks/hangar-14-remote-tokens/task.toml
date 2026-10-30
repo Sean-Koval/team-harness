@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#14,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-14-remote-tokens"
+version = "1.0.0"
+description = "`hangar token create|list|revoke` only work against the local database, so they do nothing useful on a laptop pointed at a remote hangar (`HANGAR_URL` set)."
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-12"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/14"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "3be08f686f47ed2f9b54276b79f092f5b82fc314"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:ccc29af8adf59609f2ac1c5a165388698b4ea94f79d484a08949b4f7d9910422"

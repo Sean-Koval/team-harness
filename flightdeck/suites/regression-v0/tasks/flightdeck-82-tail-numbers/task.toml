@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/flightdeck#82,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/flightdeck-82-tail-numbers"
+version = "1.0.0"
+description = "Airframe's brand book gives every ID a \"tail number\": hangar shows a job `job-e0123d68` as `HGR-JOB-VDTR`, from hangar's `src/hangar/tails.py` (a cyrb53 hash written in Crockford base32, no"
+keywords = ["regression-v0", "flightdeck"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "flightdeck"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-21"
+mined_from = "https://github.com/Sean-Koval/flightdeck/pull/82"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/flightdeck.git"
+base_sha = "c005c619b5d6a4c7014836493c2f2b6a2811d623"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:b39b83eb1db32e087af67859db7ae5a26bcc88a2b4156b2518b2b34ff945ca88"

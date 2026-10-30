@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#364,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-364-repo-set-naming-flags"
+version = "1.0.0"
+description = "A repository policy's naming conventions (`branch_template`, `require_ticket`, `title_template`) can only be set over REST today. Add them to the CLI's `hangar repo set OWNER/REPO`:"
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-23"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/364"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "c6aad386ab0279ab4ddc6a49a7f15181662ac237"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:782f1c0fa74c32eace5d0875db11dab96a873880b667c2d017c14e51b10980c2"

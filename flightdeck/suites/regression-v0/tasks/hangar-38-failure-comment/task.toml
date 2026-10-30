@@ -1,0 +1,37 @@
+# regression-v0 (team-harness flightdeck/suites/regression-v0/README.md): mined from Sean-Koval/hangar#38,
+# picked by SELECTION.md's rule. Harbor task.toml schema 1.4, flightdeck's keys under [flightdeck] (docs/tasks.md).
+schema_version = "1.4"
+
+[task]
+name = "regression-v0/hangar-38-failure-comment"
+version = "1.0.0"
+description = "When a job fails (for example the sandbox's image build was denied), the issue comment hangar posts says only `**Finished with problems** - hangar job ... (error)` and tells the reader to re"
+keywords = ["regression-v0", "hangar"]
+
+[metadata]
+
+[agent]
+timeout_sec = 1800.0
+
+[verifier]
+timeout_sec = 900.0
+network_mode = "no-network"
+
+[environment]
+build_timeout_sec = 900.0
+
+[flightdeck]
+tags = ["regression-v0", "hangar"]
+sealed = false
+environment = "team-default"
+mined_after = "2026-10-13"
+mined_from = "https://github.com/Sean-Koval/hangar/pull/38"
+
+[flightdeck.source]
+repo = "https://github.com/Sean-Koval/hangar.git"
+base_sha = "ebbeceabe7db65ab98989adae1fd6dc16de02c12"
+base_branch = "main"
+
+[flightdeck.grader]
+command = "bash tests/test.sh"
+files_digest = "sha256:c40fa3d39f3bb6021b0047000d0110f323c644bc254176540d77568302eb9a5a"

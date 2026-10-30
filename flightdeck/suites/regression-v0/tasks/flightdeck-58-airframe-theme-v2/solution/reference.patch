@@ -1,0 +1,672 @@
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..a1a4a01
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,8 @@
++# Agent guidance
++
++Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop, the checks CI runs, the front-page assets and the line budget.
++
++Design: Airframe, in [Sean-Koval/agent-factory](https://github.com/Sean-Koval/agent-factory) (`airframe/`), is the design
++source of truth for everything visual here. Read its `airframe/README.md` and component READMEs before UI, report or docs
++styling work; use `var(--af-*)` tokens and `af-` classes only; never edit the vendored `docs/stylesheets/airframe*.css`
++(refresh with `sh scripts/sync-airframe.sh theme-vN`). See [CONTRIBUTING.md#design](CONTRIBUTING.md#design).
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..43c994c
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1 @@
++@AGENTS.md
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 27f6bd3..f09d164 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -81,3 +81,12 @@ nightly.
+ ## Commits
+ 
+ Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `build:`, `test:`, `refactor:`, `chore:`). Squash merge.
++
++## Design
++
++flightdeck's docs, reports and any future UI use **Airframe**, the suite's design system. Its source of truth is
++[Sean-Koval/agent-factory](https://github.com/Sean-Koval/agent-factory) (`airframe/`; docs and component gallery at
++<https://sean-koval.github.io/agent-factory/airframe/>). Read `airframe/README.md` and the component READMEs there before
++visual work. Use `var(--af-*)` tokens and `af-` classes only, never a color literal (`tests/test_airframe.py` checks
++`docs/stylesheets/`); flightdeck's hue is `--af-product-flightdeck`, for its mark, the docs header and the 2px nav marker.
++`docs/stylesheets/airframe*.css` are vendored: never edit them; refresh with `sh scripts/sync-airframe.sh theme-vN`.
+diff --git a/docs/assets/build.py b/docs/assets/build.py
+index b100591..f1bf09c 100644
+--- a/docs/assets/build.py
++++ b/docs/assets/build.py
+@@ -201,12 +201,12 @@ def comment_page(report: str) -> str:
+ def diagram() -> str:
+     """Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides (agent-factory's conventions:
+     `scripts/diagrams.py` there; every color an Airframe token with its dark fallback)."""
+-    v = {"canvas": "var(--af-canvas, #000)", "raised": "var(--af-raised, #141414)", "surface":
+-         "var(--af-surface, #0A0A0A)", "line": "var(--af-line-strong, #6B6B6B)", "fg": "var(--af-fg, #fff)",
++    v = {"canvas": "var(--af-canvas, #000000)", "raised": "var(--af-raised, #141414)", "surface":
++         "var(--af-surface, #0A0A0A)", "line": "var(--af-line-strong, #6B6B6B)", "fg": "var(--af-fg, #FFFFFF)",
+          "muted": "var(--af-fg-muted, #A6A6A6)", "subtle": "var(--af-fg-subtle, #8A8A8A)",
+-         "brand": "var(--af-brand-line, #FFC400)", "rule": "var(--af-line, #262626)",
+-         "fd": "var(--af-p-flightdeck, #D98CD2)", "hangar": "var(--af-p-hangar, #EE8F63)",
+-         "ws": "var(--af-p-workspace, #C5A93B)"}
++         "brand": "var(--af-brand-line, #FFC400)", "rule": "var(--af-line, #2A2A2A)",
++         "fd": "var(--af-product-flightdeck, #D98CD2)", "hangar": "var(--af-product-hangar, #EE8F63)",
++         "ws": "var(--af-product-tower, #C5A93B)"}
+     font = {"name": "700 17px Archivo,'Helvetica Neue',Arial,sans-serif", "body":
+             "400 12.5px 'Red Hat Text','Helvetica Neue',Arial,sans-serif", "lbl": "500 10.5px 'DM Mono',ui-monospace,"
+             "Menlo,monospace", "small": "700 13px Archivo,'Helvetica Neue',Arial,sans-serif"}
+diff --git a/docs/assets/sources.sha256 b/docs/assets/sources.sha256
+index ddb1bfe..d31adaa 100644
+--- a/docs/assets/sources.sha256
++++ b/docs/assets/sources.sha256
+@@ -1,3 +1,3 @@
+ c3417a872ba08e6c42508de38f48eaa26a7b9d12a71173151569b5bfb039c455  report-comment.png
+-9ec4efc89661cbee83d38b5820f6d85a0f65523e0d20cd12008ae4fcd4f705df  suite-dark.png
+-d5dd0b88c6fec422aa8bcfe2bb6dd478414d3a7b9b038c2ca77197ee2f3e5807  suite-light.png
++23947cf7590d6b6a082e40afdc4ec8adaec2aefede91a9007d6a10443fc5b4e5  suite-dark.png
++74444318308826b4a91b270ac867a1405558a2aef7fb1ca766d35bb49706a411  suite-light.png
+diff --git a/docs/assets/suite.svg b/docs/assets/suite.svg
+index 02186e0..80a72f3 100644
+--- a/docs/assets/suite.svg
++++ b/docs/assets/suite.svg
+@@ -1 +1 @@
+-<svg class="fd-d" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-label="Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides"><style>.fd-d .n{font:700 17px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #fff)}.fd-d .s{font:700 13px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #fff)}.fd-d .b{font:400 12.5px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-muted, #A6A6A6)}.fd-d .e{font:400 12.5px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .l{font:500 10.5px 'DM Mono',ui-monospace,Menlo,monospace;letter-spacing:.08em;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .edge{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25}.fd-d .plan{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25;stroke-dasharray:5 4}</style><defs><marker id="fd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--af-fg-subtle, #8A8A8A)"/></marker></defs><rect width="1200" height="600" fill="var(--af-canvas, #000)"/><text class="l" x="40" y="44">WHERE FLIGHTDECK SITS · RUN / JUDGE / GOVERN</text><rect x="30" y="90" width="270" height="300" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-line, #262626)"/><rect x="30" y="90" width="270" height="2" fill="var(--af-p-hangar, #EE8F63)"/><text class="l" x="48" y="116">RUN</text><text class="n" x="48" y="140">hangar</text><text class="b" x="48" y="164">runs coding agents in sandboxes</text><text class="b" x="48" y="183">records manifests, traces and</text><text class="b" x="48" y="202">the experiment index</text><text class="b" x="48" y="221">runs the trials it is asked for,</text><text class="b" x="48" y="240">pinned; does no analysis</text><rect x="430" y="70" width="360" height="380" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-brand-line, #FFC400)" stroke-width="1.5"/><rect x="430" y="70" width="360" height="2" fill="var(--af-p-flightdeck, #D98CD2)"/><text class="l" x="448" y="96">JUDGE</text><text class="n" x="448" y="120">flightdeck</text><rect x="460" y="140" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="161">ingest</text><text class="b" x="474" y="180">hangar REST or an experiment export</text><rect x="460" y="212" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="233">data plane</text><text class="b" x="474" y="252">flightdeck.parquet/v1 · DuckDB</text><path class="edge" d="M610 192 V210" marker-end="url(#fd-arrow)"/><rect x="460" y="284" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="305">stats compare · check run</text><text class="b" x="474" y="324">paired by task · behavior specs</text><path class="edge" d="M610 264 V282" marker-end="url(#fd-arrow)"/><rect x="460" y="356" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="377">report</text><text class="b" x="474" y="396">verdict from a pre-registered rule</text><path class="edge" d="M610 336 V354" marker-end="url(#fd-arrow)"/><rect x="890" y="90" width="270" height="300" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-line, #262626)"/><text class="l" x="908" y="116">DECIDE</text><text class="n" x="908" y="140">the pull request</text><text class="b" x="908" y="164">one comment, updated in place</text><text class="b" x="908" y="183">verdict, pins, outcome, cost,</text><text class="b" x="908" y="202">behavior specs</text><text class="b" x="908" y="221">a reviewer decides; the</text><text class="b" x="908" y="240">approver is never the author</text><path class="edge" d="M300 200 H426" marker-end="url(#fd-arrow)"/><text class="e" x="365" y="170" text-anchor="middle">manifests, traces,</text><text class="e" x="365" y="186" text-anchor="middle">experiment index</text><path class="edge" d="M430 330 H304" marker-end="url(#fd-arrow)"/><text class="e" x="365" y="356" text-anchor="middle">trials:</text><text class="e" x="365" y="372" text-anchor="middle">tasks × variants × n</text><path class="edge" d="M790 381 H886" marker-end="url(#fd-arrow)"/><text class="e" x="838" y="371" text-anchor="middle">report</text><rect x="430" y="490" width="730" height="80" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-line-strong, #6B6B6B)" stroke-dasharray="4 4" fill-opacity="0"/><rect x="430" y="490" width="730" height="2" fill="var(--af-p-workspace, #C5A93B)"/><text class="l" x="448" y="516">GOVERN · PLANNED</text><text class="n" x="448" y="540">governed workspace: policy decisions, approvals, receipts</text><path class="plan" d="M1025 390 V486" marker-end="url(#fd-arrow)"/><text class="e" x="1035" y="446" text-anchor="start">promotion approval</text></svg>
++<svg class="fd-d" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-label="Where flightdeck sits: hangar runs, flightdeck judges, the pull request decides"><style>.fd-d .n{font:700 17px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #FFFFFF)}.fd-d .s{font:700 13px Archivo,'Helvetica Neue',Arial,sans-serif;font-stretch:125%;fill:var(--af-fg, #FFFFFF)}.fd-d .b{font:400 12.5px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-muted, #A6A6A6)}.fd-d .e{font:400 12.5px 'Red Hat Text','Helvetica Neue',Arial,sans-serif;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .l{font:500 10.5px 'DM Mono',ui-monospace,Menlo,monospace;letter-spacing:.08em;fill:var(--af-fg-subtle, #8A8A8A)}.fd-d .edge{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25}.fd-d .plan{fill:none;stroke:var(--af-fg-subtle, #8A8A8A);stroke-width:1.25;stroke-dasharray:5 4}</style><defs><marker id="fd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--af-fg-subtle, #8A8A8A)"/></marker></defs><rect width="1200" height="600" fill="var(--af-canvas, #000000)"/><text class="l" x="40" y="44">WHERE FLIGHTDECK SITS · RUN / JUDGE / GOVERN</text><rect x="30" y="90" width="270" height="300" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><rect x="30" y="90" width="270" height="2" fill="var(--af-product-hangar, #EE8F63)"/><text class="l" x="48" y="116">RUN</text><text class="n" x="48" y="140">hangar</text><text class="b" x="48" y="164">runs coding agents in sandboxes</text><text class="b" x="48" y="183">records manifests, traces and</text><text class="b" x="48" y="202">the experiment index</text><text class="b" x="48" y="221">runs the trials it is asked for,</text><text class="b" x="48" y="240">pinned; does no analysis</text><rect x="430" y="70" width="360" height="380" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-brand-line, #FFC400)" stroke-width="1.5"/><rect x="430" y="70" width="360" height="2" fill="var(--af-product-flightdeck, #D98CD2)"/><text class="l" x="448" y="96">JUDGE</text><text class="n" x="448" y="120">flightdeck</text><rect x="460" y="140" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="161">ingest</text><text class="b" x="474" y="180">hangar REST or an experiment export</text><rect x="460" y="212" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="233">data plane</text><text class="b" x="474" y="252">flightdeck.parquet/v1 · DuckDB</text><path class="edge" d="M610 192 V210" marker-end="url(#fd-arrow)"/><rect x="460" y="284" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="305">stats compare · check run</text><text class="b" x="474" y="324">paired by task · behavior specs</text><path class="edge" d="M610 264 V282" marker-end="url(#fd-arrow)"/><rect x="460" y="356" width="300" height="52" rx="3" fill="var(--af-surface, #0A0A0A)" stroke="var(--af-line-strong, #6B6B6B)"/><text class="s" x="474" y="377">report</text><text class="b" x="474" y="396">verdict from a pre-registered rule</text><path class="edge" d="M610 336 V354" marker-end="url(#fd-arrow)"/><rect x="890" y="90" width="270" height="300" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-line, #2A2A2A)"/><text class="l" x="908" y="116">DECIDE</text><text class="n" x="908" y="140">the pull request</text><text class="b" x="908" y="164">one comment, updated in place</text><text class="b" x="908" y="183">verdict, pins, outcome, cost,</text><text class="b" x="908" y="202">behavior specs</text><text class="b" x="908" y="221">a reviewer decides; the</text><text class="b" x="908" y="240">approver is never the author</text><path class="edge" d="M300 200 H426" marker-end="url(#fd-arrow)"/><text class="e" x="365" y="170" text-anchor="middle">manifests, traces,</text><text class="e" x="365" y="186" text-anchor="middle">experiment index</text><path class="edge" d="M430 330 H304" marker-end="url(#fd-arrow)"/><text class="e" x="365" y="356" text-anchor="middle">trials:</text><text class="e" x="365" y="372" text-anchor="middle">tasks × variants × n</text><path class="edge" d="M790 381 H886" marker-end="url(#fd-arrow)"/><text class="e" x="838" y="371" text-anchor="middle">report</text><rect x="430" y="490" width="730" height="80" rx="3" fill="var(--af-raised, #141414)" stroke="var(--af-line-strong, #6B6B6B)" stroke-dasharray="4 4" fill-opacity="0"/><rect x="430" y="490" width="730" height="2" fill="var(--af-product-tower, #C5A93B)"/><text class="l" x="448" y="516">GOVERN · PLANNED</text><text class="n" x="448" y="540">governed workspace: policy decisions, approvals, receipts</text><path class="plan" d="M1025 390 V486" marker-end="url(#fd-arrow)"/><text class="e" x="1035" y="446" text-anchor="start">promotion approval</text></svg>
+diff --git a/docs/stylesheets/airframe-docs.css b/docs/stylesheets/airframe-docs.css
+index 7c76a3c..c093be5 100644
+--- a/docs/stylesheets/airframe-docs.css
++++ b/docs/stylesheets/airframe-docs.css
+@@ -1,13 +1,13 @@
+ @import url("https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=DM+Mono:wght@400;500&family=Red+Hat+Text:ital,wght@0,400..700;1,400..700&display=swap");
+ 
+ /*
+-  Airframe for the docs sites (Zensical / Material for MkDocs).
+-  Load after airframe.css. It maps the theme's --md-* variables onto Airframe tokens and adds
++  Airframe for the docs sites (Zensical / Material for MkDocs). Hand-written; lives in
++  Sean-Koval/agent-factory theme/ next to the generated airframe.css. Load after airframe.css. It maps the theme's --md-* variables onto Airframe tokens and adds
+   the few Airframe details a docs page needs: display type for headings, mono uppercase
+   labels, a 2px product marker under the header, tonal blocks instead of boxed cards.
+ 
+   Each site sets its own product hue once, e.g. in docs/stylesheets/product.css:
+-    :root { --af-product: var(--af-p-hangar); }
++    :root { --af-product: var(--af-product-hangar); }
+ */
+ 
+ :root { --af-product: var(--af-brand); }
+@@ -42,22 +42,22 @@
+   --md-typeset-kbd-color: var(--af-raised);
+   --md-typeset-kbd-border-color: var(--af-line-strong);
+ 
+-  --md-code-fg-color: var(--af-term-fg);
+-  --md-code-bg-color: var(--af-term-bg);
++  --md-code-fg-color: var(--af-terminal-fg);
++  --md-code-bg-color: var(--af-terminal-bg);
+   --md-code-hl-color: var(--af-brand-wash);
+   --md-code-hl-color--light: var(--af-brand-wash);
+-  --md-code-hl-keyword-color: var(--af-code-k);
+-  --md-code-hl-function-color: var(--af-code-f);
+-  --md-code-hl-string-color: var(--af-code-s);
+-  --md-code-hl-number-color: var(--af-code-n);
+-  --md-code-hl-constant-color: var(--af-code-n);
+-  --md-code-hl-special-color: var(--af-code-n);
+-  --md-code-hl-name-color: var(--af-term-fg);
+-  --md-code-hl-variable-color: var(--af-term-fg);
+-  --md-code-hl-operator-color: var(--af-code-c);
+-  --md-code-hl-punctuation-color: var(--af-code-c);
+-  --md-code-hl-comment-color: var(--af-code-c);
+-  --md-code-hl-generic-color: var(--af-code-c);
++  --md-code-hl-keyword-color: var(--af-code-keyword);
++  --md-code-hl-function-color: var(--af-code-function);
++  --md-code-hl-string-color: var(--af-code-string);
++  --md-code-hl-number-color: var(--af-code-number);
++  --md-code-hl-constant-color: var(--af-code-number);
++  --md-code-hl-special-color: var(--af-code-number);
++  --md-code-hl-name-color: var(--af-terminal-fg);
++  --md-code-hl-variable-color: var(--af-terminal-fg);
++  --md-code-hl-operator-color: var(--af-code-comment);
++  --md-code-hl-punctuation-color: var(--af-code-comment);
++  --md-code-hl-comment-color: var(--af-code-comment);
++  --md-code-hl-generic-color: var(--af-code-comment);
+ 
+   --md-footer-bg-color: var(--af-surface);
+   --md-footer-bg-color--dark: var(--af-canvas);
+@@ -68,39 +68,42 @@
+   --md-admonition-bg-color: var(--af-surface);
+   --md-admonition-fg-color: var(--af-fg);
+ 
+-  --md-mermaid-font-family: var(--af-f-sans);
++  --md-mermaid-font-family: var(--af-font-sans);
+   --md-mermaid-edge-color: var(--af-fg-subtle);
+   --md-mermaid-node-bg-color: var(--af-raised);
+   --md-mermaid-node-fg-color: var(--af-fg);
+   --md-mermaid-label-bg-color: var(--af-canvas);
+   --md-mermaid-label-fg-color: var(--af-fg-muted);
+ 
+-  --md-text-font-family: var(--af-f-sans);
+-  --md-code-font-family: var(--af-f-mono);
++  --md-text-font-family: var(--af-font-sans);
++  --md-code-font-family: var(--af-font-mono);
+   --md-shadow-z1: none;
+   --md-shadow-z2: none;
+   --md-shadow-z3: 0 0 0 1px var(--af-line);
+ }
+ 
++/* the theme's dark palette sets the link color per primary color, one step more specific than above */
++[data-md-color-scheme][data-md-color-primary] { --md-typeset-a-color: var(--af-fg); }
++
+ body { background: var(--af-canvas); }
+ .md-typeset { font-feature-settings: "kern"; }
+ 
+ /* header and tabs: flat, with the product's 2px marker */
+ .md-header, .md-tabs { background: var(--af-canvas); color: var(--af-fg); box-shadow: none; }
+ .md-header { border-bottom: 1px solid var(--af-line); }
+-.md-header__title { font-family: var(--af-f-display); font-stretch: var(--af-display-stretch); font-weight: var(--af-display-weight); letter-spacing: var(--af-display-track); }
++.md-header__title { font-family: var(--af-font-display); font-stretch: var(--af-display-stretch); font-weight: var(--af-display-weight); letter-spacing: var(--af-display-track); }
+ .md-tabs { border-bottom: 1px solid var(--af-line); }
+-.md-tabs__link { font-family: var(--af-f-mono); font-size: .62rem; letter-spacing: var(--af-label-track); text-transform: uppercase; opacity: 1; color: var(--af-fg-muted); }
++.md-tabs__link { font-family: var(--af-font-mono); font-size: .62rem; letter-spacing: var(--af-label-track); text-transform: uppercase; opacity: 1; color: var(--af-fg-muted); }
+ .md-tabs__link--active, .md-tabs__link:hover { color: var(--af-fg); }
+ .md-tabs__item--active { box-shadow: inset 0 -2px 0 var(--af-product); }
+ .md-header::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 48px; height: 2px; background: var(--af-product); }
+ 
+ /* headings: Archivo Expanded for the page title, quieter below */
+-.md-typeset h1, .md-typeset h2 { font-family: var(--af-f-display); font-stretch: var(--af-display-stretch); font-weight: var(--af-display-weight); letter-spacing: var(--af-display-track); color: var(--af-fg); text-wrap: balance; }
++.md-typeset h1, .md-typeset h2 { font-family: var(--af-font-display); font-stretch: var(--af-display-stretch); font-weight: var(--af-display-weight); letter-spacing: var(--af-display-track); color: var(--af-fg); text-wrap: balance; }
+ .md-typeset h1 { font-size: 1.9em; line-height: 1.08; margin-bottom: .9em; }
+ .md-typeset h2 { font-size: 1.25em; line-height: 1.2; border-top: 1px solid var(--af-rule); padding-top: 1.1em; margin-top: 2em; }
+ .md-typeset h3 { font-weight: 600; letter-spacing: 0; }
+-.md-typeset h4, .md-typeset h5, .md-typeset h6 { font-family: var(--af-f-mono); text-transform: uppercase; letter-spacing: var(--af-label-track); font-size: .7rem; color: var(--af-fg-subtle); }
++.md-typeset h4, .md-typeset h5, .md-typeset h6 { font-family: var(--af-font-mono); text-transform: uppercase; letter-spacing: var(--af-label-track); font-size: .7rem; color: var(--af-fg-subtle); }
+ 
+ /* links: plain ink, a brand underline */
+ .md-typeset a { text-decoration: underline; text-decoration-color: var(--af-brand-line); text-underline-offset: .2em; text-decoration-thickness: 1px; }
+@@ -108,56 +111,56 @@ body { background: var(--af-canvas); }
+ .md-typeset a.headerlink, .md-typeset .md-button { text-decoration: none; }
+ 
+ /* buttons */
+-.md-typeset .md-button { border-radius: var(--af-r-ctl); border: 1px solid var(--af-line-strong); color: var(--af-fg); font-family: var(--af-f-mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; padding: .55em 1.2em; }
++.md-typeset .md-button { border-radius: var(--af-radius-control); border: 1px solid var(--af-line-strong); color: var(--af-fg); font-family: var(--af-font-mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; padding: .55em 1.2em; }
+ .md-typeset .md-button--primary { background: var(--af-brand); border-color: var(--af-brand); color: var(--af-on-brand); }
+ .md-typeset .md-button:hover { border-color: var(--af-fg); background: transparent; color: var(--af-fg); }
+ .md-typeset .md-button--primary:hover { background: var(--af-brand-hover); border-color: var(--af-brand-hover); color: var(--af-on-brand); }
+ 
+ /* code: terminal blocks, mono ids inline */
+-.md-typeset pre > code { border-radius: var(--af-r-card); }
+-.md-typeset code { border-radius: var(--af-r-chip); font-size: .82em; }
++.md-typeset pre > code { border-radius: var(--af-radius-card); }
++.md-typeset code { border-radius: var(--af-radius-control); font-size: .82em; }
+ .md-typeset :not(pre) > code { background: var(--af-raised); color: var(--af-fg); padding: .1em .35em; }
+ 
+-/* tables: tonal header, mono uppercase labels, row rules only */
+-.md-typeset table:not([class]) { border: 0; border-radius: var(--af-r-card); background: var(--af-canvas); font-size: .74rem; box-shadow: none; }
+-.md-typeset table:not([class]) th { background: var(--af-raised); color: var(--af-fg-subtle); font-family: var(--af-f-mono); font-weight: 500; font-size: .6rem; letter-spacing: var(--af-label-track); text-transform: uppercase; border-bottom: 2px solid var(--af-canvas); }
++/* tables: open header (no fill), mono uppercase labels, a hairline under the header, row rules only */
++.md-typeset table:not([class]) { border: 0; border-radius: 0; background: transparent; font-size: .74rem; box-shadow: none; }
++.md-typeset table:not([class]) th { background: transparent; color: var(--af-fg-subtle); font-family: var(--af-font-mono); font-weight: 500; font-size: .6rem; letter-spacing: var(--af-label-track); text-transform: uppercase; border-bottom: 1px solid var(--af-line); }
+ .md-typeset table:not([class]) td { border-top: 1px solid var(--af-line-subtle); }
+ .md-typeset table:not([class]) tr:hover { background: var(--af-selected); box-shadow: none; }
+ 
+ /* admonitions: tonal blocks with a status-colored start mark, never the brand */
+-.md-typeset .admonition, .md-typeset details { border: 0; border-radius: var(--af-r-card); background: var(--af-surface); box-shadow: inset 2px 0 0 var(--af-fg-subtle); font-size: .74rem; }
+-.md-typeset .admonition-title, .md-typeset summary { background: transparent !important; font-family: var(--af-f-mono); font-size: .62rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-muted); }
++.md-typeset .admonition, .md-typeset details { border: 0; border-radius: var(--af-radius-card); background: var(--af-surface); box-shadow: inset 2px 0 0 var(--af-fg-subtle); font-size: .74rem; }
++.md-typeset .admonition-title, .md-typeset summary { background: transparent !important; font-family: var(--af-font-mono); font-size: .62rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-muted); }
+ .md-typeset .admonition-title::before, .md-typeset summary::before { background-color: var(--af-fg-subtle) !important; }
+-.md-typeset .admonition.warning, .md-typeset details.warning { box-shadow: inset 2px 0 0 var(--af-st-appr); }
+-.md-typeset .admonition.danger, .md-typeset details.danger { box-shadow: inset 2px 0 0 var(--af-st-fail); }
++.md-typeset .admonition.warning, .md-typeset details.warning { box-shadow: inset 2px 0 0 var(--af-status-approval); }
++.md-typeset .admonition.danger, .md-typeset details.danger { box-shadow: inset 2px 0 0 var(--af-status-failed); }
+ 
+ /* navigation: mono section labels, a brand mark on the current page */
+-.md-nav__title { font-family: var(--af-f-mono); text-transform: uppercase; letter-spacing: var(--af-label-track); font-size: .6rem; color: var(--af-fg-subtle); box-shadow: none !important; background: transparent !important; }
++.md-nav__title { font-family: var(--af-font-mono); text-transform: uppercase; letter-spacing: var(--af-label-track); font-size: .6rem; color: var(--af-fg-subtle); box-shadow: none !important; background: transparent !important; }
+ .md-nav__link--active { color: var(--af-fg) !important; font-weight: 600; }
+ .md-nav__item .md-nav__link--active { box-shadow: inset 2px 0 0 var(--af-product); padding-left: .5em; }
+-.md-search__form { border-radius: var(--af-r-ctl); background: var(--af-raised); }
++.md-search__form { border-radius: var(--af-radius-control); background: var(--af-raised); }
+ 
+ /* images and diagrams sit on the canvas, never in boxed cards */
+-.md-typeset img { border-radius: var(--af-r-card); }
++.md-typeset img { border-radius: var(--af-radius-card); }
+ .af-figure { margin: 1.5em 0; }
+ .af-figure img { width: 100%; display: block; }
+-.af-figure figcaption { font-family: var(--af-f-mono); font-size: .6rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-subtle); margin-top: .6em; }
++.af-figure figcaption { font-family: var(--af-font-mono); font-size: .6rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-subtle); margin-top: .6em; }
+ 
+ /* the home page hero: one strong line, a mono label, a dot field */
+ .af-hero { position: relative; padding: 2.4rem 0 1.6rem; margin-bottom: 1rem; }
+-.af-hero::after { content: ""; position: absolute; inset: 0 0 0 55%; background: radial-gradient(circle, var(--af-dot) 1.1px, transparent 1.6px) 0 0 / 8px 8px; pointer-events: none; z-index: 0; }
++.af-hero::after { content: ""; position: absolute; inset: 0 0 0 55%; background: radial-gradient(circle, var(--af-dot-field) 1.1px, transparent 1.6px) 0 0 / 8px 8px; pointer-events: none; z-index: 0; }
+ .af-hero > * { position: relative; z-index: 1; }
+-.af-eyebrow { font-family: var(--af-f-mono); font-size: .62rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-subtle); display: inline-flex; align-items: center; gap: .6em; }
++.af-eyebrow { font-family: var(--af-font-mono); font-size: .62rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-subtle); display: inline-flex; align-items: center; gap: .6em; }
+ .af-eyebrow::before { content: ""; width: 14px; height: 1px; background: var(--af-brand-line); }
+ .md-typeset .af-hero h1 { font-size: 2.6em; margin: .4em 0 .5em; max-width: 18ch; }
+ .af-lede { color: var(--af-fg-muted); font-size: .95rem; max-width: 52ch; }
+ 
+ /* tool tiles on the suite home page */
+ .af-tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px; background: var(--af-canvas); margin: 1.5em 0; }
+-.af-tool { background: var(--af-raised); padding: var(--af-pad); display: flex; flex-direction: column; gap: .4em; min-width: 0; text-decoration: none !important; color: var(--af-fg) !important; border-top: 2px solid var(--af-tool, var(--af-line)); }
++.af-tool { background: var(--af-raised); padding: var(--af-space-16); display: flex; flex-direction: column; gap: .4em; min-width: 0; text-decoration: none !important; color: var(--af-fg) !important; border-top: 2px solid var(--af-tool, var(--af-line)); }
+ .af-tool:hover { background: var(--af-selected); }
+-.af-tool b { font-family: var(--af-f-display); font-stretch: var(--af-display-stretch); font-weight: 700; font-size: .9rem; }
+-.af-tool small { font-family: var(--af-f-mono); font-size: .58rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-subtle); }
++.af-tool b { font-family: var(--af-font-display); font-stretch: var(--af-display-stretch); font-weight: 700; font-size: .9rem; }
++.af-tool small { font-family: var(--af-font-mono); font-size: .58rem; letter-spacing: var(--af-label-track); text-transform: uppercase; color: var(--af-fg-subtle); }
+ .af-tool span { color: var(--af-fg-muted); font-size: .72rem; line-height: 1.5; }
+ 
+ /* footer: on the canvas, separated by a rule */
+diff --git a/docs/stylesheets/airframe.css b/docs/stylesheets/airframe.css
+index a211953..c815ac2 100644
+--- a/docs/stylesheets/airframe.css
++++ b/docs/stylesheets/airframe.css
+@@ -1,117 +1,246 @@
+ /*
+-  Airframe tokens: the shared design system for hangar, flightdeck, the governed workspace,
+-  ai-dlc and Spaceport. This file is the swappable "flavor": every site, the deck and the
+-  diagrams read these custom properties and nothing else, so restyling the suite means
+-  replacing this one file.
++  Airframe theme-v2 tokens. Generated from airframe/tokens.json by scripts/airframe.py; do not edit.
++  Change a value in airframe/tokens.json, run `python3 scripts/airframe.py build`, and add a
++  theme/CHANGELOG.md entry. Tool repos vendor this file unmodified (scripts/sync-airframe.sh).
+ 
+-  Current flavor: "Night Panel" from the Airframe Lab (saved 2026-10-17 as "latest"):
+-  black cockpit canvas, signal-yellow accent, Archivo Expanded display, Red Hat Text body,
+-  DM Mono for ids and labels, tonal cards, 2px radius, quiet status colors.
+-  The design is still being narrowed; keep token names stable and change values only.
+-
+-  Contract (do not rename): theme ids `dark` / `light` on [data-theme]; token names below;
+-  class roots `af-*`. The brand accent is never a status color.
++  Contract: every token is --af-<name>; Night is `dark` (the default), Day is `light`, set with
++  data-theme on <html> or any element (the docs sites use data-md-color-scheme). Component
++  classes live in airframe-components.css. The brand yellow is never a status.
+ */
+ 
+-/* Dark is the default look. The docs sites pick dark with data-md-color-scheme="slate". */
+ :root,
++[data-theme="dark"],
+ [data-md-color-scheme="slate"] {
+   color-scheme: dark;
+-
+-  /* surfaces */
+   --af-canvas: #000000;
+   --af-surface: #0A0A0A;
+   --af-raised: #141414;
+   --af-overlay: #1C1C1C;
+-  --af-selected: #1F1F1F;
+-
+-  /* lines (refined: softened toward the raised surface) */
+-  --af-line-subtle: #161616;
+-  --af-line: #1F1F1F;
++  --af-line-subtle: #1F1F1F;
++  --af-line: #2A2A2A;
+   --af-line-strong: #6B6B6B;
+-  --af-rule: #3A3A3A;
+-
+-  /* ink */
++  --af-rule: #424242;
+   --af-fg: #FFFFFF;
+   --af-fg-muted: #A6A6A6;
+   --af-fg-subtle: #8A8A8A;
+   --af-fg-dim: #5C5C5C;
+-
+-  /* brand: signal yellow */
++  --af-selected: #1F1F1F;
+   --af-brand: #FFC400;
+   --af-brand-hover: #FFD23F;
++  --af-brand-wash: rgba(255,196,0,0.12);
+   --af-on-brand: #111213;
+   --af-brand-text: #FFC400;
+   --af-brand-line: #FFC400;
+-  --af-brand-wash: rgba(255, 196, 0, .12);
+   --af-focus: #FFC400;
+-
+-  /* status, quiet mode: only approval and failure light up */
+-  --af-st-run: #C7C7C7;
+-  --af-st-queue: #8A8A8A;
+-  --af-st-appr: #FFB224;
+-  --af-st-fail: #FF4D4D;
+-  --af-st-deny: #D93036;
+-  --af-st-off: #6B6B6B;
+-
+-  /* product hues: logo tiles, docs headers and a 2px nav marker only */
+-  --af-p-hangar: #EE8F63;
+-  --af-p-flightdeck: #D98CD2;
+-  --af-p-workspace: #C5A93B;
+-  --af-p-aidlc: #69C27E;
+-  --af-p-spaceport: #B199F4;
+-
+-  /* terminal and code */
+-  --af-term-bg: #0A0A0A;
+-  --af-term-fg: #E6E7E3;
+-  --af-code-k: #FFFFFF;
+-  --af-code-f: #D9D9D9;
+-  --af-code-s: #A6A6A6;
+-  --af-code-n: #CCCCCC;
+-  --af-code-c: #808080;
+-
+-  /* texture */
+-  --af-dot: #262626;
+-
+-  /* type */
+-  --af-f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+-  --af-display-stretch: 125%;
+-  --af-display-weight: 700;
+-  --af-display-track: -0.01em;
+-  --af-f-sans: "Red Hat Text", "Helvetica Neue", Arial, sans-serif;
+-  --af-f-mono: "DM Mono", ui-monospace, Menlo, Consolas, monospace;
+-  --af-label-track: .08em;
+-
+-  /* shape and rhythm */
+-  --af-r-ctl: 2px;
+-  --af-r-card: 4px;
+-  --af-r-chip: 2px;
+-  --af-row-h: 32px;
+-  --af-pad: 16px;
+-  --af-gap: 12px;
++  --af-status-running: #C7C7C7;
++  --af-status-queued: #8A8A8A;
++  --af-status-approval: #FF8A3D;
++  --af-status-failed: #FF4D4D;
++  --af-status-denied: #D93036;
++  --af-on-status-denied: #FFFFFF;
++  --af-status-off: #6B6B6B;
++  --af-lamp-caution: #FF8A3D;
++  --af-lamp-warning: #FF4D4D;
++  --af-on-lamp: #000000;
++  --af-terminal-bg: #0A0A0A;
++  --af-terminal-fg: #E6E7E3;
++  --af-terminal-dim: #8E9297;
++  --af-terminal-ok: #C7C7C7;
++  --af-terminal-err: #FF4D4D;
++  --af-code-keyword: #FFFFFF;
++  --af-code-function: #D9D9D9;
++  --af-code-string: #A6A6A6;
++  --af-code-number: #CCCCCC;
++  --af-code-comment: #808080;
++  --af-span-model: #C7C7C7;
++  --af-span-tool: #999999;
++  --af-span-sandbox: #616161;
++  --af-stage-plan: #383838;
++  --af-stage-edit: #6B6B6B;
++  --af-stage-test: #A3A3A3;
++  --af-readout-cell: #161616;
++  --af-display-window: #0A0A0A;
++  --af-dot-field: #262626;
++  --af-product-hangar: #EE8F63;
++  --af-product-flightdeck: #D98CD2;
++  --af-product-tower: #C5A93B;
++  --af-product-aidlc: #69C27E;
++  --af-product-spaceport: #B199F4;
++  --af-chart-1: #FFFFFF;
++  --af-chart-2: #BFBFBF;
++  --af-chart-3: #8C8C8C;
++  --af-chart-4: #666666;
++  --af-chart-5: #FF8A3D;
++  --af-chart-6: #333333;
++  --af-shadow-overlay: 0 12px 32px rgba(0,0,0,0.6);
+ }
+ 
+ @media (prefers-color-scheme: light) {
+   :root:not([data-theme="dark"]) {
+     color-scheme: light;
+-    --af-canvas: #FFFFFF; --af-surface: #F8F8F7; --af-raised: #F1F1F0; --af-overlay: #FFFFFF; --af-selected: #E8E8E7;
+-    --af-line-subtle: #EDEDED; --af-line: #E0E0E0; --af-line-strong: #858585; --af-rule: #C9C9C9;
+-    --af-fg: #000000; --af-fg-muted: #4D4D4D; --af-fg-subtle: #6B6B6B; --af-fg-dim: #A3A3A3;
+-    --af-brand: #FFC400; --af-brand-hover: #FFD23F; --af-on-brand: #111213; --af-brand-text: #7A5F00; --af-brand-line: #7A5F00; --af-brand-wash: rgba(255, 196, 0, .16); --af-focus: #7A5F00;
+-    --af-st-run: #3A3A3A; --af-st-queue: #6B6B6B; --af-st-appr: #9A5B00; --af-st-fail: #C42B2B; --af-st-deny: #C42B2B; --af-st-off: #858585;
+-    --af-p-hangar: #A44C1D; --af-p-flightdeck: #914A8C; --af-p-workspace: #816600; --af-p-aidlc: #1D7D3E; --af-p-spaceport: #6F57AB;
+-    --af-dot: #E0E0E0;
++    --af-canvas: #F4F4F2;
++    --af-surface: #EDEDEB;
++    --af-raised: #FFFFFF;
++    --af-overlay: #FFFFFF;
++    --af-line-subtle: #E6E6E3;
++    --af-line: #DCDCD9;
++    --af-line-strong: #858583;
++    --af-rule: #BDBDBA;
++    --af-fg: #0A0A0A;
++    --af-fg-muted: #474746;
++    --af-fg-subtle: #666664;
++    --af-fg-dim: #9C9C99;
++    --af-selected: #E6E6E3;
++    --af-brand-wash: rgba(255,196,0,0.18);
++    --af-brand-text: #7A5F00;
++    --af-brand-line: #7A5F00;
++    --af-focus: #7A5F00;
++    --af-status-running: #3A3A3A;
++    --af-status-queued: #666664;
++    --af-status-approval: #B04E00;
++    --af-status-failed: #C42B2B;
++    --af-status-denied: #C42B2B;
++    --af-status-off: #858583;
++    --af-span-model: #383838;
++    --af-span-tool: #666664;
++    --af-span-sandbox: #9E9E9E;
++    --af-stage-plan: #C7C7C7;
++    --af-stage-edit: #949494;
++    --af-stage-test: #5C5C5C;
++    --af-readout-cell: #EBEBEA;
++    --af-display-window: #FAFAF9;
++    --af-dot-field: #DCDCD9;
++    --af-product-hangar: #A44C1D;
++    --af-product-flightdeck: #914A8C;
++    --af-product-tower: #816600;
++    --af-product-aidlc: #1D7D3E;
++    --af-product-spaceport: #6F57AB;
++    --af-chart-1: #000000;
++    --af-chart-2: #4D4D4D;
++    --af-chart-3: #737373;
++    --af-chart-4: #8A8A8A;
++    --af-chart-5: #B04E00;
++    --af-chart-6: #D6D6D3;
++    --af-shadow-overlay: 0 12px 32px rgba(0,0,0,0.12);
+   }
+ }
+-/* the docs sites switch theme with data-md-color-scheme on <body> */
+-:root[data-theme="light"],
++
++[data-theme="light"],
+ [data-md-color-scheme="default"] {
+   color-scheme: light;
+-  --af-canvas: #FFFFFF; --af-surface: #F8F8F7; --af-raised: #F1F1F0; --af-overlay: #FFFFFF; --af-selected: #E8E8E7;
+-  --af-line-subtle: #EDEDED; --af-line: #E0E0E0; --af-line-strong: #858585; --af-rule: #C9C9C9;
+-  --af-fg: #000000; --af-fg-muted: #4D4D4D; --af-fg-subtle: #6B6B6B; --af-fg-dim: #A3A3A3;
+-  --af-brand: #FFC400; --af-brand-hover: #FFD23F; --af-on-brand: #111213; --af-brand-text: #7A5F00; --af-brand-line: #7A5F00; --af-brand-wash: rgba(255, 196, 0, .16); --af-focus: #7A5F00;
+-  --af-st-run: #3A3A3A; --af-st-queue: #6B6B6B; --af-st-appr: #9A5B00; --af-st-fail: #C42B2B; --af-st-deny: #C42B2B; --af-st-off: #858585;
+-  --af-p-hangar: #A44C1D; --af-p-flightdeck: #914A8C; --af-p-workspace: #816600; --af-p-aidlc: #1D7D3E; --af-p-spaceport: #6F57AB;
+-  --af-dot: #E0E0E0;
++  --af-canvas: #F4F4F2;
++  --af-surface: #EDEDEB;
++  --af-raised: #FFFFFF;
++  --af-overlay: #FFFFFF;
++  --af-line-subtle: #E6E6E3;
++  --af-line: #DCDCD9;
++  --af-line-strong: #858583;
++  --af-rule: #BDBDBA;
++  --af-fg: #0A0A0A;
++  --af-fg-muted: #474746;
++  --af-fg-subtle: #666664;
++  --af-fg-dim: #9C9C99;
++  --af-selected: #E6E6E3;
++  --af-brand-wash: rgba(255,196,0,0.18);
++  --af-brand-text: #7A5F00;
++  --af-brand-line: #7A5F00;
++  --af-focus: #7A5F00;
++  --af-status-running: #3A3A3A;
++  --af-status-queued: #666664;
++  --af-status-approval: #B04E00;
++  --af-status-failed: #C42B2B;
++  --af-status-denied: #C42B2B;
++  --af-status-off: #858583;
++  --af-span-model: #383838;
++  --af-span-tool: #666664;
++  --af-span-sandbox: #9E9E9E;
++  --af-stage-plan: #C7C7C7;
++  --af-stage-edit: #949494;
++  --af-stage-test: #5C5C5C;
++  --af-readout-cell: #EBEBEA;
++  --af-display-window: #FAFAF9;
++  --af-dot-field: #DCDCD9;
++  --af-product-hangar: #A44C1D;
++  --af-product-flightdeck: #914A8C;
++  --af-product-tower: #816600;
++  --af-product-aidlc: #1D7D3E;
++  --af-product-spaceport: #6F57AB;
++  --af-chart-1: #000000;
++  --af-chart-2: #4D4D4D;
++  --af-chart-3: #737373;
++  --af-chart-4: #8A8A8A;
++  --af-chart-5: #B04E00;
++  --af-chart-6: #D6D6D3;
++  --af-shadow-overlay: 0 12px 32px rgba(0,0,0,0.12);
++}
++
++:root {
++  --af-display-stretch: 125%;
++  --af-display-weight: 700;
++  --af-display-track: -0.01em;
++  --af-label-track: 0.08em;
++  --af-space-2: 2px;
++  --af-space-4: 4px;
++  --af-space-8: 8px;
++  --af-space-12: 12px;
++  --af-space-16: 16px;
++  --af-space-20: 20px;
++  --af-space-24: 24px;
++  --af-space-28: 28px;
++  --af-space-32: 32px;
++  --af-space-40: 40px;
++  --af-space-48: 48px;
++  --af-space-64: 64px;
++  --af-space-104: 104px;
++  --af-space-160: 160px;
++  --af-radius-none: 0px;
++  --af-radius-control: 2px;
++  --af-radius-card: 4px;
++  --af-radius-round: 50%;
++  --af-container-max: 1280px;
++  --af-header-h: 56px;
++  --af-row-h: 32px;
++  --af-row-h-compact: 28px;
++  --af-lane-h: 30px;
++  --af-span-h: 28px;
++  --af-icon-stroke: 1.5;
++  --af-icon-size: 16px;
++  --af-font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
++  --af-font-sans: "Red Hat Text", "Helvetica Neue", Arial, sans-serif;
++  --af-font-mono: "DM Mono", ui-monospace, Menlo, Consolas, monospace;
++}
++
++/* theme-v1 names, kept as aliases (re-declared in every theme scope so they follow it) */
++:root,
++[data-theme],
++[data-md-color-scheme] {
++  --af-st-run: var(--af-status-running);
++  --af-st-queue: var(--af-status-queued);
++  --af-st-appr: var(--af-status-approval);
++  --af-st-fail: var(--af-status-failed);
++  --af-st-deny: var(--af-status-denied);
++  --af-st-off: var(--af-status-off);
++  --af-p-hangar: var(--af-product-hangar);
++  --af-p-flightdeck: var(--af-product-flightdeck);
++  --af-p-workspace: var(--af-product-tower);
++  --af-p-tower: var(--af-product-tower);
++  --af-product-workspace: var(--af-product-tower);
++  --af-p-aidlc: var(--af-product-aidlc);
++  --af-p-spaceport: var(--af-product-spaceport);
++  --af-term-bg: var(--af-terminal-bg);
++  --af-term-fg: var(--af-terminal-fg);
++  --af-code-k: var(--af-code-keyword);
++  --af-code-f: var(--af-code-function);
++  --af-code-s: var(--af-code-string);
++  --af-code-n: var(--af-code-number);
++  --af-code-c: var(--af-code-comment);
++  --af-dot: var(--af-dot-field);
++  --af-f-display: var(--af-font-display);
++  --af-f-sans: var(--af-font-sans);
++  --af-f-mono: var(--af-font-mono);
++  --af-r-ctl: var(--af-radius-control);
++  --af-r-card: var(--af-radius-card);
++  --af-r-chip: var(--af-radius-control);
++  --af-pad: var(--af-space-16);
++  --af-gap: var(--af-space-12);
+ }
+diff --git a/docs/stylesheets/product.css b/docs/stylesheets/product.css
+index bb0cc88..165c40d 100644
+--- a/docs/stylesheets/product.css
++++ b/docs/stylesheets/product.css
+@@ -1 +1 @@
+-:root { --af-product: var(--af-p-flightdeck); }
++:root, [data-md-color-scheme] { --af-product: var(--af-product-flightdeck); }
+diff --git a/scripts/sync-airframe.sh b/scripts/sync-airframe.sh
+index 45c034a..c499d94 100755
+--- a/scripts/sync-airframe.sh
++++ b/scripts/sync-airframe.sh
+@@ -1,36 +1,43 @@
+ #!/bin/sh
+-# Refresh the vendored Airframe theme (docs/stylesheets/airframe*.css) from the suite repo,
+-# Sean-Koval/agent-factory, which owns it. Take the files unmodified; the product hue lives in
+-# docs/stylesheets/product.css. Usage: sh scripts/sync-airframe.sh [ref]   (default: main)
++# Refresh this repo's vendored Airframe files from Sean-Koval/agent-factory, which owns them.
++# Take the files unmodified and never edit them here; change Airframe in agent-factory instead.
++#
++#   sh scripts/sync-airframe.sh theme-v2     # a release tag (what the sync PRs use)
++#   sh scripts/sync-airframe.sh              # main
++#
++# Template: agent-factory airframe/sync-airframe.sh. Each tool repo keeps a copy as
++# scripts/sync-airframe.sh and lists what it vendors in FILES, one "<theme file> <destination>"
++# pair per line. Published theme files: airframe.css (tokens), airframe-components.css (the af-
++# classes), airframe-docs.css (docs-site mapping), airframe-icons.svg (sprite), airframe-tokens.json.
+ set -eu
+ 
++FILES="
++airframe.css            docs/stylesheets/airframe.css
++airframe-docs.css       docs/stylesheets/airframe-docs.css
++"
++
+ ref="${1:-main}"
+ base="https://raw.githubusercontent.com/Sean-Koval/agent-factory/${ref}/theme"
+-dest="$(cd "$(dirname "$0")/.." && pwd)/docs/stylesheets"
++root="$(cd "$(dirname "$0")/.." && pwd)"
+ tmp="$(mktemp -d)"
+ trap 'rm -rf "$tmp"' EXIT
+ 
+-for f in airframe.css airframe-docs.css; do
++# fetch each distinct file once, and fail before touching anything if one is missing
++for f in $(printf '%s\n' "$FILES" | awk 'NF {print $1}' | sort -u); do
+   code="$(curl -sS -L -o "$tmp/$f" -w '%{http_code}' "$base/$f")" || {
+-    echo "sync-airframe: could not fetch $base/$f" >&2
+-    exit 1
+-  }
++    echo "sync-airframe: could not fetch $base/$f" >&2; exit 1; }
+   if [ "$code" != "200" ]; then
+-    echo "sync-airframe: $base/$f returned HTTP $code (does the agent-factory repo exist and publish theme/$f on '$ref'?)" >&2
+-    exit 1
+-  fi
+-  if [ ! -s "$tmp/$f" ]; then
+-    echo "sync-airframe: $base/$f is empty" >&2
+-    exit 1
++    echo "sync-airframe: $base/$f returned HTTP $code (is '$ref' a published ref that has theme/$f?)" >&2; exit 1
+   fi
++  [ -s "$tmp/$f" ] || { echo "sync-airframe: $base/$f is empty" >&2; exit 1; }
+ done
+ 
+-mkdir -p "$dest"
+-for f in airframe.css airframe-docs.css; do
+-  if cmp -s "$tmp/$f" "$dest/$f"; then
+-    echo "unchanged  docs/stylesheets/$f"
++printf '%s\n' "$FILES" | awk 'NF {print $1, $2}' | while read -r f dest; do
++  mkdir -p "$(dirname "$root/$dest")"
++  if cmp -s "$tmp/$f" "$root/$dest"; then
++    echo "unchanged  $dest"
+   else
+-    cp "$tmp/$f" "$dest/$f"
+-    echo "updated    docs/stylesheets/$f"
++    cp "$tmp/$f" "$root/$dest"
++    echo "updated    $dest"
+   fi
+ done
