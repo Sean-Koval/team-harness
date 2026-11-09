@@ -11,10 +11,11 @@ Nothing is edited before the work has a ticket key. If you were given a key, ski
    that already covers the request: `project = <KEY> AND statusCategory != Done AND text ~ "<words>"`. If one
    matches, use it and say which.
 2. **Otherwise file one.** Work type Story (a user-visible change), Task, or Bug; under the project's roadmap epic
-   (`project = <KEY> AND issuetype = Epic AND labels = roadmap`, matched by the repo); labels `proposed`, the lane
-   (`lane:pair` when Sean is working with you, `lane:agent` only if he says so) and `repo:<repo name>`. The
+   (`project = <KEY> AND issuetype = Epic AND labels = roadmap`, matched by the repo); labels `proposed`, a lane and
+   `repo:<repo name>`. The lane is `lane:pair` when Sean is working with you, or `lane:human` when only he can do
+   it; never `lane:agent`, because only Sean makes work run unattended (the hook refuses it). The
    description holds the goal, acceptance criteria a test can check, the verify command, and what is out of scope.
-   Tell Sean the key. Filing a ticket is always allowed; setting priority or moving it is not.
+   Tell Sean the key. Filing a ticket is always allowed; setting priority, `lane:agent` or moving it is not.
 3. **Name the branch** `<KEY>-<short-slug>` (`KAN-412-retry-queue`). In a cloud session whose branch name is
    assigned for you, keep that branch: the key in the PR title and the `Jira:` line link it instead.
 4. Read the ticket with `jira-ticket` and begin.

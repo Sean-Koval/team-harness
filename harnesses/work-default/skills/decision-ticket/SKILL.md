@@ -21,7 +21,7 @@ Create an issue with work type **Decision** in the work ticket's project, under 
 | Scope | Ticket, Project or Suite: how far the answer reaches |
 | Due | A date; two working days unless the work is urgent |
 | Description | The context: what you found, with links to the code, logs or docs that show it |
-| Labels | `decision`, `needs-sean`, `lane:human`, and the work ticket's `repo:` label |
+| Labels | `decision`, `needs-sean`, `lane:human` (a Decision is always Sean's), and the work ticket's `repo:` label |
 
 Then:
 

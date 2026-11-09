@@ -165,3 +165,25 @@ def test_mcp_create_pull_request_needs_the_contract():
     no_docs = {"tool_name": "mcp__github__create_pull_request",
                "tool_input": {"title": "KAN-315: x", "body": "Jira: KAN-315"}}
     assert run(no_docs).returncode == 2
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__jira__createJiraIssue", {"projectKey": "KAN", "issueType": "Task", "summary": "x", "labels": ["lane:agent"]}),
+    ("mcp__atlassian__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"labels": ["lane:agent", "repo:x"]}}),
+    ("mcp__atlassian__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"labels": ["lane:pair"]}}),
+    ("mcp__atlassian__executeWrite", {"name": "editJiraIssue", "inputs": {"fields": {"labels": ["lane:human"]}}}),
+])
+def test_lanes_are_seans(tool, args):
+    r = run({"tool_name": tool, "tool_input": args})
+    assert r.returncode == 2 and "lane" in r.stderr
+
+
+@pytest.mark.parametrize("labels", [["proposed", "lane:pair", "repo:hangar"], ["decision", "needs-sean", "lane:human"]])
+def test_filing_with_pair_or_human_lane_is_allowed(labels):
+    args = {"projectKey": "KAN", "issueType": "Task", "summary": "x", "labels": labels}
+    assert run({"tool_name": "mcp__jira__createJiraIssue", "tool_input": args}).returncode == 0
+
+
+def test_editing_without_touching_lanes_is_allowed():
+    args = {"issueIdOrKey": "KAN-1", "fields": {"description": "more detail"}}
+    assert run({"tool_name": "mcp__jira__editJiraIssue", "tool_input": args}).returncode == 0

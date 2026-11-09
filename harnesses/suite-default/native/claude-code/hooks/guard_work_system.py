@@ -9,6 +9,7 @@ agent and skips the call) for:
 - `git push` to main/master, and `git push --force` / `-f` (use `--force-with-lease` on your own branch);
 - `gh pr create` (or a GitHub MCP `create_pull_request`) without a title starting with a key, or without a body (`--body` / `--body-file`) holding the
   `Jira: <KEY>` line for that key and a `Docs:` line, or with `--fill`;
+- an Atlassian MCP call that files a ticket with `lane:agent` or edits a ticket's lane (only Sean lanes work);
 - any Atlassian MCP call that transitions an issue, and any destructive one: statuses move by Jira automation,
   hangar and Sean (skill `jira-ticket`).
 
@@ -35,6 +36,7 @@ PROTECTED = {"main", "master"}
 NO_KEY_PREFIXES = ("nokey/", "deps/", "dependabot/", "renovate/", "claude/")
 MCP_TRANSITION = re.compile(r"^mcp__.+__transition\w*$")  # transitionJiraIssue; not listJiraIssueTransitions
 MCP_GENERIC_WRITE = re.compile(r"^mcp__.+__execute(Write|Destructive)$")  # discover/execute: the op is in input.name
+MCP_ISSUE_WRITE = re.compile(r"^mcp__.+__(createJiraIssue|editJiraIssue)$")
 MCP_DESTRUCTIVE = re.compile(r"^mcp__.+__(executeDestructive|delete\w*)$")
 SEGMENT_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
@@ -148,6 +150,14 @@ def why(event: dict) -> str | None:
     if MCP_DESTRUCTIVE.match(tool):
         return "destructive tracker or wiki calls are not the agent's: ask Sean"
     op = str((event.get("tool_input") or {}).get("name") or "") if MCP_GENERIC_WRITE.match(tool) else ""
+    m = MCP_ISSUE_WRITE.match(tool)
+    kind = (m.group(1) if m else op if op in ("createJiraIssue", "editJiraIssue") else "").lower()
+    if kind:
+        text = json.dumps(event.get("tool_input") or {})
+        if re.search(r"lane:agent", text):
+            return "only Sean sets lane:agent: it decides what runs unattended. File it lane:pair or lane:human"
+        if kind == "editjiraissue" and re.search(r"lane:", text):
+            return "a lane that is already set is Sean's to change: comment instead"
     if MCP_TRANSITION.match(tool) or op.lower().startswith("transition"):
         return ("agents don't move tickets: Jira automation moves them on branch, PR and merge, hangar moves the ones "
                 "it runs, and Sean moves the rest. Comment instead (skill jira-ticket)")

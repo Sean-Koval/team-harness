@@ -12,7 +12,7 @@ model:
   policy: balanced
 components:
 - id: guide:CLAUDE.md
-  digest: sha256:0180adc9e76639239cbcee2fd1a0e14f4fd57308695ff1f783b444ddbadd4e2a
+  digest: sha256:e9461751cf6ae4feefe480c6f192fd3d89d04ed2c9e54800e5f3fc802ef521e0
   path: CLAUDE.md
 - id: skill:change-set
   digest: sha256:c5bf04538692f87401fefa0a8a974c538f349ec935fc2bc3a720b8f39eae2070
@@ -25,13 +25,13 @@ components:
   path: skills/github-pr
   source: path:skills/github-pr
 - id: skill:jira-ticket
-  digest: sha256:74007bb8c9df0f3a5f7977e16a0c5b904b6d6f1c1dda2378d3e44eda805e2f92
-  tree: sha256:21ba8e72e8dcc1cee1dd5404ac926895a610abd062eb6deb0d01f99e53b96539
+  digest: sha256:66d81cbde5ac28ccee0cd904eb4bc12638caa7ada5865ddc3be404736cd7478d
+  tree: sha256:bfa443fc8f8b71cbe653c542965f36e9142604efa74dcfe1e07267e275f9d420
   path: skills/jira-ticket
   source: path:skills/jira-ticket
 - id: skill:decision-ticket
-  digest: sha256:d4ad51c86e4f5fdfa987732edfc3de52f1252f5209466a086c9426f5b825a73e
-  tree: sha256:30fcc764ff850b369edc39a164c067b0196d132ea7e2ea46ef266f043e51a61e
+  digest: sha256:5eb81662d4f098c926683eeb32ae6dad43ba32606604806ea17d5fa72d186433
+  tree: sha256:0572de05de3b6e68babd91f0e6d590070a72ee36bf72e1f8f5d4bea3d4944a7d
   path: skills/decision-ticket
   source: path:skills/decision-ticket
 - id: skill:work-docs
@@ -40,15 +40,15 @@ components:
   path: skills/work-docs
   source: path:skills/work-docs
 - id: skill:work-start
-  digest: sha256:2998af263a4025b74497930f6438f1ca7d7d8b831595ccae35a3ca94d6896fdb
-  tree: sha256:083c304c6989e0c821800285c6f39ce9124cb6d1dd3f2c8f40b03a7462b14836
+  digest: sha256:dbb323dcbb5d684b153fafa9444e7975ed69c34323f9d781285e6f0dfe246a59
+  tree: sha256:0e36a3849459c2e340e131f00626fa2374e01064d30a42512e6e0c993ce60fdb
   path: skills/work-start
   source: path:skills/work-start
 - id: native:claude-code/hooks/guard_work.py
   digest: sha256:e3567f06861e0b7cc200689296002c1b00a7c80b5e795f70081524a5b66f92ca
   path: native/claude-code/hooks/guard_work.py
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:f44800c49066e06072f94984ab0945993729f44231385edaa0b7421d036b20dc
+  digest: sha256:708694264fdbc9c973d82cdafba1a49174e88921b69a62d50c7c7b6a2224e9af
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:ffe42d2317a0c14b2b2b458eaabb5fa7ab8b5bc46cc7247b58ff995cd331817f

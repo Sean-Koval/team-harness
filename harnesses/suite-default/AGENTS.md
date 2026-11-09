@@ -33,6 +33,8 @@ The structure behind this (who owns which fact, statuses, labels, fields) is in 
 
 `lane:agent` tickets run as hangar jobs when moved to Ready for Agent. `lane:pair` is Sean with you in a local or cloud
 session. `lane:human` is Sean's alone: read it, never work it.
+You may add `lane:pair` to tickets you file and `lane:human` to Decisions; never `lane:agent`, and never change a
+lane that is already set.
 
 ## Rules
 

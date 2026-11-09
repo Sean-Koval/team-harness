@@ -23,8 +23,8 @@ If there is no ticket yet, use the `work-start` skill first. Do not edit anythin
 
 ## While working
 
-- Stay inside the ticket. A separate problem you find becomes a new ticket labelled `proposed` (same epic, a `lane:`
-  and `repo:` label), linked `relates to` this one; never fixed in this PR.
+- Stay inside the ticket. A separate problem you find becomes a new ticket labelled `proposed` (same epic, `lane:pair`
+  or `lane:human`, and a `repo:` label), linked `relates to` this one; never fixed in this PR.
 - Every question that needs Sean is a Decision ticket (`decision-ticket`), never a chat question, a PR comment or a
   silent stop.
 - Comments are append-only. Edit nothing someone else wrote.
@@ -44,5 +44,8 @@ So you never call a transition tool (the harness hook refuses it), and you never
 
 ## Allowed writes
 
-Comments; new tickets labelled `proposed`; Decision tickets; issue links (`blocks`, `relates to`). Nothing else: no
-transitions, and no edits to another ticket's description, assignee, priority, sprint, fix version or labels.
+Comments; new tickets labelled `proposed` with `lane:pair` or `lane:human`; Decision tickets (always `lane:human`);
+issue links (`blocks`, `relates to`). Nothing else: no transitions, and no edits to another ticket's description,
+assignee, priority, sprint, fix version or labels.
+Never `lane:agent` on anything, and never change a lane that is already set: lanes decide what runs unattended,
+and only Sean sets that. The hook refuses both.
