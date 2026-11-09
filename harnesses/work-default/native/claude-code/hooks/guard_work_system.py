@@ -9,13 +9,18 @@ agent and skips the call) for:
 - `git push` to main/master, and `git push --force` / `-f` (use `--force-with-lease` on your own branch);
 - `gh pr create` (or a GitHub MCP `create_pull_request`) without a title starting with a key, or without a body (`--body` / `--body-file`) holding the
   `Jira: <KEY>` line for that key and a `Docs:` line, or with `--fill`;
-- an Atlassian MCP call that files a ticket with `lane:agent` or edits a ticket's lane (only Sean lanes work);
+- an Atlassian MCP call that files a ticket with `exec:agent` (or the older `lane:agent`), or edits a ticket's
+  execution label: only a person decides what runs unattended;
 - any Atlassian MCP call that transitions an issue, and any destructive one: statuses move by Jira automation,
-  hangar and Sean (skill `jira-ticket`).
+  hangar and people (skill `jira-ticket`);
+- `gh pr merge` with `--admin`, always; and every merge (`gh pr merge`, a GitHub MCP `merge_pull_request`) when the
+  harness's merge rule is `never` (skill `github-pr`).
 
 Everything else is allowed with exit 0. The only command it runs is `git symbolic-ref --short HEAD` (read-only) to
 learn the branch; it writes nothing. The ticket key pattern is `WORK_SYSTEM_KEY` (a regex, default
-`[A-Z][A-Z0-9]{1,9}-[0-9]+`) and the PR line's name is `WORK_SYSTEM_TRACKER_LINE` (default `Jira`).
+`[A-Z][A-Z0-9]{1,9}-[0-9]+`) and the PR line's name is `WORK_SYSTEM_TRACKER_LINE` (default `Jira`). `MERGE_RULE` is
+rendered per harness by scripts/sync_shared.py from its profile (`allowed` or `never`); anything else, including this
+unrendered source, means `never`.
 
 The same rules are checked again on the pull request by the work-system PR check (actions/work-system-pr), which every
 surface crosses; this hook only catches them earlier, in the session.
@@ -32,7 +37,9 @@ import sys
 
 KEY = os.environ.get("WORK_SYSTEM_KEY") or r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
 LINE = os.environ.get("WORK_SYSTEM_TRACKER_LINE") or "Jira"
+MERGE_RULE = "never"  # rendered by scripts/sync_shared.py; only "allowed" lets an agent merge
 PROTECTED = {"main", "master"}
+EXEC = r"(?:exec|lane):"  # execution labels; lane:* is the older name, accepted while Jira is relabelled
 NO_KEY_PREFIXES = ("nokey/", "deps/", "dependabot/", "renovate/", "claude/")
 MCP_TRANSITION = re.compile(r"^mcp__.+__transition\w*$")  # transitionJiraIssue; not listJiraIssueTransitions
 MCP_GENERIC_WRITE = re.compile(r"^mcp__.+__execute(Write|Destructive)$")  # discover/execute: the op is in input.name
@@ -145,22 +152,33 @@ def _pr_create(words: list[str], cwd: str | None) -> str | None:
     return None
 
 
+def _pr_merge(words: list[str]) -> str | None:
+    if "--admin" in words:
+        return "never merge with --admin: it bypasses branch protection"
+    if MERGE_RULE != "allowed":
+        return "agents never merge in this harness: approvers and hangar land PRs (skill github-pr)"
+    return None
+
+
 def why(event: dict) -> str | None:
     tool = str(event.get("tool_name") or "")
     if MCP_DESTRUCTIVE.match(tool):
-        return "destructive tracker or wiki calls are not the agent's: ask Sean"
+        return "destructive tracker or wiki calls are not the agent's: ask a person"
     op = str((event.get("tool_input") or {}).get("name") or "") if MCP_GENERIC_WRITE.match(tool) else ""
     m = MCP_ISSUE_WRITE.match(tool)
     kind = (m.group(1) if m else op if op in ("createJiraIssue", "editJiraIssue") else "").lower()
     if kind:
         text = json.dumps(event.get("tool_input") or {})
-        if re.search(r"lane:agent", text):
-            return "only Sean sets lane:agent: it decides what runs unattended. File it lane:pair or lane:human"
-        if kind == "editjiraissue" and re.search(r"lane:", text):
-            return "a lane that is already set is Sean's to change: comment instead"
+        if re.search(EXEC + "agent", text):
+            return ("only a person sets exec:agent: it decides what runs unattended. File it exec:pair or exec:human")
+        if kind == "editjiraissue" and re.search(EXEC, text):
+            return "an execution label that is already set is a person's to change: comment instead"
     if MCP_TRANSITION.match(tool) or op.lower().startswith("transition"):
         return ("agents don't move tickets: Jira automation moves them on branch, PR and merge, hangar moves the ones "
-                "it runs, and Sean moves the rest. Comment instead (skill jira-ticket)")
+                "it runs, and people move the rest. Comment instead, or list the moves for confirmation "
+                "(skills jira-ticket, decision-ticket)")
+    if re.match(r"^mcp__.+__merge_pull_request$", tool) and MERGE_RULE != "allowed":
+        return "agents never merge in this harness: approvers and hangar land PRs (skill github-pr)"
     if re.match(r"^mcp__.+__create_pull_request$", tool):
         args = event.get("tool_input") or {}
         words = ["--title", str(args.get("title") or ""), "--body", str(args.get("body") or "")]
@@ -183,6 +201,8 @@ def why(event: dict) -> str | None:
             reason = _push(rest)
         elif os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "create"]:
             reason = _pr_create(words[3:], cwd)
+        elif os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "merge"]:
+            reason = _pr_merge(words[3:])
         else:
             reason = None
         if reason:

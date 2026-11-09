@@ -1,0 +1,29 @@
+# suite-default: Sean's own (personal) projects on the personal Atlassian site.
+# Fills the {{placeholders}} in shared/work-system/ for this harness (scripts/sync_shared.py).
+params:
+  owner: "Sean"
+  tracker: "Jira project KAN on seanmkoval.atlassian.net"
+  kb_site: "seanmkoval.atlassian.net"
+  kb_space: "SD"
+  kb_notes: "Second brain → Notes"
+  kb_research: "Second brain → Research"
+  kb_decisions: "Second brain → Decision write-ups"
+  wall: >-
+    This harness is for personal projects only. Content from an employer (its tickets, pages, code, meeting
+    transcripts, Symphony chat) never comes here: refuse anything tagged `origin: work` or copied from a company
+    system, and never write to a company Atlassian site from this harness.
+  decision_filing: >-
+    Create an issue with work type **Decision** in the work ticket's project, under the same epic, and fill its
+    fields:
+  decision_labels: >-
+    `exec:human`, the work ticket's `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it;
+    assign it to Sean
+  merge_mode: "allowed"
+  merge_rule: >-
+    **Merging (suite repositories only):** you may merge your own PR once every required check is green, every review
+    thread is answered, and nobody asked to review it first (Sean's rule, 2026-11-08; KAN-278 for hangar). Squash and
+    delete the branch: `gh pr merge <n> --squash --delete-branch`. In a hangar job, hangar lands it. Never use
+    `--admin`, never bypass branch protection, and never merge a PR you were told to leave for review. The merge moves
+    the ticket to Done.
+  approvals: >-
+    None beyond the PR's own checks: a suite PR needs no separate approval tickets.

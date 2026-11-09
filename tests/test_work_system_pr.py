@@ -93,10 +93,21 @@ def test_ticket_ok():
     ({"cat": "done", "name": "Wont Do"}, "is Wont Do"),
     ({"itype": "Epic"}, "is a epic"),
     ({"itype": "Decision"}, "is a decision"),
-    ({"labels": ("repo:hangar",)}, "no lane"),
+    ({"labels": ("repo:hangar",)}, "no execution label"),
+    ({"itype": "Task", "labels": ("type:decision", "exec:human")}, "is a decision"),
 ])
 def test_ticket_rules(kw, words):
     assert any(words in e for e in wsp.check_ticket(issue(**kw), [], "KAN-315"))
+
+
+def test_exec_labels_count_as_laned():
+    assert wsp.check_ticket(issue(labels=("exec:agent",)), [], "KAN-315") == []
+
+
+def test_task_decision_blocks_like_a_decision():
+    d = {"key": "KAN-330", "fields": {"issuetype": {"name": "Task"}, "labels": ["type:decision"],
+                                      "status": {"statusCategory": {"key": "new"}}}}
+    assert any("KAN-330" in e for e in wsp.check_ticket(issue(), [d], "KAN-315"))
 
 
 def test_open_blocking_decision_fails_and_answered_one_passes():

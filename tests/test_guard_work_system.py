@@ -172,13 +172,16 @@ def test_mcp_create_pull_request_needs_the_contract():
     ("mcp__atlassian__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"labels": ["lane:agent", "repo:x"]}}),
     ("mcp__atlassian__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"labels": ["lane:pair"]}}),
     ("mcp__atlassian__executeWrite", {"name": "editJiraIssue", "inputs": {"fields": {"labels": ["lane:human"]}}}),
+    ("mcp__jira__createJiraIssue", {"projectKey": "KAN", "issueType": "Task", "summary": "x", "labels": ["exec:agent"]}),
+    ("mcp__atlassian__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"labels": ["exec:pair"]}}),
 ])
-def test_lanes_are_seans(tool, args):
+def test_execution_labels_are_a_persons(tool, args):
     r = run({"tool_name": tool, "tool_input": args})
-    assert r.returncode == 2 and "lane" in r.stderr
+    assert r.returncode == 2 and "exec" in r.stderr
 
 
-@pytest.mark.parametrize("labels", [["proposed", "lane:pair", "repo:hangar"], ["decision", "needs-sean", "lane:human"]])
+@pytest.mark.parametrize("labels", [["proposed", "lane:pair", "repo:hangar"], ["decision", "needs-sean", "lane:human"],
+                                    ["proposed", "exec:pair", "repo:hangar"], ["type:decision", "exec:human"]])
 def test_filing_with_pair_or_human_lane_is_allowed(labels):
     args = {"projectKey": "KAN", "issueType": "Task", "summary": "x", "labels": labels}
     assert run({"tool_name": "mcp__jira__createJiraIssue", "tool_input": args}).returncode == 0
@@ -187,3 +190,34 @@ def test_filing_with_pair_or_human_lane_is_allowed(labels):
 def test_editing_without_touching_lanes_is_allowed():
     args = {"issueIdOrKey": "KAN-1", "fields": {"description": "more detail"}}
     assert run({"tool_name": "mcp__jira__editJiraIssue", "tool_input": args}).returncode == 0
+
+
+def run_hook(hook: Path, event) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(hook)], input=json.dumps(event), capture_output=True, text=True)
+
+
+SUITE_HOOK = ROOT / "harnesses/suite-default/native/claude-code/hooks/guard_work_system.py"
+WORK_HOOK = ROOT / "harnesses/work-default/native/claude-code/hooks/guard_work_system.py"
+
+
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_merge_refused_unless_the_harness_allows_it(hook):
+    # the unrendered source and work-default both mean `never`
+    r = run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 12 --squash"}})
+    assert r.returncode == 2 and "never merge" in r.stderr
+    r = run_hook(hook, {"tool_name": "mcp__github__merge_pull_request", "tool_input": {"pullNumber": 12}})
+    assert r.returncode == 2
+
+
+def test_suite_default_may_merge_but_never_with_admin():
+    ok = run_hook(SUITE_HOOK, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 12 --squash --delete-branch"}})
+    assert ok.returncode == 0
+    assert run_hook(SUITE_HOOK, {"tool_name": "mcp__github__merge_pull_request", "tool_input": {}}).returncode == 0
+    admin = run_hook(SUITE_HOOK, {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 12 --admin --squash"}})
+    assert admin.returncode == 2 and "--admin" in admin.stderr
+
+
+@pytest.mark.parametrize("hook", [SUITE_HOOK, WORK_HOOK])
+def test_rendered_hooks_still_refuse_transitions(hook):
+    r = run_hook(hook, {"tool_name": "mcp__atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "KAN-1"}})
+    assert r.returncode == 2
