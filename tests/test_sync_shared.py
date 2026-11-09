@@ -11,7 +11,7 @@ import sync_shared  # noqa: E402
 
 
 def copy_repo(tmp_path: Path) -> Path:
-    for d in ("shared", "harnesses/suite-default", "harnesses/work-default"):
+    for d in ("shared", "orgs", "harnesses/suite-default", "harnesses/work-default"):
         shutil.copytree(ROOT / d, tmp_path / d)
     return tmp_path
 

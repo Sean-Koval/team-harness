@@ -7,6 +7,11 @@
 # them: who owns decisions, how a Decision is filed, which Atlassian site and space hold knowledge, the merge rule and
 # the approval steps. Nothing person- or company-specific is written into a shared file itself.
 #
+# A work harness may also name an org overlay (`org: orgs/<org>`, a path from the repository root): the company's own
+# flow skill (`org-process`) and its org.yaml (team-harness.org/v1: ticket types, gates, review request). Its params
+# win over the profile's, it fills the generated {{org_*}} placeholders, and its skills are rendered into the harness
+# too (orgs/README.md). A company's private fork changes that one line to its own org. suite-default never takes one.
+#
 # team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
 skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
@@ -16,4 +21,5 @@ harnesses:
     profile: profiles/suite-default.yaml
   work-default:
     profile: profiles/work-default.yaml
+    org: orgs/example-co                  # placeholder org: agents file no approval tickets until a company's replaces it
     skills: [release-approvals]           # in addition to the list above

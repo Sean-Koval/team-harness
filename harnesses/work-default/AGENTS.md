@@ -25,20 +25,22 @@ any personal sync or backup. The only Confluence site and space you write are th
    there is a key). Restate the goal, the acceptance criteria and what is out of scope in two or three lines. If the
    criteria are missing or contradict each other, or a choice needs the ticket's owner, file a Decision ticket
    (`decision-ticket`) and stop that part of the work. Never ask in chat and never stop silently.
-2. **Plan across the repos.** Use the `change-set` skill: which roles change, in what order they will land, and what
+2. **Read the company's flow.** Read the `org-process` skill before you plan: it says which tickets, approvals and
+   gates this company's work needs. If it and `release-approvals` disagree, `org-process` wins; say so in the PR.
+3. **Plan across the repos.** Use the `change-set` skill: which roles change, in what order they will land, and what
    each one must tolerate while the others are not merged yet. Touch only the roles the ticket needs.
-3. **Change each repository.** Small commits with conventional prefixes, the ticket key in each subject
+4. **Change each repository.** Small commits with conventional prefixes, the ticket key in each subject
    (`feat(SVC-412): add the retry queue`). Add or update tests for every observable change. Run each changed
    repository's own checks (its README, AGENTS.md or CI config says which) in its own checkout.
-4. **Docs in the same change** (`work-docs`): each repository's `AGENTS.md`, ADRs and specs, and Confluence pages,
+5. **Docs in the same change** (`work-docs`): each repository's `AGENTS.md`, ADRs and specs, and Confluence pages,
    wherever the change belongs.
-5. **Hand back.** Use the `github-pr` skill for the description that goes in each PR: the `Jira:` and `Docs:` lines,
+6. **Hand back.** Use the `github-pr` skill for the description that goes in each PR: the `Jira:` and `Docs:` lines,
    what changed in that repository, how you tested it, and what it depends on in the others. In a hangar job, hangar
    pushes and opens the PRs. In a local session, you open them as drafts.
-6. **Ask for approval.** Use the `release-approvals` skill:
-   - File the SRE approval ticket that links each PR.
-   - File the infosec review ticket that links the repository.
-   - Draft the review request for the team's Symphony room. A person posts it; you never do.
+7. **Ask for approval.** Once each PR is open, use the `release-approvals` skill. It runs the gates the company's
+   org overlay declares:
+   - File one approval ticket per gate that applies, and add the gate's line to the PR body.
+   - Draft the review request for the room the overlay names. A person posts it; you never do.
 
 ## Rules
 
@@ -53,8 +55,8 @@ any personal sync or backup. The only Confluence site and space you write are th
   label: `exec:agent`, `exec:pair` or `exec:human`. The older `lane:*` names are read as the same thing.
   - You may add `exec:pair` or `exec:human` to tickets you file. Decisions are `exec:human`.
   - Never add `exec:agent`, and never change an execution label that is already set.
-- Never merge, approve or enable auto-merge on a PR. SRE approves or merges it, and hangar lands change sets. The hook
-  refuses `gh pr merge`.
+- Never merge, approve or enable auto-merge on a PR. The approvers the org declares approve or merge it, and hangar
+  lands change sets. The hook refuses `gh pr merge`.
 - When the ticket's owner rules on a Decision, draft Chosen and Rationale and list the tickets you would move. The
   owner confirms and moves them (`decision-ticket`).
 - Stay inside the ticket. Don't edit CI, branch protection, CODEOWNERS or release config unless the ticket asks for

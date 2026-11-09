@@ -1,58 +1,57 @@
 ---
 name: release-approvals
-description: Use as soon as a work PR is open (or hangar has opened it), when asked to "get it reviewed", "request SRE approval", "file the infosec ticket", or "post in the review room". Files the SRE approval ticket that links the PR and the infosec ticket that links the repository, and drafts (never posts) the review request for the team's Symphony room.
+description: Use as soon as a work PR is open (or hangar has opened it), when asked to "get it reviewed", "request approval", "file the approval tickets", or "post in the review room". Runs the approval gates the company's org overlay declares (one ticket per gate that applies, filed after the PR is open), records each gate's line in the PR, and drafts (never posts) the review request.
 ---
 
-# Release approvals (company SDLC)
+# Release approvals (the gates the org declares)
 
-A work PR is approved by people outside the team. SRE reviews a Jira ticket that links the PR, then approves or merges
-the PR. Infosec reviews the code from its own ticket. The team asks for review in its Symphony room.
-
-You prepare all three. You approve nothing, merge nothing and post nothing.
+A work PR is approved by people outside the team, each from a ticket of their own. Which tickets, in which projects,
+and when each one applies is the company's flow: its org overlay declares it, and the tables below are rendered from
+it. You prepare the tickets. You approve nothing, merge nothing and post nothing.
 
 {{wall}}
 
-The projects, the issue types and the room name come from the repository's `AGENTS.md`, or from the team's
-Engineering page in `{{kb_space}}`. If either one does not name them, file nothing: say which value is missing, in the
-PR and on the work ticket.
+{{org_status}}
 
-## 1. SRE approval ticket
+## First, read `org-process`
 
-File one per PR, in the SRE project:
+`org-process` is the company's own description of its flow. Read it before you file anything. If it and the tables
+below disagree, `org-process` wins: follow it, and say in the PR which row differed.
 
-| Field | What goes in it |
-| --- | --- |
-| Summary | `SRE approval: <WORK-KEY> <PR title>` |
-| Description | The PR URL, what changes in production, the rollout and rollback, and who to ask |
-| Links | `relates to` the work ticket, and the PR as a remote link (or its URL in the description) |
+## Ticket types
 
-Then comment on the work ticket: `SRE approval: <SRE-KEY> for <PR URL>`.
+{{org_ticket_types}}
 
-## 2. Infosec review ticket
+## Gates, in order
 
-File it in the infosec project, separately from the SRE ticket:
+{{org_gates}}
 
-| Field | What goes in it |
-| --- | --- |
-| Summary | `Infosec review: <repo> <WORK-KEY>` |
-| Description | The repository URL and the PR URL, what the change touches (auth, data handling, dependencies, network, secrets), and anything you want a reviewer to look at first |
-| Links | `relates to` the work ticket |
+Run each gate after the PR is open, in the order above:
 
-Then comment on the work ticket: `Infosec review: <INFOSEC-KEY>`.
+1. **Does it apply?** `always` applies to every PR. A path rule applies when any path the PR changes matches one of
+   its globs; a label rule when the PR or the work ticket carries one of its labels. If none matches, skip the gate
+   and say so in the hand-back.
+2. **File it, or ask for it.** Filed by `agent`: create one ticket of the gate's type, in its project, with its
+   issue type and summary (fill `{work_key}`, `{pr_title}`, `{repo}` and `{pr_url}`). Its description gives the PR
+   URL, what changes, the rollout and rollback, and what a reviewer should look at first. Link what the Links column
+   names: `pr` as a remote link (or its URL in the description), `work` as `relates to` the work ticket, `repo` as
+   the repository URL. Filed by `person`: file nothing; ask for that ticket in the PR, and leave its line to them.
+3. **Record it.** Add the gate's PR line to the PR body (for example `SRE: <KEY>`), and comment on the work ticket:
+   `<PR line>: <KEY> for <PR URL>`. The PR check requires the line of every gate that applies before a merge.
 
-## 3. Review request for the Symphony room: drafted, never posted
+One ticket per gate per PR. If one already exists (search its project by the summary), reuse its key instead of
+filing again. If a project or issue type doesn't exist, or you may not create in it, file nothing for that gate: say
+which value is missing, in the PR and on the work ticket.
 
-You have no chat tool, and you never use one for this. Write the message into your hand-back (or the PR's
-description, under **Review request**) for a person to post:
+## Review request: drafted, never posted
 
-```
-Review please: <PR URL>
-<WORK-KEY>: <one line on what changes and why>
-SRE ticket: <SRE-KEY> · Infosec: <INFOSEC-KEY>
-Risk: <low / medium / high, and why in a few words>
-```
+{{org_review_request}}
+
+You have no chat tool, and you never use one for this. Write the message into your hand-back (or the PR description,
+under **Review request**) for a person to post. `{summary}` is one line on what changes and why; `{gate_lines}` is
+one `<PR line>: <KEY>` line per gate that applies; `{risk}` is low, medium or high, and why in a few words.
 
 ## Afterwards
 
-Approval can take from minutes to hours. Do not chase it, re-file it, or move any ticket. The SRE approval, and the
-merge that follows it, move the work ticket.
+Approval can take from minutes to hours. Do not chase it, re-file it, move any ticket, approve or merge. The
+approvals, and the merge a person makes after them, move the work ticket.
