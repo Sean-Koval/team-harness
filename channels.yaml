@@ -6,3 +6,6 @@ team-default:
   candidate: "sha256:689ffca78109f5232a34d5f6c03d03ead60a52d37d005d039037bbb490bbf83c"  # r4: + ai-dlc workflow plugin (Claude) and its Codex form
 work-default:
   stable: "sha256:a7953f6685f2967d3919f794e7bc08e21279c4448f8e0ec763d07c5b43ecfe31"  # r1: the company SDLC harness (Jira, GitHub PRs, change sets)
+  candidate: "sha256:c1ec299b0e87229da8a8fea6bd81971a908e178b3aa768b07a5842843e0bc7e5"  # r2: + the shared work-system layer (KAN-315)
+suite-default:
+  stable: "sha256:0176852a9bebf43b10b1660d28ab72127add68037a203990eca9f4f5299a6998"  # r1: Sean's projects on the work system (KAN-315); first pin, not a promotion

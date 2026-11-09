@@ -92,6 +92,30 @@ $ hangar harness check harnesses/team-default
 ok: team-default r4, 24 component(s), harness_digest sha256:…
 ```
 
+## The work system: every surface, same rules
+
+`suite-default` (Sean's own projects) and `work-default` (a company's services) carry one shared layer that makes
+agents follow the engineering work system: Jira for tickets, decisions and the roadmap; Confluence for engineering
+knowledge; the repository for what agents obey; GitHub as the evidence. The model it implements, with every status,
+label and field, is in [Sean-Koval/cabinet `config/work-system/`](https://github.com/Sean-Koval/cabinet/tree/main/config/work-system).
+
+The rules are enforced in layers, each catching what the one before can't:
+
+| Layer | Where | Holds for | What it does |
+| --- | --- | --- | --- |
+| Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work), `work-docs` (which doc goes where, the `Docs:` line) |
+| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, and any tracker transition or destructive call |
+| PR check | [`actions/work-system-pr`](actions/work-system-pr/README.md) | **every** PR, from any surface or tool, Codex and humans included | title key, `Jira:` line, `Docs:` line, `Decision:` → ADR; with a read-only Jira token, the ticket is open, laned and not blocked by an open Decision |
+| Tracker automation | Jira, configured by hand | every ticket | statuses move on branch created, PR opened, PR merged and Decision answered (cabinet `docs/WORK-SYSTEM.md`) |
+| Behavior specs | [`flightdeck/specs/work-system.yaml`](flightdeck/specs/work-system.yaml) | hangar runs | measure what no hook can see and catch a layer that drifted |
+
+The layer is edited once, in `shared/work-system/`, and copied into each harness with `scripts/sync_shared.py`;
+CI fails when a copy differs (`--check`), so every harness pins the same bytes. `team-default` does not carry it: it is
+the pre-registered A/B example and stays as registered.
+
+To adopt the PR check in another repository, follow [its README](actions/work-system-pr/README.md) and copy
+[`templates/pull_request_template.md`](templates/pull_request_template.md).
+
 ## Run an agent from it
 
 Point the hangar server at a checkout of this repository, then name a channel:
@@ -130,7 +154,8 @@ flowchart LR
    yesterday's harness, found in git history.
 2. **The candidate becomes an experiment.** `flightdeck/suite.yaml` runs the same tasks on both arms
    (`environment: team-default` and `team-default-candidate`, which differ only by the plugin), `n` trials each.
-   `flightdeck/decision.yaml` was committed first: promote only if resolved tasks don't drop by more than 5 points.
+   `flightdeck/decision.yaml` was committed first: promote only if the candidate costs at most $0.40 more per trial,
+   with guardrails on resolved tasks, behavior-spec pass rates and exclusions (the file has the numbers).
    The behavior specs in `flightdeck/specs/` judge how each arm worked (tests before commit, a PR delivered, the
    ticket read before editing, the cluster left alone).
 3. **The experiment becomes a promotion, or doesn't.** flightdeck posts its report on the PR. If the verdict holds,
@@ -231,6 +256,10 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | Path | What it is |
 | --- | --- |
 | `harnesses/<name>/` | One harness: native files plus `harness.lock` |
+| `shared/work-system/` | The work-system skills and hook, edited once; `targets.yaml` names the harnesses that carry them |
+| `actions/work-system-pr/` | The PR check other repositories call, pinned by commit |
+| `templates/` | The PR template the PR check reads |
+| `scripts/sync_shared.py` | Copy the shared layer into each harness; `--check` in CI |
 | `channels.yaml` | Channel → `harness_digest`, per harness |
 | `bindings/<name>.yaml` | Where each MCP credential comes from (credential names, `${VAR}` references), for the environments |
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |

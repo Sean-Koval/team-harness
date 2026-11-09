@@ -7,3 +7,8 @@ This is the example team harness: `harnesses/<name>/` is what agents run with, p
 - Work is tracked in Jira project KAN (<https://seanmkoval.atlassian.net>). GitHub Projects is retired; GitHub Issues are for outside reports only.
 - Work tied to a ticket carries its key, so the GitHub for Jira app links it: the branch starts with it (`KAN-35-apply-atomic`), the PR title starts with it (`KAN-35: make hangar apply all or nothing`) and the PR body has a `Jira: KAN-35` line. Commits may mention it. Work without a ticket (typo fixes, outside contributions) needs no key.
 - Lanes: only `lane:agent` tickets (job-sized: one repo or one change-set profile, acceptance criteria, a verify command) start a hangar job, when moved to "Ready for agent". `lane:pair` is Sean with Claude Code; `lane:human` is Sean only.
+
+## The shared work-system layer
+
+- Edit the work-system skills and hook only in `shared/work-system/`, then run `python scripts/sync_shared.py`, `python scripts/relock.py harnesses/<h> --write` and `python scripts/render_envs.py harnesses/<h>` for each harness in `shared/work-system/targets.yaml`. Never edit the copies under `harnesses/`.
+- A new harness revision moves `candidate` in `channels.yaml`; only a promotion moves `stable`.

@@ -1,0 +1,52 @@
+name: Work-system PR check
+description: >-
+  Fails a pull request that doesn't name its ticket (title key and a Jira line), doesn't say where its docs went, or
+  implements a Decision without an ADR; with Jira credentials, also checks the ticket is open, laned and not blocked by
+  an open Decision. Read-only.
+inputs:
+  github-token:
+    description: Token to list the PR's files (the default job token is enough)
+    default: ${{ github.token }}
+  key-pattern:
+    description: Regex for a ticket key
+    default: "[A-Z][A-Z0-9]{1,9}-[0-9]+"
+  tracker-line:
+    description: Name of the PR body line that carries the key
+    default: Jira
+  require-docs:
+    description: Require a 'Docs:' line
+    default: "true"
+  adr-dir:
+    description: Where ADRs live
+    default: docs/decisions
+  exempt-label:
+    description: A PR with this label is deliberately ticketless and skipped
+    default: no-ticket
+  exempt-authors:
+    description: Comma-separated PR authors that are skipped
+    default: dependabot[bot],renovate[bot]
+  jira-base-url:
+    description: Jira site, e.g. https://example.atlassian.net (optional; with user and token enables the ticket check)
+    default: ""
+  jira-user:
+    description: Jira account email for a read-only API token (optional)
+    default: ""
+  jira-token:
+    description: Read-only Jira API token (optional; pass from a secret)
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: python3 "${{ github.action_path }}/check.py"
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_KEY_PATTERN: ${{ inputs.key-pattern }}
+        INPUT_TRACKER_LINE: ${{ inputs.tracker-line }}
+        INPUT_REQUIRE_DOCS: ${{ inputs.require-docs }}
+        INPUT_ADR_DIR: ${{ inputs.adr-dir }}
+        INPUT_EXEMPT_LABEL: ${{ inputs.exempt-label }}
+        INPUT_EXEMPT_AUTHORS: ${{ inputs.exempt-authors }}
+        INPUT_JIRA_BASE_URL: ${{ inputs.jira-base-url }}
+        INPUT_JIRA_USER: ${{ inputs.jira-user }}
+        INPUT_JIRA_TOKEN: ${{ inputs.jira-token }}
