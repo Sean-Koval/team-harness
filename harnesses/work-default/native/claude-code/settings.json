@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Work harness: read the ticket (jira-ticket), plan across /workspace/<role> (change-set), verify each repo in its own checkout, describe each PR (github-pr). /workspace/deploy is read-only.'",
+            "command": "echo 'Work harness: read the ticket (jira-ticket; no ticket: work-start), plan across /workspace/<role> (change-set), questions become Decision tickets (decision-ticket), docs in the same PR (work-docs), describe each PR with its Jira and Docs lines (github-pr). /workspace/deploy is read-only. Agents never move tickets.'",
             "timeout": 5
           }
         ]
@@ -33,6 +33,16 @@
           {
             "type": "command",
             "command": "python3 \"$HOME/.claude/hooks/guard_work.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/guard_work_system.py\"",
             "timeout": 10
           }
         ]

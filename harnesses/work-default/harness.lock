@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: work-default
-revision: 1
+revision: 2
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -12,7 +12,7 @@ model:
   policy: balanced
 components:
 - id: guide:CLAUDE.md
-  digest: sha256:67320088219e45e25975020278a73a599a5e2f30fa7e01e6ec046e3472591b3c
+  digest: sha256:0180adc9e76639239cbcee2fd1a0e14f4fd57308695ff1f783b444ddbadd4e2a
   path: CLAUDE.md
 - id: skill:change-set
   digest: sha256:c5bf04538692f87401fefa0a8a974c538f349ec935fc2bc3a720b8f39eae2070
@@ -20,20 +20,38 @@ components:
   path: skills/change-set
   source: path:skills/change-set
 - id: skill:github-pr
-  digest: sha256:461b789bbb43eefe84ffb4190dc17499e332d66aa074a90117ab3e4d6d16cb0b
-  tree: sha256:96602c88f7f71c3b3fbf58862914d031794ed7089a1ed9fe3bcc10d2a5132189
+  digest: sha256:faccaa58e911ec02ca016936b214f05e4efa675ae19b5f400642f26f8a424794
+  tree: sha256:cb55ca51e21a336f8fb365ff8bfb269d448dae3a807c538f0583ad07a0da42ac
   path: skills/github-pr
   source: path:skills/github-pr
 - id: skill:jira-ticket
-  digest: sha256:a99706798d14f8b6d8b4a4a76e873e6e78ba4914656b547585d5af47bf730de5
-  tree: sha256:3599713bf934f14f51ca8ed0073ac9ef3e4f0d1f896531cbeb8d43867057b4c5
+  digest: sha256:74007bb8c9df0f3a5f7977e16a0c5b904b6d6f1c1dda2378d3e44eda805e2f92
+  tree: sha256:21ba8e72e8dcc1cee1dd5404ac926895a610abd062eb6deb0d01f99e53b96539
   path: skills/jira-ticket
   source: path:skills/jira-ticket
+- id: skill:decision-ticket
+  digest: sha256:d4ad51c86e4f5fdfa987732edfc3de52f1252f5209466a086c9426f5b825a73e
+  tree: sha256:30fcc764ff850b369edc39a164c067b0196d132ea7e2ea46ef266f043e51a61e
+  path: skills/decision-ticket
+  source: path:skills/decision-ticket
+- id: skill:work-docs
+  digest: sha256:c12bb1fe89e58c50921e30eac4a7ff94fa58fb544c686024639c797cc2a0cc60
+  tree: sha256:74c7ad1545b3063058e6c3a92569d8ee6dc4ee02bd9604410ea33b6ca4b2e638
+  path: skills/work-docs
+  source: path:skills/work-docs
+- id: skill:work-start
+  digest: sha256:2998af263a4025b74497930f6438f1ca7d7d8b831595ccae35a3ca94d6896fdb
+  tree: sha256:083c304c6989e0c821800285c6f39ce9124cb6d1dd3f2c8f40b03a7462b14836
+  path: skills/work-start
+  source: path:skills/work-start
 - id: native:claude-code/hooks/guard_work.py
   digest: sha256:e3567f06861e0b7cc200689296002c1b00a7c80b5e795f70081524a5b66f92ca
   path: native/claude-code/hooks/guard_work.py
+- id: native:claude-code/hooks/guard_work_system.py
+  digest: sha256:c24d7e83fde52f1a5d0b2ede336bef91bbfbe5c6c568cdc68a1e38f22ff5246a
+  path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
-  digest: sha256:da9eef3a5e8c21dbb195196bf9cbb7c1fa0f045d16730be1a76ad610645bc961
+  digest: sha256:ffe42d2317a0c14b2b2b458eaabb5fa7ab8b5bc46cc7247b58ff995cd331817f
   path: native/claude-code/settings.json
 binding:
   mcp:
@@ -52,10 +70,10 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:da9eef3a5e8c21dbb195196bf9cbb7c1fa0f045d16730be1a76ad610645bc961
+    digest: sha256:ffe42d2317a0c14b2b2b458eaabb5fa7ab8b5bc46cc7247b58ff995cd331817f
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:da9eef3a5e8c21dbb195196bf9cbb7c1fa0f045d16730be1a76ad610645bc961
+    digest: sha256:ffe42d2317a0c14b2b2b458eaabb5fa7ab8b5bc46cc7247b58ff995cd331817f
 plugins:
   autoUpdate: false
 remote: []

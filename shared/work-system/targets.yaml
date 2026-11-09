@@ -1,0 +1,10 @@
+# Which harnesses carry the shared work-system layer, and where each piece lands in them.
+# scripts/sync_shared.py copies shared/work-system/ into these paths; `--check` (CI) fails on any difference, so the
+# layer is edited once, here, and every harness pins the same bytes.
+#
+# team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), and its stable and
+# candidate stay as they were registered.
+skills: [jira-ticket, decision-ticket, work-docs, work-start]
+hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
+hook_command: python3 "$HOME/.claude/hooks/guard_work_system.py"
+harnesses: [suite-default, work-default]

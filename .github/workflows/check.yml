@@ -30,6 +30,8 @@ jobs:
       - name: hangar harness check
         run: |
           for d in harnesses/*/; do hangar harness check "$d"; done
+      - name: Shared work-system layer in sync
+        run: python scripts/sync_shared.py --check
       - name: Guides, environments and channels
         run: python scripts/check_registry.py .
       - name: Behavior specs lint

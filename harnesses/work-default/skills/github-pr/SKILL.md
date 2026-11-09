@@ -13,7 +13,9 @@ change set it opens one PR per changed repository and links them. You write what
 
 End your turn with one section per changed repository, in this order:
 
-- **Ticket:** the Jira key.
+- `Jira: <KEY>` on its own line (the PR check reads it; the same key as the title).
+- `Docs: <files or Confluence page you updated, or "none needed - why">` (`work-docs`).
+- `Decision: <KEY>` only when this repository's change implements a Decision that binds code; it then adds the ADR.
 - **What and why:** two to five lines about this repository's change only.
 - **Depends on:** what it needs from the sibling PRs ("needs database's migration 0042 merged first") or "none".
 - **How it was tested:** the commands you ran in this checkout and their result.
