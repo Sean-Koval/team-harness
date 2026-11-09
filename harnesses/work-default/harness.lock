@@ -48,7 +48,7 @@ components:
   digest: sha256:e3567f06861e0b7cc200689296002c1b00a7c80b5e795f70081524a5b66f92ca
   path: native/claude-code/hooks/guard_work.py
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:c24d7e83fde52f1a5d0b2ede336bef91bbfbe5c6c568cdc68a1e38f22ff5246a
+  digest: sha256:f44800c49066e06072f94984ab0945993729f44231385edaa0b7421d036b20dc
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:ffe42d2317a0c14b2b2b458eaabb5fa7ab8b5bc46cc7247b58ff995cd331817f

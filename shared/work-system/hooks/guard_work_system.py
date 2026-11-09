@@ -7,7 +7,7 @@ agent and skips the call) for:
 - `git commit` on a branch whose name has no ticket key (except `nokey/`, `deps/`, `dependabot/`, `renovate/`
   branches, and the `claude/` branches a cloud session is assigned), or on main/master;
 - `git push` to main/master, and `git push --force` / `-f` (use `--force-with-lease` on your own branch);
-- `gh pr create` without `--title` starting with a key, or without a body (`--body` / `--body-file`) holding the
+- `gh pr create` (or a GitHub MCP `create_pull_request`) without a title starting with a key, or without a body (`--body` / `--body-file`) holding the
   `Jira: <KEY>` line for that key and a `Docs:` line, or with `--fill`;
 - any Atlassian MCP call that transitions an issue, and any destructive one: statuses move by Jira automation,
   hangar and Sean (skill `jira-ticket`).
@@ -151,6 +151,10 @@ def why(event: dict) -> str | None:
     if MCP_TRANSITION.match(tool) or op.lower().startswith("transition"):
         return ("agents don't move tickets: Jira automation moves them on branch, PR and merge, hangar moves the ones "
                 "it runs, and Sean moves the rest. Comment instead (skill jira-ticket)")
+    if re.match(r"^mcp__.+__create_pull_request$", tool):
+        args = event.get("tool_input") or {}
+        words = ["--title", str(args.get("title") or ""), "--body", str(args.get("body") or "")]
+        return _pr_create(words, None)
     if tool != "Bash":
         return None
     command = str((event.get("tool_input") or {}).get("command") or "")

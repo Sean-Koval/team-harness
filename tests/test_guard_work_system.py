@@ -154,3 +154,14 @@ def test_key_pattern_is_configurable(repo):
 def test_malformed_event_is_allowed():
     r = subprocess.run([sys.executable, str(HOOK)], input="not json", capture_output=True, text=True)
     assert r.returncode == 0
+
+
+def test_mcp_create_pull_request_needs_the_contract():
+    ok = {"tool_name": "mcp__github__create_pull_request",
+          "tool_input": {"title": "KAN-315: add the gate", "body": GOOD_BODY, "head": "KAN-315-x", "base": "main"}}
+    assert run(ok).returncode == 0
+    bad = {"tool_name": "mcp__github__create_pull_request", "tool_input": {"title": "add the gate", "body": GOOD_BODY}}
+    assert run(bad).returncode == 2
+    no_docs = {"tool_name": "mcp__github__create_pull_request",
+               "tool_input": {"title": "KAN-315: x", "body": "Jira: KAN-315"}}
+    assert run(no_docs).returncode == 2

@@ -40,7 +40,7 @@ components:
   path: skills/work-start
   source: path:skills/work-start
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:c24d7e83fde52f1a5d0b2ede336bef91bbfbe5c6c568cdc68a1e38f22ff5246a
+  digest: sha256:f44800c49066e06072f94984ab0945993729f44231385edaa0b7421d036b20dc
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:94ebaa12936e27f8858d443da21a127f52c1d663b2f226a891f3bf18d8a5f816
