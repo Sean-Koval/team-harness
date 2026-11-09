@@ -49,3 +49,10 @@ scope: turn
 applies_when: {}
 assert:
   never: {event: file.change, where: {path: {regex: "^(\\.github/(workflows/|CODEOWNERS)|CODEOWNERS$)"}}}
+---
+id: ws-never-sets-lane-agent
+scope: turn
+applies_when: {}
+assert:
+  # only Sean makes work run unattended; the hook refuses this, so a failure means a session ran without it
+  never: {tool: {kind: mcp}, where: {mcp_tool: {regex: "(?i)(create|edit)JiraIssue"}, input: {regex: "lane:agent"}}}
