@@ -47,11 +47,19 @@ A day, end to end:
 `orgs/<company>/org.yaml` (projects, gates, review room) and your team's process skill in
 `orgs/<company>/skills/org-process/`. Never put either in the public repository.
 
+Your ESS work ops skill is that process skill. It lives on your work computer, so make the private fork there and
+copy the skill into `orgs/<company>/skills/org-process/` (its `SKILL.md` and anything it references). Step 2 then
+installs it into the work repo with the rest of `work-default`. Name the label that triggers the ESS gate (KAN-355)
+in `org.yaml`. The Jira and Confluence structure the flow needs is in [jira-confluence-setup.md](jira-confluence-setup.md).
+
 ## Setup, in order
 
 **Step 0. Preflight.**
 
-- On a Mac, install the Xcode Command Line Tools; the plugin hooks call `python3`.
+- The work laptop is a Mac, so everything below runs natively (KAN-370). Install the Xcode Command Line Tools
+  first; the plugin hooks call `python3`.
+- Coworkers on Windows run ai-dlc in WSL2 where policy allows. Work Copilot's Windows keyring fix (three OAuth
+  storage tests fail on Windows CI) stays in scope for them.
 - Behind a company proxy, set `HTTPS_PROXY`, and `SSL_CERT_FILE` if the proxy inspects TLS.
 - Run `gh auth login` against the company GitHub host.
 - Pick the model route first. Use a company-approved login, not a personal plan.
@@ -178,17 +186,17 @@ in ai-dlc, that calls each tool's own check and prints one table of ok, warning 
 | One-command daily capture | KAN-345, KAN-361 |
 | trace compiler and mesh doctors | KAN-346, KAN-348 |
 
-## Decisions this waits on
+## Decisions it rests on
 
-Each is a Decision ticket in KAN with options, a recommendation and a default.
+Each was a Decision ticket in KAN, now decided. The picks:
 
-| Ticket | Question | Recommendation |
+| Ticket | Question | Chosen |
 | --- | --- | --- |
-| KAN-375 | Where the org overlay and process skill live | Laptop-only overlay first, then the company repo pins this one as upstream |
-| KAN-355 | When a change needs the extra release review | A gate a person files, triggered by a ticket label |
-| KAN-370 | Laptop OS | Native on macOS or Linux; WSL2 on Windows if allowed |
-| KAN-369 | Which Jira credential work allows | None at first; the Atlassian MCP in the session |
-| KAN-368 | CI evidence for `ai-dlc work finish` | Drop the CI gate for the trial, then read company CI receipts |
-| KAN-362 | Which flightdeck paths run before sign-off | Local only |
-| KAN-356 | How far hangar goes in the first test | Trace import only |
-| KAN-350, KAN-343 | Trace compiler and mesh in the first test | Leave both out |
+| KAN-375 | Where the org overlay and process skill live | The laptop-only overlay first; then the company repo pins this one as upstream once teammates join |
+| KAN-355 | When a change needs the ESS review step | A gate a person files, triggered by a ticket label named in the private overlay |
+| KAN-370 | Laptop OS | Native on macOS (the work laptop is a Mac); WSL2 on Windows where policy allows |
+| KAN-369 | Which Jira credential work allows | None for now; the Atlassian MCP in the session does the Jira work |
+| KAN-368 | CI evidence for `ai-dlc work finish` | Finish on spec-current and PR-merged for the trial; company branch protection enforces CI |
+| KAN-362 | Which flightdeck paths run before sign-off | Local only; GitHub ingest once a read-only work token is allowed |
+| KAN-356 | How far hangar goes in the first test | Trace import only; local hangar once KAN-214 gives a company key |
+| KAN-350, KAN-343 | Trace compiler and mesh in the first test | Leave both out for now |

@@ -3,7 +3,8 @@
 How docs and tickets stay organized across Jira and Confluence, and which skills, hooks and Jira tools keep them
 that way. The status, label and field model itself is in
 [cabinet `config/work-system/`](https://github.com/Sean-Koval/cabinet/tree/main/config/work-system); this page says
-where each record goes and what enforces it. Setting up a laptop is in [work-laptop-runbook.md](work-laptop-runbook.md).
+where each record goes and what enforces it. How to build the Jira project and Confluence space, field by field and rule by rule, is in
+[jira-confluence-setup.md](jira-confluence-setup.md). Setting up a laptop is in [work-laptop-runbook.md](work-laptop-runbook.md).
 
 One owner per fact. Every record has one home, and everything else links to it. The layout is the same for `suite-default` (Jira KAN and Confluence SD) and for `work-default` (the company's own Jira project and Confluence space). Each harness profile names its site and space, so the same skills work in both places and can't write to the wrong one.
 
@@ -11,8 +12,8 @@ One owner per fact. Every record has one home, and everything else links to it. 
 
 | Record | Home | What it must carry |
 | --- | --- | --- |
-| A unit of work | Jira ticket under its project's epic | Goal, acceptance criteria, verify command, out of scope; an `exec:` and a `repo:` label |
-| A question only you can answer | Jira Decision ticket that blocks the work, in Needs Decision | Options, Recommendation, Default if unanswered, Scope, Due; labels `decision`, `human-decision`, `exec:human`, `repo:`; assigned to you |
+| A unit of work | Jira ticket under its project's epic | Goal, acceptance criteria, verify command, out of scope; a `lane:` label (`exec:` once PR 7 lands) and a `repo:` label |
+| A question only you can answer | Jira Decision ticket that blocks the work, in Needs Decision | Options, Recommendation, Default if unanswered, Scope, Due; labels `decision`, `human-decision`, `needs-sean`, `lane:human`, `repo:`; assigned to you |
 | The roadmap | Epics labelled `roadmap` | Goal, Milestone and Blocked by in the description, a `health:` label; shown on the Confluence Roadmap page |
 | A decision that binds code | ADR in the repo's `docs/decisions/` | Linked from its Decision ticket |
 | The long reasoning behind a decision | Confluence Second brain, Decision write-ups | A link to its Decision ticket |
@@ -38,7 +39,7 @@ Four layers do it. Skills tell agents where things go. Hooks block the worst mis
 | Skill | `confluence-context` | Reads the page tree and the page that covers a subject before writing | New, KAN-303 |
 | Skill | Second-brain capture | Files a note, meeting note or research page under the right parent, with ticket links | New, KAN-323 |
 | Skill | Weekly hygiene sweep | One report of strays (the filters below); fixes only what you approve | New, to file |
-| Hook | `guard_work_system.py` (team-harness) | Blocks keyless commits, keyless PRs or PRs without `Jira:` and `Docs:`, agent-set `exec:agent`, any agent status transition, and merges where the harness forbids them | Exists |
+| Hook | `guard_work_system.py` (team-harness) | Blocks keyless commits, keyless PRs or PRs without `Jira:` and `Docs:`, agent-set `lane:agent` (or `exec:agent`), any agent status transition, and merges where the harness forbids them | Exists |
 | Hook | ai-dlc plugin hook | Guards `docs/specs` edits and destructive shell commands | Exists |
 | PR check | `actions/work-system-pr/check.py` | Key, `Jira:` and `Docs:` lines; ticket open, labelled and not blocked by an open Decision; work gates | Exists |
 | Jira | Decision type, Needs Decision, Ready for agent and Wont Do statuses, Bug type | The shapes the skills write | Exists in KAN; set up per site |
@@ -52,34 +53,46 @@ Four layers do it. Skills tell agents where things go. Hooks block the worst mis
 
 ## Saved filters
 
-Save each in Jira, and put the first two on one dashboard. The project key is `KAN` for `suite-default`; use your own elsewhere.
+The ten filters, with their JQL, are in [setup spec J9](jira-confluence-setup.md#j9-filters), and the dashboard
+built from them is in J10. The ones you'll open most:
 
 | Filter | JQL |
 | --- | --- |
 | Needs me | `project = KAN AND labels = human-decision AND statusCategory != Done` |
-| Overdue decisions | `project = KAN AND issuetype = Decision AND statusCategory != Done AND due < now()` |
-| No epic | `project = KAN AND parent is EMPTY AND issuetype not in (Epic, Decision) AND statusCategory != Done` |
-| No labels to route on | `project = KAN AND issuetype != Epic AND statusCategory != Done AND (labels is EMPTY OR labels not in (exec:agent, exec:pair, exec:human, lane:agent, lane:pair, lane:human))` |
-| Roadmap epics without health | `project = KAN AND issuetype = Epic AND labels = roadmap AND labels not in (health:green, health:yellow, health:red)` |
+| Overdue decisions | `project = KAN AND issuetype = Decision AND statusCategory != Done AND (cf[10106] < now() OR duedate < now())` |
+| Blocked by a decision | `project = KAN AND status = "Needs Decision" AND issuetype != Decision` |
+| Roadmap epics without health | `project = KAN AND issuetype = Epic AND labels = roadmap AND labels not in (health:on-track, health:at-risk, health:blocked, health:paused)` |
 
-The last two use exact label lists. Adjust them if your `health:` values differ.
+Decisions keep their date in the custom **Due** field. JQL's `due` means the system Due date, so filters name the
+custom field as `cf[10106]` (KAN's id).
 
 ## Automation rules
 
-Jira automation moves statuses, so no agent has to.
+Jira automation moves statuses, so no agent has to. The rules are cabinet's A1 to A9; each one's trigger,
+conditions, actions, smart values and scratch-ticket test are in [setup spec J7](jira-confluence-setup.md#j7-automation-rules).
 
-1. **Decision filed:** when a Decision is created, assign it to you, add `human-decision` if missing, and set Needs Decision.
-2. **Decision answered:** when Chosen is filled on a Decision, move it to Done and comment on each ticket it blocks.
-3. **Work unblocked:** when a Decision moves to Done and no open Decision still blocks the ticket, move that ticket from Needs Decision to To Do.
-4. **Past due:** daily, comment "Due passed; the default applies unless you say otherwise" on each overdue Decision.
-5. **Merged:** when the linked PR merges, move the ticket to Done. Skip this where hangar or `ai-dlc work finish` already moves it.
+| Rule | Does | In KAN |
+| --- | --- | --- |
+| A1 | Branch created: To Do or Ready for Agent to In Progress | To set up |
+| A2 | PR created: to In Review | To set up |
+| A3 | PR merged: to Done, with the PR in a comment | To set up |
+| A4 | A Decision linked as blocking started work: that work to Needs Decision | To set up |
+| A5 | A Decision moved to Done with Chosen filled: what it blocked back to Ready for Agent or In Progress | To set up |
+| A6 | A Decision moved to Done: a Confluence write-up page under Decision write-ups | To set up |
+| A7 | Daily: an open Decision past Due gets one comment that the default applies | To set up |
+| A8 | A new Story, Task or Bug with no lane gets `needs-triage` | To set up |
+| A9 | A new Decision opens in Needs Decision | Live |
 
 ## Setting it up, in order
 
-1. Save the five filters and the dashboard.
-2. Create the five automation rules, one at a time, and test each on a scratch ticket.
-3. Add the three Confluence page templates to the knowledge-base space.
+The full order is [setup spec Part 6](jira-confluence-setup.md#part-6-order-of-setup). In short:
+
+1. Copy the system Due dates on four Decisions into Due, then save the filters, dashboard and board.
+2. Connect GitHub for Jira to the repos, then build A1 to A8 one at a time, each tested on a scratch ticket.
+3. Create the Decision write-up, Meeting note and Note templates in the space, and let the automation user add pages.
 4. Merge the open team-harness PRs for the work-system layer (7 to 11), so the skills and hook are current.
 5. Do KAN-303 and KAN-323, then file and do the hygiene sweep.
 
-At work, check the company project's Decision type has the same fields (KAN's include Chosen and Rationale), then repeat steps 1 to 3 in the company project and space. Automation there needs a Jira admin, so ask before you plan on it.
+At work, follow [setup spec Part 3](jira-confluence-setup.md#part-3-who-can-do-what) for what needs an admin and
+[Part 4](jira-confluence-setup.md#part-4-from-kan-and-sd-to-work) for the fallbacks when the company project can't
+have a Decision type or the extra statuses.
