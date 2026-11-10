@@ -43,7 +43,7 @@ Four layers do it. Skills tell agents where things go. Hooks block the worst mis
 | PR check | `actions/work-system-pr/check.py` | Key, `Jira:` and `Docs:` lines; ticket open, labelled and not blocked by an open Decision; work gates | Exists |
 | Jira | Decision type, Needs Decision, Ready for agent and Wont Do statuses, Bug type | The shapes the skills write | Exists in KAN; set up per site |
 | Jira | Decision fields Options, Recommendation, Default if unanswered, Scope | Filled by the skill | Exists in KAN; set up per site |
-| Jira | Chosen and Rationale fields on the Decision type | Where your pick is recorded | Check; add if missing |
+| Jira | Decision fields Chosen and Rationale | Where your pick is recorded | Exists in KAN; set up per site |
 | Jira | Saved filters and one dashboard | What you look at (below) | New |
 | Jira | Automation rules | Status moves and tidy-up (below) | New |
 | Confluence | Space page tree with a Second brain section | Homes for pages | Exists in SD; set up per site |
@@ -77,10 +77,9 @@ Jira automation moves statuses, so no agent has to.
 ## Setting it up, in order
 
 1. Save the five filters and the dashboard.
-2. Add Chosen and Rationale to the Decision type if they're missing.
-3. Create the five automation rules, one at a time, and test each on a scratch ticket.
-4. Add the three Confluence page templates to the knowledge-base space.
-5. Merge the open team-harness PRs for the work-system layer (7 to 11), so the skills and hook are current.
-6. Do KAN-303 and KAN-323, then file and do the hygiene sweep.
+2. Create the five automation rules, one at a time, and test each on a scratch ticket.
+3. Add the three Confluence page templates to the knowledge-base space.
+4. Merge the open team-harness PRs for the work-system layer (7 to 11), so the skills and hook are current.
+5. Do KAN-303 and KAN-323, then file and do the hygiene sweep.
 
-At work, repeat steps 1 to 4 in the company project and space. Automation there needs a Jira admin, so ask before you plan on it.
+At work, check the company project's Decision type has the same fields (KAN's include Chosen and Rationale), then repeat steps 1 to 3 in the company project and space. Automation there needs a Jira admin, so ask before you plan on it.
