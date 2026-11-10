@@ -87,7 +87,7 @@ conditions, actions, smart values and scratch-ticket test are in [setup spec J7]
 
 The full order is [setup spec Part 6](jira-confluence-setup.md#part-6-order-of-setup). In short:
 
-1. Copy the system Due dates on four Decisions into Due, then save the filters, dashboard and board.
+1. Copy system Due dates into Due on open Decisions, then save the filters, dashboard and board.
 2. Connect GitHub for Jira to the repos, then build A1 to A8 one at a time, each tested on a scratch ticket.
 3. Create the Decision write-up, Meeting note and Note templates in the space, and let the automation user add pages.
 4. Merge the open team-harness PRs for the work-system layer (7 to 11), so the skills and hook are current.

@@ -76,11 +76,10 @@ tools: hangar reads **Acceptance criteria** and **Verify command**. Rename them 
 | Chosen | customfield_10105 | Short text (single line) | - | Hidden or optional | Required |
 | Rationale | customfield_10103 | Paragraph | - | Hidden or optional | Required |
 
-**One due field.** Decisions use the custom **Due**, not the system **Due date**. Four KAN Decisions (KAN-342,
-KAN-368, KAN-369, KAN-370) carry the system Due date instead, so filters miss them. Two consequences:
+**One due field.** Decisions use the custom **Due**, not the system **Due date**. Some KAN Decisions (KAN-342 among the open ones) carry the system Due date instead, so filters miss them. Two consequences:
 
 - In JQL write `cf[10106]`, never `due`: `due` is JQL's name for the system Due date.
-- Copy the four system dates into Due, then hide the system Due date on the Decision layout.
+- Copy the system date into Due on each open Decision that has one, then hide the system Due date on the Decision layout.
 
 **Where the fields appear.**
 
@@ -94,7 +93,7 @@ KAN-368, KAN-369, KAN-370) carry the system Due date instead, so filters miss th
   - *Edit and View:* the Create screen plus Chosen and Rationale.
   - *Transition to Done:* Chosen and Rationale, with a "Field required" validator on both.
 
-  The field configuration marks the five create fields required for the Decision type only.
+The field configuration marks the five create fields required for the Decision type only.
 
 **Epic fields.** None are custom. The lead routine rewrites a `## Roadmap` section in the description with four
 lines: **Goal**, **Milestone**, **Blocked by** and **Swim lane** (Agent suite, Dev tooling or Product). A
@@ -261,7 +260,7 @@ Smart values below use KAN's field IDs; at work, replace them with the site's.
 **A7. A Decision passes its Due**
 
 - *Trigger:* Scheduled, daily at 09:00, JQL
-  `project = KAN AND issuetype = Decision AND statusCategory != Done AND cf[10106] < now() AND labels != overdue`.
+  `project = KAN AND issuetype = Decision AND statusCategory != Done AND cf[10106] < now() AND (labels is EMPTY OR labels != overdue)`.
   (cabinet's `atlassian.toml` writes `Due < now()`, which JQL reads as the system Due date; fix it there to match.)
 - *Actions:* Add comment `Due passed on {{issue.customfield_10106}}. The default applies unless you answer:
   {{issue.customfield_10102}}`. Add label `overdue`.
@@ -317,8 +316,7 @@ Save each one (Filters → Save filter), shared with yourself only.
 | Merged but open | `project = KAN AND statusCategory != Done AND development[pullrequests].all > 0 AND development[pullrequests].open = 0` |
 | Roadmap epics without health | `project = KAN AND issuetype = Epic AND labels = roadmap AND labels not in (health:on-track, health:at-risk, health:blocked, health:paused)` |
 
-`labels not in (...)` skips tickets with no labels at all, which is why "Needs a lane" adds `labels is EMPTY`. Drop
-the `duedate` half of "Overdue decisions" once the four system dates are copied (J3). "Merged but open" works
+`labels not in (...)` skips tickets with no labels at all, which is why "Needs a lane" adds `labels is EMPTY`. Drop the `duedate` half of "Overdue decisions" once those dates are copied (J3). "Merged but open" works
 only once GitHub for Jira is connected to the repos.
 
 ### J10. Dashboard
@@ -563,7 +561,7 @@ owner, `merge_mode: never`, and site and space left as placeholders until the pr
 
 **In KAN and SD (you, today):**
 
-1. Copy the four system Due dates into Due and fix rule A7's JQL in cabinet (J3, J7).
+1. Copy system Due dates into Due on open Decisions and fix rule A7's JQL in cabinet (J3, J7).
 2. Save the ten filters and build the dashboard and board (J9 to J11).
 3. Connect GitHub for Jira to the repos, then build A1, A2 and A3 and test each.
 4. Build A4 to A8 and test each; decide whether A9 gets its two optional additions.
