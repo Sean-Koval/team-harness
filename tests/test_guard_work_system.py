@@ -221,3 +221,40 @@ def test_suite_default_may_merge_but_never_with_admin():
 def test_rendered_hooks_still_refuse_transitions(hook):
     r = run_hook(hook, {"tool_name": "mcp__atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "KAN-1"}})
     assert r.returncode == 2
+
+
+@pytest.mark.parametrize("event", [
+    {"tool_name": "Bash", "tool_input": {"command": "gh -R acme/svc pr merge 12 --squash"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh --repo=acme/svc pr merge 12"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh api -X PUT repos/acme/svc/pulls/12/merge"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }'"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh api repos/acme/svc/pulls/12/reviews -f event=APPROVE"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh pr review 12 --approve"}},
+    {"tool_name": "Bash", "tool_input": {"command": "bash -c \"gh pr merge 12\""}},
+    {"tool_name": "mcp__github__enable_pr_auto_merge", "tool_input": {"pullNumber": 12}},
+    {"tool_name": "mcp__github__pull_request_review_write", "tool_input": {"method": "create", "event": "APPROVE"}},
+])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_no_route_around_never_merge(hook, event):
+    r = run_hook(hook, event)
+    assert r.returncode == 2 and "never merge" in r.stderr
+
+
+@pytest.mark.parametrize("event", [
+    {"tool_name": "Bash", "tool_input": {"command": "gh pr review 12 --comment -b 'looks fine'"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh api repos/acme/svc/pulls/12/files"}},
+    {"tool_name": "Bash", "tool_input": {"command": "gh -R acme/svc pr view 12"}},
+    {"tool_name": "mcp__github__pull_request_review_write", "tool_input": {"method": "create", "event": "COMMENT"}},
+])
+def test_reading_and_commenting_still_allowed_at_work(event):
+    assert run_hook(WORK_HOOK, event).returncode == 0
+
+
+def test_gh_repo_flag_does_not_skip_the_pr_contract():
+    r = run_hook(WORK_HOOK, {"tool_name": "Bash", "tool_input": {"command": "gh -R acme/svc pr create --fill"}})
+    assert r.returncode == 2
+
+
+def test_suite_default_still_merges_with_a_repo_flag():
+    ok = run_hook(SUITE_HOOK, {"tool_name": "Bash", "tool_input": {"command": "gh -R o/r pr merge 12 --squash"}})
+    assert ok.returncode == 0
