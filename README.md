@@ -113,6 +113,10 @@ The layer is edited once, in `shared/work-system/`, and copied into each harness
 CI fails when a copy differs (`--check`), so every harness pins the same bytes. `team-default` does not carry it: it is
 the pre-registered A/B example and stays as registered.
 
+Where each record goes, and the Jira filters and automation that keep it tidy, are in
+[docs/jira-confluence-organization.md](docs/jira-confluence-organization.md). Running `work-default` on a company
+laptop, with flightdeck measuring each session, is in [docs/work-laptop-runbook.md](docs/work-laptop-runbook.md).
+
 To adopt the PR check in another repository, follow [its README](actions/work-system-pr/README.md) and copy
 [`templates/pull_request_template.md`](templates/pull_request_template.md).
 
