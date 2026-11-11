@@ -1,33 +1,50 @@
 ---
 name: github-pr
-description: Use when finishing work that becomes one or more pull requests, when writing what goes in a PR description, or when answering review comments. Covers the per-repository PR body in a change set, checks, and what never to do on GitHub.
+description: Use when finishing work that becomes one or more pull requests, when writing a PR description, when answering review comments, or before merging. Covers who opens the PR on each surface, the title and body contract the PR check enforces, change-set descriptions, the merge rule, and what never to do on GitHub.
 ---
 
 # Pull requests
 
-Everything is reviewed in GitHub. hangar pushes your branch and opens the PR as the factory's GitHub App, with the
-branch name and title the repository's policy requires (the ticket key first: `SVC-412: add the retry queue`). In a
-change set it opens one PR per changed repository and links them. You write what goes in each description.
+One ticket, one branch, one PR for each changed repository. Everything is reviewed in GitHub. The work-system PR check
+fails any PR that breaks the contract below, whichever surface opened it.
 
-## The description, per repository
+## Who opens it
 
-End your turn with one section per changed repository, in this order:
+- **In a hangar job:** hangar pushes and opens the PR as its GitHub App, with the key in the branch and the title. In
+  a change set, it opens one PR per changed repository and links them. You end your turn with the description below.
+  Don't open PRs yourself with `gh` or the `github` MCP server's write tools, so that the links, trailers and landing
+  order stay right.
+- **In a local or cloud session:** push the branch and open the PR yourself:
 
-- `Jira: <KEY>` on its own line (the PR check reads it; the same key as the title).
-- `Docs: <files or Confluence page you updated, or "none needed - why">` (`work-docs`).
-- `Decision: <KEY>` only when this repository's change implements a Decision that binds code; it then adds the ADR.
-- **What and why:** two to five lines about this repository's change only.
-- **Depends on:** what it needs from the sibling PRs ("needs database's migration 0042 merged first") or "none".
-- **How it was tested:** the commands you ran in this checkout and their result.
-- **Risk and rollout:** migrations, flags, resources created, anything a reviewer must do.
-- **Not done:** anything in the ticket you left out, and why.
+  `gh pr create --draft --title '<KEY>: <what changes>' --body-file <file>`
+
+  Mark it ready for review once the repository's checks pass. In a cloud session whose branch name was assigned, keep
+  that branch: the title and the `Jira:` line link the PR.
+
+## The contract
+
+- **Title:** `<KEY>: <what changes>`, under 72 characters.
+- **Body:** use the repository's PR template when it has one. Otherwise, in this order:
+  - `Jira: <KEY>` on its own line, with the same key as the title.
+  - `Docs: <files or Confluence page you updated, or "none needed - why">` (`work-docs`).
+  - `Decision: <KEY>`, only when the PR implements a Decision that binds code; the PR then adds the ADR.
+  - **What and why:** two to five lines, about this repository's change only.
+  - **Depends on:** in a change set, what this PR needs from the sibling PRs ("needs database's migration 0042 merged
+    first"), or "none".
+  - **How it was verified:** the commands you ran in this checkout and their result.
+  - **Risk and rollout:** migrations, flags, resources created, anything a reviewer must do.
+  - **Not done:** anything in the ticket you left out, and why.
+
+## Approvals
+
+Every PR goes through the company's review steps: use the `release-approvals` skill once the PR is open (an SRE ticket that links the PR, an infosec ticket that links the repository, and a drafted review request for the team's Symphony room that a person posts).
 
 ## Checks and reviews
 
-- Each repository's CI runs on its PR. If a check fails, read its log, fix the cause and continue the job; re-run a
-  check once only when its log shows an infrastructure failure, and say so.
-- Answer every review comment, either with a commit that addresses it or with a short reason you disagree.
-- Never merge, approve a PR, dismiss a review, enable auto-merge or change branch protection. hangar arms landing
-  only after the repository's own approvers approve, and in the change set's order.
-- Don't push to another repository's branch, and don't open PRs yourself with `gh` or the `github` MCP server's
-  write tools: hangar opens them, so the links, trailers and landing order stay right.
+- If a check fails, read its log, fix the cause and push. Re-run a check once only when its log shows an
+  infrastructure failure, and say so in the PR.
+- Answer every review comment, with a commit that addresses it or a short reason you disagree.
+- Never approve your own PR, dismiss a review, push to `main`, push to another repository's branch, or change branch
+  protection.
+
+**Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. SRE approves (or merges) the PR after reviewing the SRE ticket that links it (`release-approvals`); hangar lands change sets only after each repository's own approvers approve. The hook refuses `gh pr merge`.

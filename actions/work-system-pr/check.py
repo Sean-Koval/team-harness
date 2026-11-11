@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The work-system PR check: every pull request names its ticket, says where its docs went, and (optionally) points
-at a ticket that is open, laned and not waiting on a decision.
+at a ticket that is open, carries an execution label and is not waiting on a decision.
 
 Every surface (hangar jobs, local Claude Code or Codex, cloud sessions, a person in the browser) ends in a pull request,
 so this is the one place the rules hold for all of them. The session hook (shared/work-system) only catches them
@@ -11,8 +11,8 @@ earlier. Rules:
 3. The body has a non-empty `Docs:` line; `none needed` must give a reason.
 4. If the body says `Decision: <KEY>`, the PR adds or changes a file under the ADR directory that mentions that key.
 5. The branch should contain the key (a warning only: cloud sessions are assigned branch names).
-6. With Jira credentials: the ticket exists, is not Done or Wont Do, carries a `lane:` label, is a work item (not an
-   Epic or a Decision), and no open Decision blocks it.
+6. With Jira credentials: the ticket exists, is not Done or Wont Do, carries an execution label (`exec:`, or the older
+   `lane:`), is a work item (not an Epic or a Decision, nor a Task labelled `type:decision`), and no open Decision blocks it.
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots). Reads the event payload, the PR's file list through the GitHub API, and Jira only with GET; writes nothing
@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
 DONE_CATEGORIES = {"done"}
 NOT_WORK_TYPES = {"epic", "decision"}
+EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
 
 
 @dataclass
@@ -116,11 +117,17 @@ def check_ticket(issue: dict, blockers: list[dict], key: str) -> list[str]:
     itype = ((f.get("issuetype") or {}).get("name") or "").lower()
     if itype in NOT_WORK_TYPES:
         errs.append(f"{key} is a {itype}; a PR implements a story, task or bug (use 'Decision: {key}' for a decision)")
-    if not any(str(lab).startswith("lane:") for lab in f.get("labels") or []):
-        errs.append(f"{key} has no lane: label (lane:agent, lane:pair or lane:human)")
+    labels = [str(lab) for lab in f.get("labels") or []]
+    if itype not in NOT_WORK_TYPES and "type:decision" in labels:
+        errs.append(f"{key} is a decision (type:decision); a PR implements a story, task or bug "
+                    f"(use 'Decision: {key}' for a decision)")
+    if not any(lab.startswith(EXEC_PREFIXES) for lab in labels):
+        errs.append(f"{key} has no execution label (exec:agent, exec:pair or exec:human; lane:* is still accepted)")
     for b in blockers:
         bf = b.get("fields") or {}
-        if ((bf.get("issuetype") or {}).get("name") or "").lower() == "decision" and \
+        is_decision = ((bf.get("issuetype") or {}).get("name") or "").lower() == "decision" or \
+            "type:decision" in [str(lab) for lab in bf.get("labels") or []]
+        if is_decision and \
                 ((bf.get("status") or {}).get("statusCategory") or {}).get("key") not in DONE_CATEGORIES:
             errs.append(f"{key} is blocked by open Decision {b.get('key')}: answer it before merging")
     return errs
@@ -154,6 +161,13 @@ def _jira(base: str, user: str, token: str, key: str) -> tuple[dict, list[dict]]
     for link in (issue.get("fields") or {}).get("issuelinks") or []:  # type: ignore[union-attr]
         if (link.get("type") or {}).get("name") == "Blocks" and link.get("inwardIssue"):
             blockers.append(link["inwardIssue"])  # "is blocked by": the inward issue blocks this one
+    for i, b in enumerate(blockers):
+        # link summaries carry no labels; a Decision filed as a Task (`type:decision`) needs one more GET
+        if ((b.get("fields") or {}).get("issuetype") or {}).get("name", "").lower() != "decision" and b.get("key"):
+            full = _get(f"{base.rstrip('/')}/rest/api/3/issue/{urllib.parse.quote(b['key'])}"
+                        "?fields=status,labels,issuetype", auth)
+            if isinstance(full, dict):
+                blockers[i] = {**full, "key": b["key"]}
     return issue, blockers  # type: ignore[return-value]
 
 
@@ -188,7 +202,7 @@ def main() -> int:
         except (urllib.error.URLError, OSError, ValueError) as e:
             res.warnings.append(f"Jira was not reachable ({e}); the ticket itself was not checked")
     elif res.key and not (base and user and token):
-        res.warnings.append("no Jira credentials given; the ticket's status, lane and blocking decisions were not checked")
+        res.warnings.append("no Jira credentials given; the ticket's status, execution label and blocking decisions were not checked")
 
     lines = ["## Work-system PR check", ""]
     if res.exempt:

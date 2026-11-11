@@ -29,7 +29,6 @@ harnesses/team-default/
   native/claude-code/
     settings.json                    hooks + deny rules, written to ~/.claude/settings.json
     hooks/guard_readonly.py          PreToolUse: blocks mutating kubectl/helm/gcloud and credential dumps
-  native/codex/ai-dlc-workflow/      the plugin's Codex form (same skills, hooks, AGENTS fragment), native components
   plugins/team-harness/              a Claude Code directory marketplace (hangar#221 layout)
     .claude-plugin/marketplace.json  lists exactly the lock's plugins of this marketplace
     ai-dlc-workflow/                 the ai-dlc workflow plugin, pinned as one component
@@ -47,8 +46,9 @@ harnesses/work-default/
   CLAUDE.md, AGENTS.md               how the agent works across a service's infra, database, code and deploy repos
   skills/
     change-set/SKILL.md              plan across /workspace/<role>, keep each repo safe on its own, say what depends on what
-    jira-ticket/SKILL.md             read the ticket and comment; hangar moves it through the workflow
-    github-pr/SKILL.md               the per-repo PR description; hangar opens, links and lands the PRs
+    jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml
+    github-pr/SKILL.md               the per-repo PR description; hangar opens, links and lands the PRs; never merge
+    release-approvals/SKILL.md       the company SDLC: SRE ticket linking the PR, infosec ticket, drafted Symphony review request
   native/claude-code/
     settings.json                    hooks + deny rules
     hooks/guard_work.py              PreToolUse: no terraform apply or real backends, no shared databases, no
@@ -103,14 +103,31 @@ The rules are enforced in layers, each catching what the one before can't:
 
 | Layer | Where | Holds for | What it does |
 | --- | --- | --- | --- |
-| Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work), `work-docs` (which doc goes where, the `Docs:` line) |
-| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, and any tracker transition or destructive call |
-| PR check | [`actions/work-system-pr`](actions/work-system-pr/README.md) | **every** PR, from any surface or tool, Codex and humans included | title key, `Jira:` line, `Docs:` line, `Decision:` → ADR; with a read-only Jira token, the ticket is open, laned and not blocked by an open Decision |
+| Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work; a ruling is drafted for confirmation), `work-docs` (which doc goes where, the `Docs:` line), `github-pr` (who opens it, the contract, the merge rule), and for work-default `release-approvals` |
+| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, any tracker transition or destructive call, `exec:agent`, `gh pr merge --admin`, and any merge where the profile says never |
+| PR check | [`actions/work-system-pr`](actions/work-system-pr/README.md) | **every** PR, from any surface or tool, Codex and humans included | title key, `Jira:` line, `Docs:` line, `Decision:` → ADR; with a read-only Jira token, the ticket is open, has an execution label and is not blocked by an open Decision |
 | Tracker automation | Jira, configured by hand | every ticket | statuses move on branch created, PR opened, PR merged and Decision answered (cabinet `docs/WORK-SYSTEM.md`) |
 | Behavior specs | [`flightdeck/specs/work-system.yaml`](flightdeck/specs/work-system.yaml) | hangar runs | measure what no hook can see and catch a layer that drifted |
 
-The layer is edited once, in `shared/work-system/`, and copied into each harness with `scripts/sync_shared.py`;
-CI fails when a copy differs (`--check`), so every harness pins the same bytes. `team-default` does not carry it: it is
+The layer is edited once, in `shared/work-system/`, and rendered into each harness with `scripts/sync_shared.py`;
+CI fails when a copy differs or a placeholder is unfilled (`--check`). What differs between harnesses is a
+`{{placeholder}}` filled from `shared/work-system/profiles/<harness>.yaml`, never text written into a shared file:
+
+| Parameter | suite-default (personal) | work-default (company) |
+| --- | --- | --- |
+| Who rules on Decisions | Sean | the ticket's owner (assignee, else reporter) |
+| How a Decision is filed | work type Decision with its fields | the Decision type if the project has one, else a Task labelled `type:decision` |
+| Knowledge base | `seanmkoval.atlassian.net`, space SD (Second brain) | the company site and space, set by the company overlay; no page is written until it is |
+| Merge | agents may merge their own PR on green checks, never `--admin` | never: SRE approves or merges, hangar lands change sets; the hook refuses `gh pr merge` |
+| Approval steps | none beyond checks | `release-approvals`: SRE ticket linking the PR, infosec ticket, drafted (never posted) Symphony review request |
+| The wall | refuses `origin: work` and company content | employer content never leaves company systems and approved tools |
+
+Lanes are projects (Jira epics). Who executes a ticket is its execution label, `exec:agent|pair|human`; the older
+`lane:*` names are accepted by the hook, the PR check and the behaviour specs until Jira is relabelled. A ruling on a
+Decision is drafted into Chosen and Rationale by the agent, with the tickets it would move listed for the owner, who
+confirms and moves them: agents still never transition. A ready ticket follows
+[`templates/ticket.md`](templates/ticket.md) (Goal, Acceptance criteria, Verify, Out of scope, Governing ADR/spec),
+which the `jira-ticket` skill ships as `ticket-template.md`. `team-default` does not carry it: it is
 the pre-registered A/B example and stays as registered.
 
 Where each record goes, and the Jira filters and automation that keep it tidy, are in
@@ -168,8 +185,11 @@ flowchart LR
    underpowered, `stable` stays where it was, and the report says so.
 
 This repository's history shows the first round: commit one is `r1` (no plugin, `stable`), commit two adds the
-plugin as `r2` (`candidate`), `r3` refreshes it from ai-dlc main with its Codex form, and `r4` moves it into hangar#221's
-marketplace layout (`candidate`).
+plugin as `r2` (`candidate`), `r3` refreshes it from ai-dlc main with its Codex form, `r4` moves it into hangar#221's
+marketplace layout, and `r5` (`candidate`) drops the unused Codex form and marks team-default's `jira-ticket` as the
+example's own status rules (KAN-324). The `team-default` environment now renders r5 without the plugin rather than r1
+byte for byte; the arms still differ only by the plugin. `flightdeck/decision.yaml` names r1 and r4, so confirm the
+move before trial 1.
 
 ## The ai-dlc workflow plugin
 
@@ -180,7 +200,7 @@ plugin ([ai-dlc#191](https://github.com/Sean-Koval/ai-dlc/issues/191),
 | Channel | Lock | Plugin |
 | --- | --- | --- |
 | `stable` | r1 | not a component (off) |
-| `candidate` | r4 | `plugin:ai-dlc-workflow@team-harness`, `enabled: true` (on), plus its Codex form as `native:codex/ai-dlc-workflow/*` |
+| `candidate` | r5 | `plugin:ai-dlc-workflow@team-harness`, `enabled: true` (on) |
 
 Both paths are generated by ai-dlc's `scripts/build_workflow_plugin.py` (digests in the plugin's `plugin.lock.json`,
 source commit in the lock component's `source`) and refreshed by PR with ai-dlc's
@@ -188,11 +208,10 @@ source commit in the lock component's `source`) and refreshed by PR with ai-dlc'
 edits, followed by `scripts/relock.py` and a `candidate` move. Don't edit them by hand. The plugin keeps
 `defaultEnabled: false` and the lock keeps `plugins: {autoUpdate: false}`.
 
-The Codex form under `native/codex/ai-dlc-workflow/` is pinned so a Codex arm can carry the same treatment. It works as
-a Codex local plugin (`.codex-plugin/plugin.json`) or, as mapped here, under `~/.codex/ai-dlc-workflow/` with its
-`hooks.json` merged into `~/.codex/hooks.json`. This harness's runtime is Claude Code, so `render_envs.py` does not put
-it in the environments yet, and Codex runs its hooks only after they are trusted (ai-dlc's plugin README records the
-Codex 0.162.1 spike).
+The plugin's Codex form (`native/codex/ai-dlc-workflow/`) was pinned in r3 and r4 for a Codex arm that never ran:
+this harness's runtime is Claude Code and `render_envs.py` never installed it, so it changed neither arm. r5 drops it
+(KAN-324). If a Codex arm is ever registered, re-add it with ai-dlc's publisher in that experiment's own revision.
+After a plugin refresh, delete the regenerated `native/codex/` until then.
 
 What works today and what waits on hangar:
 

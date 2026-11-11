@@ -1,0 +1,36 @@
+# work-default: a company's services on the company's own Atlassian site.
+# Fills the {{placeholders}} in shared/work-system/ for this harness (scripts/sync_shared.py).
+#
+# kb_site and kb_space are placeholders on purpose: this is a public example, and the company overlay replaces them
+# with the real site and space before the harness is used. Until it does, the skills write no Confluence page. They
+# are never defaulted to another site.
+params:
+  owner: "the ticket's owner"
+  tracker: "the team's Jira project on the company's Atlassian site"
+  kb_site: "COMPANY-SITE.atlassian.net"
+  kb_space: "COMPANY-SPACE"
+  kb_notes: "the team's engineering notes page"
+  kb_research: "the team's research or design page"
+  kb_decisions: "the team's decision records page"
+  wall: >-
+    Employer content (tickets, pages, code, logs, meeting transcripts, Symphony chat) stays on the company's systems
+    and in tools the company approved on the work machine. Never write it to any other Atlassian site, to Notion, to a
+    personal notes vault, or to any personal sync or backup, and never tag it for a personal system. If the knowledge-base site or
+    space this harness names still reads COMPANY-SITE or COMPANY-SPACE, the company overlay was not applied: write no page, and say
+    so in the PR.
+  decision_filing: >-
+    Create the question in the work ticket's project, under the same epic. If the project has a **Decision** work
+    type, use it and fill its fields. If it does not, create a **Task** labelled `type:decision` and put each field
+    below as a heading in its description:
+  decision_labels: >-
+    `exec:human`, the work ticket's `repo:` or component label, and `type:decision` when it is a Task; assign it to
+    the ticket's owner (its assignee, otherwise its reporter)
+  merge_mode: "never"
+  merge_rule: >-
+    **Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. SRE approves (or
+    merges) the PR after reviewing the SRE ticket that links it (`release-approvals`); hangar lands change sets only
+    after each repository's own approvers approve. The hook refuses `gh pr merge`.
+  approvals: >-
+    Every PR goes through the company's review steps: use the `release-approvals` skill once the PR is open (an SRE
+    ticket that links the PR, an infosec ticket that links the repository, and a drafted review request for the
+    team's Symphony room that a person posts).

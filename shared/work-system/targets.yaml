@@ -1,10 +1,19 @@
 # Which harnesses carry the shared work-system layer, and where each piece lands in them.
-# scripts/sync_shared.py copies shared/work-system/ into these paths; `--check` (CI) fails on any difference, so the
-# layer is edited once, here, and every harness pins the same bytes.
+# scripts/sync_shared.py renders shared/work-system/ into these paths with each harness's profile and copies the
+# result; `--check` (CI) fails on any difference or on a placeholder the profile does not fill, so the layer is edited
+# once, here, and every harness pins the rendering of the same source.
 #
-# team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), and its stable and
-# candidate stay as they were registered.
-skills: [jira-ticket, decision-ticket, work-docs, work-start]
+# A shared file may hold `{{name}}` placeholders. Each harness's profile (profiles/<harness>.yaml, `params:`) fills
+# them: who owns decisions, how a Decision is filed, which Atlassian site and space hold knowledge, the merge rule and
+# the approval steps. Nothing person- or company-specific is written into a shared file itself.
+#
+# team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
+skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
 hook_command: python3 "$HOME/.claude/hooks/guard_work_system.py"
-harnesses: [suite-default, work-default]
+harnesses:
+  suite-default:
+    profile: profiles/suite-default.yaml
+  work-default:
+    profile: profiles/work-default.yaml
+    skills: [release-approvals]           # in addition to the list above

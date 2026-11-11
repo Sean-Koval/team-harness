@@ -3,7 +3,6 @@
   "permissions": {
     "deny": [
       "Bash(git push --force:*)",
-      "Bash(gh pr merge:*)",
       "Read(~/.git-credentials)"
     ]
   },
@@ -13,7 +12,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Suite harness: no edit before a ticket key (jira-ticket, work-start); questions for Sean become Decision tickets (decision-ticket); docs in the same PR (work-docs); PR title KEY: and Jira/Docs lines (github-pr). Agents never move tickets.'",
+            "command": "echo 'Suite harness: no edit before a ticket key (jira-ticket, work-start); questions for Sean become Decision tickets (decision-ticket); docs in the same PR (work-docs); PR title KEY: and Jira/Docs lines (github-pr). Agents never move tickets; merge your own PR only when checks are green and no review was asked for.'",
             "timeout": 5
           }
         ]
