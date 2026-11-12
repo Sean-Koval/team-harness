@@ -276,7 +276,9 @@ def test_check_reports_a_newer_revision(tmp_path, capsys):
     mfile.write_text(json.dumps(m))
     capsys.readouterr()
     assert user(WORK, tmp_path, "--check") == 1
-    assert "newer harness revision: r3" in capsys.readouterr().out
+    # the revision the checkout's lock pins, so the test holds when the harness is bumped
+    lock_rev = yaml.safe_load((WORK / "harness.lock").read_text())["revision"]
+    assert f"newer harness revision: r{lock_rev}" in capsys.readouterr().out
 
 
 def test_uninstall_leaves_edited_files(tmp_path, capsys):
