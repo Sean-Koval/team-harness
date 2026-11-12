@@ -3,9 +3,15 @@
 # harness.lock pins the *names* (MCP servers, endpoints, header names); this file says where each value comes from,
 # still by name: `${VAR}` references that hangar fills at claim from the credential named under `secrets`. No values
 # live in this repository. Ask your hangar admin to create the two credentials.
+#
+# Credentials follow ai-dlc's rules (docs/design/jira-cloud.md, agents/providers/jira-cloud.md): values live only in
+# the secret store and the process environment, and this file holds names. An Atlassian credential is either an
+# externally managed OAuth bearer token or a personal API token *with scopes*, sent as Basic auth through Atlassian's
+# Cloud gateway (here the remote MCP endpoint the lock pins), on Jira Cloud. No other form is accepted, and a
+# credential is used only after the organisation approves the method.
 secrets:                                       # ENV_VAR: hangar credential name
   GITHUB_MCP_AUTHORIZATION: github-mcp         # "Bearer <token>": read access to the repos; hangar opens the PRs
-  ATLASSIAN_MCP_AUTHORIZATION: atlassian-mcp   # "Basic <base64 email:api-token>": Jira and Confluence, one site
+  ATLASSIAN_MCP_AUTHORIZATION: atlassian-mcp   # "Basic <base64 email:scoped-api-token>" via the gateway, one site
 mcp:
   github:
     headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}

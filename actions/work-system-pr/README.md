@@ -30,7 +30,9 @@ here (the harness hook in `shared/work-system/` only catches them earlier). See 
    `edited` matters: fixing the title or body re-runs the check without a new commit.
 2. Copy [`templates/pull_request_template.md`](../../templates/pull_request_template.md) to `.github/`.
 3. Make `work-system / pr` a required status check on `main` (branch protection or a ruleset).
-4. Optional, for the ticket check: a Jira API token from an account that can only browse the project, stored as the two
-   secrets. Without them the check still runs rules 1-5 and says the ticket was not checked.
+4. Optional, for the ticket check: an organisation-approved personal Jira API token with scopes (read scopes only),
+   from an account that can only browse the project, stored with its account email as the two secrets. Without them the
+   check still runs rules 1-5 and says the ticket was not checked.
 
-At work, set `jira-base-url` to the company site and `key-pattern` if keys look different.
+At work, set `jira-base-url` to the company site and `key-pattern` if keys look different. No static Jira credential
+is used at work today (KAN-369), so leave `jira-user` and `jira-token` unset there; the check runs rules 1-5.

@@ -4,9 +4,19 @@
 # still by name: `${VAR}` references that hangar fills at claim from the credential named under `secrets`. No values
 # live in this repository. Ask your hangar admin to create the two credentials (in the company overlay they are
 # files mounted from your secret manager).
+#
+# Credentials follow ai-dlc's rules (docs/design/jira-cloud.md, agents/providers/jira-cloud.md): values live only in
+# the secret store and the process environment, and this file holds names. An Atlassian credential is either an
+# externally managed OAuth bearer token or a personal API token *with scopes*, sent as Basic auth through Atlassian's
+# Cloud gateway (here the remote MCP endpoint the lock pins), on Jira Cloud. No other form is accepted, and a
+# credential is used only after the organisation approves the method.
+#
+# At work no static Jira credential is used today (KAN-369): the session's own Atlassian MCP login does the Jira work,
+# and that login neither supplies nor replaces a lifecycle credential. `jira-mcp` stays declared so the lock's binding
+# renders; leave it unset until a Jira credential method is approved.
 secrets:                                   # ENV_VAR: hangar credential name
   GITHUB_MCP_AUTHORIZATION: github-mcp     # "Bearer <token>": read access to the service repos; hangar opens the PRs
-  JIRA_MCP_AUTHORIZATION: jira-mcp         # "Basic <base64 email:api-token>", or "Bearer <PAT>" on Data Center
+  JIRA_MCP_AUTHORIZATION: jira-mcp         # "Basic <base64 email:scoped-api-token>" via the gateway; unused (KAN-369)
 mcp:
   github:
     headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}

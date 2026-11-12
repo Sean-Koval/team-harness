@@ -87,9 +87,11 @@ python3 scripts/install_local.py harnesses/work-default --scope project --target
 ```
 
 Use project scope, one repo at a time, until KAN-367 lands; user scope puts the guards on every session. Run the two
-`claude mcp add` lines the install prints (GitHub and Jira), with each credential from your secret manager. Then add
-the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole pass
-without it.
+`claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
+needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session, and that login does
+the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does not stand in for it.
+Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole
+pass without it.
 
 **Step 3. Capture tools (hangar import and flightdeck).**
 
@@ -166,7 +168,8 @@ Copilot's store and vault, and the harness hooks.
 
 - Model traffic: code, ticket text and transcripts go to the model provider.
 - The Jira and GitHub MCP connections the install prints. An Atlassian admin may need to allow the remote MCP.
-- The PR check's read-only Jira token, stored as a CI secret.
+- No PR-check Jira token for now (KAN-369), so the ticket check is off at work. Once the organisation approves a
+  method, it is a personal Jira API token with scopes (read scopes only), stored as a CI secret.
 - Off by default until KAN-214: a cloud flightdeck data plane, `report post`, `ingest github`, and any hangar server.
 
 Never send work content to a personal tracker or knowledge base.

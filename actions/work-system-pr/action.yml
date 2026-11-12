@@ -29,10 +29,11 @@ inputs:
     description: Jira site, e.g. https://example.atlassian.net (optional; with user and token enables the ticket check)
     default: ""
   jira-user:
-    description: Jira account email for a read-only API token (optional)
+    description: Email of the account that owns the scoped Jira API token (optional)
     default: ""
   jira-token:
-    description: Read-only Jira API token (optional; pass from a secret)
+    description: >-
+      Organisation-approved personal Jira API token with scopes, read scopes only (optional; pass from a secret)
     default: ""
 runs:
   using: composite
