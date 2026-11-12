@@ -174,19 +174,32 @@ digest.
 
 ## Run it on a laptop
 
-Claude Code on your own machine can carry the same harness, pinned to the same lock:
+Claude Code on your own machine can carry the same harness, pinned to a channel's lock. For a work harness, install
+it into each work repository (`project` scope):
 
 ```sh
-python scripts/install_local.py harnesses/work-default --scope user              # the plan; writes nothing
-python scripts/install_local.py harnesses/work-default --scope user --apply      # into ~/.claude
-python scripts/install_local.py harnesses/work-default --scope user --check      # exit 1 on drift or a newer revision
+cd ~/src/svc
+python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project            # the plan
+python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --apply    # into .claude/
+python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --check    # drift, or stable moved
 ```
 
-`--scope project --target DIR` writes into `DIR/.claude/` instead. The script copies the skills, hooks and guide, and
-merges the hooks and deny rules into your `settings.json`. It never overwrites a file it didn't install, and keeps
-your own `CLAUDE.md` (it prints the one `@import` line to add). `.claude/team-harness.json` records what it wrote, so
-`--uninstall` removes only that. It prints the `claude mcp add` commands with credential placeholders; it never
-handles a credential.
+It installs `stable` by default (`--channel candidate` to try the next revision). When the checkout's lock isn't that
+channel's, it installs the channel's revision from git history. It refuses a checkout with uncommitted changes in the
+harness unless you pass `--allow-dirty`.
+
+Why project scope: work-default's guards are written for hangar's sandbox. `guard_work.py` blocks `terraform plan`,
+`kubectl exec` and `env`, and its `/workspace/deploy` rules match nothing on a laptop. In `user` scope
+(`~/.claude/`) they would apply to every session on the machine. `user` scope suits suite-default.
+
+The script copies the skills and hooks, and merges the hooks and deny rules into `settings.json`. A symlinked
+`settings.json` is written through to its target. The guide goes to `.claude/team-harness/<harness>.md`, and one
+`@import` line is added to `CLAUDE.md`, so your own edits there never block an upgrade.
+
+It never overwrites a file it didn't install. `.claude/team-harness.json` records what it wrote, so `--uninstall`
+removes only that, the `@import` line included. The record names each settings entry before `settings.json` is
+written, so an interrupted install can still be undone. It prints the `claude mcp add` commands with credential
+placeholders; it never handles a credential.
 
 ## From change to promotion
 

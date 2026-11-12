@@ -20,11 +20,29 @@ def run(*args) -> int:
     return il.main([str(a) for a in args])
 
 
+def channel_of(harness: Path) -> str:
+    """The channel whose digest is this checkout's lock (candidate, on main), or `checkout` for a copied harness."""
+    if harness.parent.parent != ROOT:
+        return "checkout"
+    chans = yaml.safe_load((ROOT / "channels.yaml").read_text())
+    lock = yaml.safe_load((harness / "harness.lock").read_text())
+    return next(c for c, d in chans[lock["name"]].items() if d == il.harness_digest(lock))
+
+
+def _defaults(harness, mode) -> list:
+    """Install the channel the checkout holds, and let a working tree with local edits through: the channel and
+    dirty-checkout rules have their own tests below."""
+    extra = [] if "--channel" in mode else ["--channel", channel_of(Path(harness))]
+    return [*extra, *([] if "--allow-dirty" in mode or "--strict" in mode else ["--allow-dirty"])]
+
+
 def user(harness, home, *mode) -> int:
+    mode = tuple(m for m in mode if m != "--strict") + tuple(_defaults(harness, mode))
     return run(harness, "--scope", "user", "--home", home, *mode)
 
 
 def project(harness, target, *mode) -> int:
+    mode = tuple(m for m in mode if m != "--strict") + tuple(_defaults(harness, mode))
     return run(harness, "--scope", "project", "--target", target, *mode)
 
 
@@ -103,7 +121,8 @@ def test_fresh_user_install(tmp_path, harness):
     assert user(harness, tmp_path, "--apply") == 0
     base = tmp_path / ".claude"
     lock = yaml.safe_load((harness / "harness.lock").read_text())
-    assert (base / "CLAUDE.md").read_bytes() == (harness / "CLAUDE.md").read_bytes()
+    assert (base / f"team-harness/{lock['name']}.md").read_bytes() == (harness / "CLAUDE.md").read_bytes()
+    assert (base / "CLAUDE.md").read_text() == f"@team-harness/{lock['name']}.md\n"
     for c in lock["components"]:
         if c["id"].startswith("skill:"):
             for f in (harness / c["path"]).rglob("*"):
@@ -118,7 +137,8 @@ def test_fresh_user_install(tmp_path, harness):
     m = manifest(base)
     assert (m["harness"], m["revision"], m["scope"]) == (lock["name"], lock["revision"], "user")
     assert m["harness_digest"] == il.harness_digest(lock)
-    assert set(m["files"]) == set(snapshot(base)) - {il.MANIFEST, "settings.json"}
+    assert m["channel"] == channel_of(harness) and "path" in m["source"]
+    assert set(m["files"]) == set(snapshot(base)) - {il.MANIFEST, "settings.json", "CLAUDE.md"}
     assert all(m["files"][rel] == il.sha(data) for rel, data in snapshot(base).items() if rel in m["files"])
 
 
@@ -188,21 +208,38 @@ def test_same_bytes_are_adopted(tmp_path, capsys):
     assert "hooks/guard_work_system.py" in manifest(tmp_path / ".claude")["files"]
 
 
-def test_own_guide_is_kept_and_the_harness_guide_goes_beside_it(tmp_path, capsys):
+def test_own_guide_gets_one_import_line_and_edits_never_block_an_upgrade(tmp_path, capsys):
     guide = tmp_path / ".claude/CLAUDE.md"
     guide.parent.mkdir(parents=True)
-    guide.write_text("# my own instructions\n")
+    guide.write_text("# my own instructions")  # no trailing newline
     assert user(WORK, tmp_path, "--apply") == 0
-    out = capsys.readouterr().out
-    assert guide.read_text() == "# my own instructions\n"
+    assert "CLAUDE.md + @team-harness/work-default.md" in capsys.readouterr().out
+    assert guide.read_text() == "# my own instructions\n@team-harness/work-default.md\n"
     beside = tmp_path / ".claude/team-harness/work-default.md"
     assert beside.read_bytes() == (WORK / "CLAUDE.md").read_bytes()
-    assert "@team-harness/work-default.md" in out
-    guide.write_text("# my own instructions\n@team-harness/work-default.md\n")
+    m = manifest(tmp_path / ".claude")
+    assert m["guide"] == "team-harness/work-default.md" and "CLAUDE.md" not in m["files"]
+    # Claude Code (or you) edits CLAUDE.md: re-apply and check are still clean, and nothing is added twice
+    guide.write_text(guide.read_text() + "- remember: tests first\n")
     assert user(WORK, tmp_path, "--apply") == 0
-    assert "Add this line" not in capsys.readouterr().out
-    assert manifest(tmp_path / ".claude")["guide"] == "team-harness/work-default.md"
-    assert "CLAUDE.md" not in manifest(tmp_path / ".claude")["files"]
+    assert user(WORK, tmp_path, "--check") == 0
+    assert guide.read_text().count("@team-harness/work-default.md") == 1
+    # the line removed by hand is drift, and re-apply puts it back
+    guide.write_text("# my own instructions\n")
+    capsys.readouterr()
+    assert user(WORK, tmp_path, "--check") == 1
+    assert "no longer has the line @team-harness/work-default.md" in capsys.readouterr().out
+    assert user(WORK, tmp_path, "--apply") == 0 and user(WORK, tmp_path, "--check") == 0
+    # uninstall takes the line out and leaves the rest of the file alone
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert guide.read_text() == "# my own instructions\n"
+
+
+def test_import_line_in_a_created_claude_md_goes_with_the_install(tmp_path):
+    assert user(SUITE, tmp_path, "--apply") == 0
+    assert (tmp_path / ".claude/CLAUDE.md").read_text() == "@team-harness/suite-default.md\n"
+    assert user(SUITE, tmp_path, "--uninstall") == 0
+    assert not (tmp_path / ".claude/CLAUDE.md").exists()
 
 
 def test_one_harness_per_scope(tmp_path, capsys):
@@ -268,6 +305,22 @@ def test_check_detects_drift(tmp_path, capsys):
     assert (base / "skills/github-pr/SKILL.md").read_text() == "edited\n"
 
 
+def test_check_with_a_wrong_path_says_so(tmp_path, capsys):
+    assert user(tmp_path / "no-such-harness", tmp_path, "--check") == 2
+    err = capsys.readouterr().err
+    assert "is not a harness directory" in err and "Traceback" not in err
+    assert user(tmp_path / "no-such-harness", tmp_path, "--apply") == 2
+    assert user(tmp_path / "no-such-harness", tmp_path, "--uninstall") == 2
+
+
+def test_os_error_is_a_message_not_a_traceback(tmp_path, capsys, monkeypatch):
+    def boom(*_a, **_k):
+        raise PermissionError(13, "Permission denied", str(tmp_path / ".claude/skills"))
+    monkeypatch.setattr(il, "_write", boom)
+    assert user(WORK, tmp_path, "--apply") == 2
+    assert "Permission denied" in capsys.readouterr().err
+
+
 def test_check_reports_a_newer_revision(tmp_path, capsys):
     assert user(WORK, tmp_path, "--apply") == 0
     mfile = tmp_path / ".claude" / il.MANIFEST
@@ -301,7 +354,9 @@ def test_project_scope(tmp_path):
     base = target / ".claude"
     assert not home.exists()
     assert (target / "CLAUDE.md").read_text() == "# the project's own guide\n"
-    assert (base / "CLAUDE.md").read_bytes() == (WORK / "CLAUDE.md").read_bytes()
+    assert (base / "team-harness/work-default.md").read_bytes() == (WORK / "CLAUDE.md").read_bytes()
+    assert (base / "CLAUDE.md").read_text() == "@team-harness/work-default.md\n"
+    assert "path" not in manifest(base)["source"]  # a project's manifest may be committed: no machine path
     assert (base / "skills/change-set/SKILL.md").is_file() and (base / "hooks/guard_work.py").is_file()
     cmds = [hk["command"] for g in settings(base)["hooks"]["PreToolUse"] for hk in g["hooks"]]
     assert cmds == ['python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard_work.py',
@@ -331,3 +386,190 @@ def test_mcp_and_plugins_are_never_written(tmp_path):
     base = tmp_path / ".claude"
     assert not (tmp_path / ".claude.json").exists() and not (base / "plugins").exists()
     assert "mcpServers" not in settings(base)
+
+
+# --- KAN-367: reversible on failure, channels, dirty checkouts, symlinks, edited hook groups ---------------------
+
+MINE = {
+    "model": "my-model",
+    "enabledPlugins": {"mine@local": True},
+    "permissions": {"deny": ["Read(./secrets/**)"]},
+    "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "my-hook"}]}]},
+}
+
+
+def test_failure_between_manifest_and_settings_stays_reversible(tmp_path, monkeypatch):
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_text(json.dumps(MINE))
+    real = il._write
+
+    def crash_after_settings(f, data, mode=None):
+        real(f, data, mode)
+        if f.name == "settings.json":
+            raise KeyboardInterrupt  # killed after settings.json, before the final manifest
+
+    monkeypatch.setattr(il, "_write", crash_after_settings)
+    with pytest.raises(KeyboardInterrupt):
+        user(WORK, tmp_path, "--apply")
+    monkeypatch.setattr(il, "_write", real)
+    entries = manifest(base)["settings"]["entries"]
+    added = [r for r in entries if r["section"] == "permissions"]
+    assert added and all(r["value"] != "Read(./secrets/**)" for r in added)  # the person's own rule is not claimed
+    # a re-run finishes the install and takes none of the merged entries as the person's own
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert manifest(base)["settings"]["entries"] == entries
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert settings(base) == MINE
+
+
+def test_failure_before_settings_leaves_them_untouched_and_uninstall_clean(tmp_path, monkeypatch):
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_text(json.dumps(MINE))
+    real = il._write
+
+    def crash_on_settings(f, data, mode=None):
+        if f.name == "settings.json":
+            raise KeyboardInterrupt
+        real(f, data, mode)
+
+    monkeypatch.setattr(il, "_write", crash_on_settings)
+    with pytest.raises(KeyboardInterrupt):
+        user(WORK, tmp_path, "--apply")
+    monkeypatch.setattr(il, "_write", real)
+    assert settings(base) == MINE
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert settings(base) == MINE
+
+
+def test_symlinked_settings_are_written_through(tmp_path):
+    dotfiles = tmp_path / "dotfiles/claude-settings.json"
+    dotfiles.parent.mkdir()
+    dotfiles.write_text(json.dumps(MINE))
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").symlink_to(dotfiles)
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert (base / "settings.json").is_symlink()
+    assert "Bash(gh pr merge:*)" in json.loads(dotfiles.read_text())["permissions"]["deny"]
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert (base / "settings.json").is_symlink() and json.loads(dotfiles.read_text()) == MINE
+
+
+def test_symlinked_claude_md_is_written_through(tmp_path):
+    dotfiles = tmp_path / "dotfiles/CLAUDE.md"
+    dotfiles.parent.mkdir()
+    dotfiles.write_text("# mine\n")
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "CLAUDE.md").symlink_to(dotfiles)
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert (base / "CLAUDE.md").is_symlink() and "@team-harness/work-default.md" in dotfiles.read_text()
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert dotfiles.read_text() == "# mine\n"
+
+
+def test_edited_harness_hook_group_is_not_added_twice(tmp_path, capsys):
+    assert user(WORK, tmp_path, "--apply") == 0
+    base = tmp_path / ".claude"
+    s = settings(base)
+    s["hooks"]["PreToolUse"][0]["matcher"] = "Bash"
+    (base / "settings.json").write_text(json.dumps(s))
+    capsys.readouterr()
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert "it is yours now and is not added again" in capsys.readouterr().out
+    cmd = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    groups = [g for g in settings(base)["hooks"]["PreToolUse"] if g["hooks"][0]["command"] == cmd]
+    assert len(groups) == 1 and groups[0]["matcher"] == "Bash"
+
+
+def test_user_scope_says_where_a_work_harness_belongs(tmp_path, capsys):
+    assert user(WORK, tmp_path) == 0
+    assert "a work harness belongs in --scope project" in capsys.readouterr().out
+    assert project(WORK, tmp_path / "svc") == 0
+    assert "a work harness belongs" not in capsys.readouterr().out
+
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                           "-c", "commit.gpgsign=false", *args], capture_output=True, text=True, check=True).stdout
+
+
+def channel_repo(tmp_path: Path) -> tuple[Path, Path, dict]:
+    """A git repo with suite-default at r2 (stable) and then r3 (candidate), as a team-harness checkout lays it out."""
+    repo = tmp_path / "repo"
+    h = copy_harness(tmp_path)
+    _git(repo, "init", "-q")
+    r2 = il.harness_digest(yaml.safe_load((h / "harness.lock").read_text()))
+    (repo / "channels.yaml").write_text(yaml.safe_dump({"suite-default": {"stable": r2, "candidate": r2}}))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "r2")
+    skill = h / "skills/work-docs/SKILL.md"
+    skill.write_text(skill.read_text() + "\nr3 adds this line.\n")
+    repin(h, revision=3)
+    r3 = il.harness_digest(yaml.safe_load((h / "harness.lock").read_text()))
+    (repo / "channels.yaml").write_text(yaml.safe_dump({"suite-default": {"stable": r2, "candidate": r3}}))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "r3")
+    return repo, h, {"r2": r2, "r3": r3}
+
+
+def test_installs_the_stable_channel_from_git_history(tmp_path, capsys):
+    repo, h, d = channel_repo(tmp_path)
+    home = tmp_path / "home"
+    assert run(h, "--scope", "user", "--home", home, "--apply") == 0  # the default: stable, which is r2
+    out = capsys.readouterr().out
+    assert "suite-default@stable: suite-default r2" in out and "from git history" in out
+    base = home / ".claude"
+    m = manifest(base)
+    assert (m["channel"], m["revision"], m["harness_digest"]) == ("stable", 2, d["r2"])
+    assert "r3 adds this line." not in (base / "skills/work-docs/SKILL.md").read_text()
+    assert run(h, "--scope", "user", "--home", home, "--check") == 0
+    # promotion moves stable: --check reports it, --apply upgrades
+    (repo / "channels.yaml").write_text(yaml.safe_dump({"suite-default": {"stable": d["r3"], "candidate": d["r3"]}}))
+    _git(repo, "commit", "-qam", "promote r3")
+    capsys.readouterr()
+    assert run(h, "--scope", "user", "--home", home, "--check") == 1
+    out = capsys.readouterr().out
+    assert "newer harness revision: r3" in out and "on the stable channel" in out
+    assert run(h, "--scope", "user", "--home", home, "--apply") == 0
+    assert "r3 adds this line." in (base / "skills/work-docs/SKILL.md").read_text()
+    assert manifest(base)["revision"] == 3
+
+
+def test_candidate_installs_from_a_clean_checkout(tmp_path):
+    _, h, d = channel_repo(tmp_path)
+    home = tmp_path / "home"
+    assert run(h, "--scope", "user", "--home", home, "--channel", "candidate", "--apply") == 0
+    m = manifest(home / ".claude")
+    assert (m["channel"], m["revision"], m["harness_digest"]) == ("candidate", 3, d["r3"])
+    assert m["source"]["dirty"] is False
+
+
+def test_dirty_checkout_is_refused_unless_allowed(tmp_path, capsys):
+    _, h, _ = channel_repo(tmp_path)
+    home = tmp_path / "home"
+    (h / "NOTES.txt").write_text("a local note, not in the lock\n")
+    assert run(h, "--scope", "user", "--home", home, "--channel", "candidate", "--apply") == 2
+    assert "has uncommitted changes" in capsys.readouterr().err
+    assert not (home / ".claude").exists()
+    assert run(h, "--scope", "user", "--home", home, "--channel", "candidate", "--allow-dirty", "--apply") == 0
+
+
+def test_checkout_outside_git_is_refused_unless_allowed(tmp_path, capsys):
+    h = copy_harness(tmp_path)
+    assert run(h, "--scope", "user", "--home", tmp_path / "home", "--channel", "checkout", "--apply") == 2
+    assert "is not in a git checkout" in capsys.readouterr().err
+
+
+def test_unknown_or_unreachable_channel_is_refused(tmp_path, capsys):
+    repo, h, _ = channel_repo(tmp_path)
+    home = tmp_path / "home"
+    assert run(h, "--scope", "user", "--home", home, "--channel", "beta", "--apply") == 2
+    assert "has no suite-default@beta" in capsys.readouterr().err
+    (repo / "channels.yaml").write_text(yaml.safe_dump({"suite-default": {"stable": "sha256:" + "0" * 64}}))
+    assert run(h, "--scope", "user", "--home", home, "--apply") == 2
+    assert "neither this checkout's lock" in capsys.readouterr().err
+    assert not (home / ".claude").exists()

@@ -4,33 +4,42 @@
 hangar renders a harness into a sandbox's `~/.claude`; this does the same for a person's own machine, so a teammate
 running Claude Code locally gets the same skills, hooks, guide and deny rules as an agent in hangar.
 
-    python scripts/install_local.py harnesses/work-default --scope user                # print the plan (dry run)
-    python scripts/install_local.py harnesses/work-default --scope user --apply        # install or upgrade
-    python scripts/install_local.py harnesses/work-default --scope user --check        # exit 1 on drift
-    python scripts/install_local.py harnesses/work-default --scope user --uninstall
-    python scripts/install_local.py harnesses/work-default --scope project --target ~/src/svc --apply
+    python scripts/install_local.py harnesses/work-default --scope project --target ~/src/svc            # the plan
+    python scripts/install_local.py harnesses/work-default --scope project --target ~/src/svc --apply    # install
+    python scripts/install_local.py harnesses/work-default --scope project --target ~/src/svc --check    # drift?
+    python scripts/install_local.py harnesses/work-default --scope project --target ~/src/svc --uninstall
+    python scripts/install_local.py harnesses/suite-default --scope user --apply                         # ~/.claude
+
+Channels. It installs a channel from `channels.yaml` (`--channel`, default `stable`), never just whatever the checkout
+holds. When the checkout's lock is that channel's digest it installs from the checkout, which must be clean
+(`--allow-dirty` to override). Otherwise it finds the lock in the git history of `harness.lock` and installs that
+commit's harness directory. `--channel checkout` installs the checkout as it is (for trying a change).
 
 Scopes. `user` writes under `<home>/.claude/` (`--home`, default your home): skills to `skills/<name>/`, hooks to
-`hooks/`, the guide to `CLAUDE.md`. `project` writes the same under `<target>/.claude/` (`--target`, default the
-current directory) and rewrites hook commands from `$HOME/.claude/hooks/...` to
-`"$CLAUDE_PROJECT_DIR"/.claude/hooks/...`.
+`hooks/`. Its hooks and deny rules then apply to every Claude Code session on the machine, so a work harness, whose
+guards are written for hangar's sandbox, belongs in `project` scope in each work repository. `project` writes the
+same under `<target>/.claude/` (`--target`, default the current directory) and rewrites hook commands from
+`$HOME/.claude/hooks/...` to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/...`. The guide always goes to
+`team-harness/<harness>.md`, and one `@team-harness/<harness>.md` line is added to `CLAUDE.md` beside it (and removed on
+`--uninstall`), so edits to your `CLAUDE.md` never block an upgrade.
 
 What it never does:
 
 - Overwrite a file it didn't install, unless that file already holds the new bytes (it is then adopted). Any other
   clash refuses the whole install before anything is written.
-- Replace your own `CLAUDE.md`. The guide then goes to `team-harness/<harness>.md` beside it, and the plan prints the
-  one `@team-harness/<harness>.md` line to add to your `CLAUDE.md`.
+- Replace your own `CLAUDE.md`: it only adds (and on uninstall removes) the one `@import` line.
 - Drop your settings. `settings.json` is merged: the harness's hook groups and permission rules are added, your own
-  entries are kept, and only entries this script added are ever removed.
+  entries are kept, and only entries this script added are ever removed. The manifest names every entry it is about
+  to add before settings.json is written, so a failure part way stays reversible. A symlinked settings.json (your
+  dotfiles) is written through to its target.
 - Install from a checkout that doesn't match its lock: every pinned digest is checked first.
 - Touch MCP servers or credentials. It prints the `claude mcp add` commands for the lock's servers, with each
   credential as a `$VARIABLE` placeholder for you to fill from your secret manager. Plugins are printed the same way.
 - Install two harnesses into one scope: `--uninstall` the first (work and personal harnesses stay apart).
 
-The manifest `.claude/team-harness.json` records the harness, its revision and `harness_digest`, the source commit,
-the settings entries added and the SHA-256 of every file written. `--check` reports an edited or missing file, a
-removed settings entry, or a newer harness revision in the checkout. `--uninstall` removes only files whose digest
+The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the source
+commit, the settings entries added and the SHA-256 of every file written. `--check` reports an edited or missing file,
+a removed settings entry or `@import` line, or that the channel has moved to another revision. `--uninstall` removes only files whose digest
 still matches, leaving an edited file in place with a warning.
 
 Exit codes: 0 done or clean, 1 refused or drift, 2 bad input. Needs Python 3.10+ and PyYAML.
@@ -44,8 +53,10 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,7 +150,6 @@ class Harness:
     files: dict[str, tuple[bytes, int]] = field(default_factory=dict)  # path under .claude -> (bytes, mode)
     guide: bytes | None = None
     settings: dict[str, Any] = field(default_factory=dict)
-    channels: list[str] = field(default_factory=list)
     source: dict[str, Any] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)  # where the checkout differs from the lock
 
@@ -199,14 +209,93 @@ def load_harness(root: Path, scope: str) -> Harness:
                 h.files[cid[len(NATIVE):]] = (data, src.stat().st_mode & 0o777 if src.is_file() else 0o644)
     h.settings = _scoped_settings(h.settings, scope, src=root / "native" / RUNTIME / SETTINGS)
 
-    channels_file = root.parent.parent / "channels.yaml"
-    if channels_file.is_file():
-        chans = (yaml.safe_load(channels_file.read_text()) or {}).get(h.name) or {}
-        h.channels = sorted(k for k, v in chans.items() if v == h.digest)
     commit = _git(root, "rev-parse", "HEAD")
-    dirty = _git(root, "status", "--porcelain", "--", ".")
-    h.source = {"path": str(root.resolve()), "commit": commit, "dirty": bool(dirty) if dirty is not None else None}
+    dirty = _git(root, "status", "--porcelain", "--", ".", f"../../bindings/{h.name}.yaml")
+    h.source = {"commit": commit, "dirty": bool(dirty) if dirty is not None else None}
+    if scope == "user":  # a project's manifest may be committed: no machine path in it
+        h.source["path"] = str(root.resolve())
     return h
+
+
+# --- channels: which lock to install -----------------------------------------------------------------------------
+
+def _lock_at(root: Path) -> dict[str, Any]:
+    f = root / "harness.lock"
+    if not f.is_file():
+        raise Refused(f"{root} is not a harness directory: {f} is missing")
+    try:
+        lock = yaml.safe_load(f.read_text())
+    except (OSError, yaml.YAMLError) as e:
+        raise Refused(f"{f}: {e}") from None
+    if not isinstance(lock, dict) or not lock.get("name"):
+        raise Refused(f"{f}: not a harness lock")
+    return lock
+
+
+def channel_digest(root: Path, name: str, channel: str) -> str:
+    f = root.parent.parent / "channels.yaml"
+    try:
+        chans = ((yaml.safe_load(f.read_text()) or {}).get(name) or {}) if f.is_file() else {}
+    except (OSError, yaml.YAMLError) as e:
+        raise Refused(f"{f}: {e}") from None
+    if channel not in chans:
+        have = ", ".join(sorted(chans)) or "none"
+        raise Refused(f"{f} has no {name}@{channel} (channels: {have}); --channel checkout installs the checkout as is")
+    return str(chans[channel])
+
+
+@dataclass
+class Source:
+    root: Path  # the harness directory to install from
+    channel: str
+    digest: str  # the channel's harness_digest
+    revision: int | None
+    commit: str | None = None  # set when it came from the git history, not the working tree
+
+
+def resolve(root: Path, channel: str, scratch: Path) -> Source:
+    """Where `<harness>@<channel>` is: the checkout when its lock is the channel's digest, else the commit in the
+    git history of harness.lock whose lock is, extracted under `scratch`."""
+    lock = _lock_at(root)
+    if channel == "checkout":
+        return Source(root, channel, harness_digest(lock), int(lock.get("revision") or 0))
+    want = channel_digest(root, lock["name"], channel)
+    if harness_digest(lock) == want:
+        return Source(root, channel, want, int(lock.get("revision") or 0))
+    top = _git(root, "rev-parse", "--show-toplevel")
+    if top:
+        rel = root.resolve().relative_to(Path(top).resolve()).as_posix()
+        for commit in (_git(Path(top), "log", "--format=%H", "--", f"{rel}/harness.lock") or "").split():
+            try:
+                old = yaml.safe_load(_git(Path(top), "show", f"{commit}:{rel}/harness.lock") or "")
+            except yaml.YAMLError:
+                continue
+            if isinstance(old, dict) and harness_digest(old) == want:
+                return Source(_extract(Path(top), commit, rel, lock["name"], scratch), channel, want,
+                              int(old.get("revision") or 0), commit)
+    raise Refused(f"{lock['name']}@{channel} is {want}, which is neither this checkout's lock "
+                  f"(r{lock.get('revision')}, {harness_digest(lock)}) nor in its git history; fetch the full history "
+                  f"(git fetch --unshallow), or choose another --channel")
+
+
+def _extract(top: Path, commit: str, rel: str, name: str, scratch: Path) -> Path:
+    """`commit`'s harness directory (and its binding, when it had one) under scratch, laid out as in the repo."""
+    paths = [rel]
+    binding = f"bindings/{name}.yaml"
+    if _git(top, "cat-file", "-e", f"{commit}:{binding}") is not None:
+        paths.append(binding)
+    tar = scratch / "harness.tar"
+    with tar.open("wb") as fh:
+        r = subprocess.run(["git", "-C", str(top), "archive", "--format=tar", commit, "--", *paths], stdout=fh,
+                           check=False)
+    if r.returncode != 0:
+        raise Refused(f"git archive {commit} {rel} failed")
+    with tarfile.open(tar) as t:
+        if hasattr(tarfile, "data_filter"):
+            t.extractall(scratch / "repo", filter="data")
+        else:  # Python before the extraction filters: git archive writes no links out of the tree
+            t.extractall(scratch / "repo")  # noqa: S202
+    return scratch / "repo" / rel
 
 
 def _scoped_settings(s: dict[str, Any], scope: str, src: Path) -> dict[str, Any]:
@@ -285,7 +374,10 @@ class Plan:
     settings: dict[str, Any] | None = None  # the merged settings, None when unchanged
     records: list[dict[str, Any]] = field(default_factory=list)
     settings_created: bool = False
+    old_records: list[dict[str, Any]] = field(default_factory=list)  # the previous install's settings entries
+    old_files: dict[str, str] = field(default_factory=dict)
     guide_rel: str | None = None
+    guide_import: str | None = None  # the line CLAUDE.md needs, when it doesn't have it yet
     notes: list[str] = field(default_factory=list)
 
 
@@ -334,26 +426,18 @@ def plan_install(h: Harness, base: Path) -> Plan:
         raise Refused(f"{base} has {old['harness']} installed; run --uninstall with that harness first "
                       "(one harness per scope)")
     managed: dict[str, str] = (old or {}).get("files") or {}
+    p.old_files = dict(managed)
     want = dict(h.files)
 
-    # the guide: CLAUDE.md unless that is someone else's file, then beside it
+    # the guide: always beside CLAUDE.md, loaded by one @import line, so CLAUDE.md stays the person's own file
     if h.guide is not None:
+        p.guide_rel = f"team-harness/{h.name}.md"
+        want[p.guide_rel] = (h.guide, 0o644)
         cur = base / "CLAUDE.md"
-        mine = "CLAUDE.md" in managed
-        if not cur.exists() or cur.read_bytes() == h.guide or (mine and sha(cur.read_bytes()) == managed["CLAUDE.md"]):
-            p.guide_rel = "CLAUDE.md"
-        elif mine:
-            p.conflicts.append("CLAUDE.md: edited since this script installed it; restore it, or move your edits "
-                               "to another file and delete it, then run again")
-            p.guide_rel = "CLAUDE.md"
-        else:
-            p.guide_rel = f"team-harness/{h.name}.md"
-            line = f"@team-harness/{h.name}.md"
-            if line not in cur.read_text(errors="replace").splitlines():
-                p.notes.append(f"{cur} is your own, so the guide goes to {base / p.guide_rel}. Add this line to "
-                               f"{cur} to load it:\n      {line}")
-        if p.guide_rel and not any(c.startswith("CLAUDE.md:") for c in p.conflicts):
-            want[p.guide_rel] = (h.guide, 0o644)
+        if cur.is_dir():
+            p.conflicts.append("CLAUDE.md: is a directory")
+        elif not _imports(cur, _import_line(h.name)):
+            p.guide_import = _import_line(h.name)
 
     for rel, (data, _) in sorted(want.items()):
         f = base / rel
@@ -384,7 +468,8 @@ def plan_install(h: Harness, base: Path) -> Plan:
     cur_s = _read_settings(base)
     p.settings_created = cur_s is None if old is None else bool((old.get("settings") or {}).get("created"))
     s = copy.deepcopy(cur_s or {})
-    ours = [_unrecord(r) for r in ((old or {}).get("settings") or {}).get("entries") or []]
+    p.old_records = list(((old or {}).get("settings") or {}).get("entries") or [])
+    ours = [_unrecord(r) for r in p.old_records]
     new = _entries(h.settings)
     for e in ours:
         if e not in new and _remove(s, e):
@@ -394,6 +479,8 @@ def plan_install(h: Harness, base: Path) -> Plan:
             p.records.append(_record(e))
         elif e not in ours and _has(s, e):
             p.notes.append(f"settings.json already has {_describe(e)}; it stays yours")
+        elif e in ours and e[0] == "hooks" and _edited_group(s, e):
+            p.notes.append(f"settings.json: you edited {_describe(e)}; it is yours now and is not added again")
         else:
             _add(s, e)
             p.records.append(_record(e))
@@ -403,7 +490,49 @@ def plan_install(h: Harness, base: Path) -> Plan:
     return p
 
 
+def _commands(group: Any) -> set[str]:
+    return {hk.get("command") for hk in (group.get("hooks") or []) if isinstance(hk, dict)} \
+        if isinstance(group, dict) else set()
+
+
+def _edited_group(s: dict[str, Any], e: tuple[str, str, Any]) -> bool:
+    """A hook group this script added that is still there with the same commands, but edited (a matcher, a timeout)."""
+    cmds = _commands(e[2])
+    return bool(cmds) and any(_commands(g) == cmds for g in (s.get("hooks") or {}).get(e[1]) or [])
+
+
+def _import_line(name: str) -> str:
+    return f"@team-harness/{name}.md"
+
+
+def _imports(claude_md: Path, line: str) -> bool:
+    return claude_md.is_file() and line in claude_md.read_text(errors="replace").splitlines()
+
+
+def _add_import(claude_md: Path, line: str) -> None:
+    text = claude_md.read_text() if claude_md.is_file() else ""
+    if text and not text.endswith("\n"):
+        text += "\n"
+    _write(claude_md, (text + line + "\n").encode())
+
+
+def _remove_import(claude_md: Path, line: str, created: bool) -> bool:
+    if not claude_md.is_file():
+        return False
+    lines = claude_md.read_text().splitlines(keepends=True)
+    keep = [x for x in lines if x.rstrip("\r\n") != line]
+    if keep == lines:
+        return False
+    if created and not "".join(keep).strip():
+        claude_md.unlink()
+    else:
+        _write(claude_md, "".join(keep).encode())
+    return True
+
+
 def _write(f: Path, data: bytes, mode: int | None = None) -> None:
+    if f.is_symlink():  # settings.json or CLAUDE.md kept in dotfiles: write the file the link points at
+        f = f.resolve()
     f.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=f.parent, prefix=f".{f.name}.")
     try:
@@ -430,7 +559,7 @@ def _settings_bytes(s: dict[str, Any]) -> bytes:
     return (json.dumps(s, indent=2, ensure_ascii=False) + "\n").encode()
 
 
-def apply_install(h: Harness, p: Plan, scope: str) -> None:
+def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") -> None:
     want = dict(h.files)
     if p.guide_rel:
         want[p.guide_rel] = (h.guide or b"", 0o644)
@@ -444,15 +573,31 @@ def apply_install(h: Harness, p: Plan, scope: str) -> None:
             _prune(p.base, rel)
         else:
             digests[rel] = sha(want[rel][0])
+    old = read_manifest(p.base) or {}
+    guide_import = dict(old.get("guide_import") or {})
+    if p.guide_import:
+        claude_md = p.base / "CLAUDE.md"
+        guide_import = {"file": "CLAUDE.md", "line": p.guide_import,
+                        "created": bool(guide_import.get("created")) or not claude_md.exists()}
+        _add_import(claude_md, p.guide_import)
+
+    def manifest(entries: list[dict[str, Any]], files: dict[str, str]) -> bytes:
+        m = {
+            "schema": SCHEMA, "harness": h.name, "channel": channel, "revision": h.revision,
+            "harness_digest": h.digest, "scope": scope, "source": h.source, "guide": p.guide_rel,
+            "guide_import": guide_import or None,
+            "settings": {"created": p.settings_created, "entries": entries},
+            "files": dict(sorted(files.items())),
+        }
+        return (json.dumps(m, indent=2) + "\n").encode()
+
     if p.settings is not None:
+        # name every entry, old and new, before settings.json changes: a failure between the two writes then leaves
+        # entries the manifest still claims, so a re-run or --uninstall removes them instead of taking them as yours
+        pending = p.old_records + [r for r in p.records if r not in p.old_records]
+        _write(p.base / MANIFEST, manifest(pending, {**p.old_files, **digests}), 0o644)
         _write(p.base / SETTINGS, _settings_bytes(p.settings))
-    manifest = {
-        "schema": SCHEMA, "harness": h.name, "revision": h.revision, "harness_digest": h.digest,
-        "channels": h.channels, "scope": scope, "source": h.source, "guide": p.guide_rel,
-        "settings": {"created": p.settings_created, "entries": p.records},
-        "files": dict(sorted(digests.items())),
-    }
-    data = (json.dumps(manifest, indent=2) + "\n").encode()
+    data = manifest(p.records, digests)
     if not (p.base / MANIFEST).is_file() or _strip_source(p.base / MANIFEST) != _strip_source(data):
         _write(p.base / MANIFEST, data, 0o644)
 
@@ -502,20 +647,24 @@ def plugin_commands(h: Harness, scope: str) -> list[str]:
             name, _, mkt = c["id"][7:].rpartition("@")
             if mkt not in seen:
                 seen.add(mkt)
-                out.append(f"claude plugin marketplace add {h.root.resolve() / 'plugins' / mkt}")
+                out.append(f"claude plugin marketplace add {shlex.quote(str(h.root.resolve() / 'plugins' / mkt))}")
             out.append(f"claude plugin install {name}@{mkt} --scope {scope}")
     return out
 
 
 # --- check, uninstall -------------------------------------------------------------------------------------------
 
-def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base: Path) -> list[str]:
+def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base: Path,
+          channel: str | None = None) -> list[str]:
     m = read_manifest(base)
     if m is None:
         return [f"not installed: {base / MANIFEST} is missing"]
     drift = []
     if h is not None and m["harness"] != h.name:
         drift.append(f"{base} has {m['harness']} installed, not {h.name}")
+    gi = m.get("guide_import") or {}
+    if gi.get("line") and not _imports(base / gi.get("file", "CLAUDE.md"), gi["line"]):
+        drift.append(f"{gi.get('file', 'CLAUDE.md')} no longer has the line {gi['line']}")
     for rel, dg in sorted((m.get("files") or {}).items()):
         f = base / rel
         if not f.is_file():
@@ -528,8 +677,9 @@ def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base
             drift.append(f"settings.json no longer has {_describe(_unrecord(r))}")
     if lock_digest and lock_digest != m["harness_digest"]:
         newer = lock_rev is not None and lock_rev > int(m["revision"])
+        where = f"on the {channel} channel" if channel and channel != "checkout" else "in the checkout"
         drift.append(f"{'newer harness revision' if newer else 'the harness changed'}: r{lock_rev} {lock_digest} "
-                     f"in the checkout, r{m['revision']} {m['harness_digest']} installed; run --apply to upgrade")
+                     f"{where}, r{m['revision']} {m['harness_digest']} installed; run --apply to upgrade")
     return drift
 
 
@@ -561,26 +711,24 @@ def uninstall(base: Path) -> tuple[list[str], list[str]]:
             (base / SETTINGS).unlink()
         elif s != cur:
             _write(base / SETTINGS, _settings_bytes(s))
+    gi = m.get("guide_import") or {}
+    if gi.get("line") and _remove_import(base / gi.get("file", "CLAUDE.md"), gi["line"], bool(gi.get("created"))):
+        removed.append(f"{gi.get('file', 'CLAUDE.md')}: the line {gi['line']}")
     (base / MANIFEST).unlink()
     return removed, left
 
 
 # --- CLI --------------------------------------------------------------------------------------------------------
 
-def _lock_or_none(root: Path) -> dict[str, Any] | None:
-    try:
-        lock = yaml.safe_load((root / "harness.lock").read_text())
-    except (OSError, yaml.YAMLError):
-        return None
-    return lock if isinstance(lock, dict) else None
-
-
-def _header(h: Harness, scope: str, base: Path) -> str:
-    chan = f" ({', '.join(h.channels)})" if h.channels else ""
-    src = h.source.get("commit") or "no git commit"
-    if h.source.get("dirty"):
-        src += ", uncommitted changes"
-    return f"{h.name} r{h.revision} {h.digest}{chan} from {src} -> {scope} scope, {base}"
+def _header(h: Harness, src: Source, scope: str, base: Path) -> str:
+    if src.commit:
+        origin = f"commit {src.commit[:12]} (from git history)"
+    else:
+        origin = h.source.get("commit") or "no git commit"
+        if h.source.get("dirty"):
+            origin += ", uncommitted changes"
+    chan = "the checkout as is" if src.channel == "checkout" else f"{h.name}@{src.channel}"
+    return f"{chan}: {h.name} r{h.revision} {h.digest} from {origin} -> {scope} scope, {base}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -589,88 +737,118 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scope", choices=("user", "project"), required=True)
     ap.add_argument("--home", type=Path, default=Path.home(), help="user scope: the home whose .claude/ to write")
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="project scope: the project directory")
+    ap.add_argument("--channel", help="the channels.yaml channel to install (default stable; --check: the installed "
+                                      "one); 'checkout' installs the checkout as it is")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="install from a checkout with uncommitted changes in the harness (or not in git)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="print the plan and write nothing (the default)")
     mode.add_argument("--apply", action="store_true", help="install or upgrade")
-    mode.add_argument("--check", action="store_true", help="exit 1 when the install drifted or the harness is newer")
+    mode.add_argument("--check", action="store_true", help="exit 1 when the install drifted or the channel moved")
     mode.add_argument("--uninstall", action="store_true", help="remove what this script installed")
     a = ap.parse_args(argv)
     base = base_dir(a.scope, a.home, a.target)
     try:
-        if a.uninstall:
-            lock = _lock_or_none(a.harness)
-            m = read_manifest(base)
-            if lock and m and m["harness"] != lock.get("name"):
-                raise Refused(f"{base} has {m['harness']} installed, not {lock.get('name')}; name that harness")
-            removed, left = uninstall(base)
-            for r in removed:
-                print(f"  removed {r}")
-            for r in left:
-                print(f"  warning: left {r}", file=sys.stderr)
-            print(f"uninstalled from {base}")
-            return 0
-        if a.check:
-            lock = _lock_or_none(a.harness) or {}
-            try:
-                h: Harness | None = load_harness(a.harness, a.scope)
-            except Refused:
-                h = None
-            rev = lock.get("revision")
-            drift = check(h, harness_digest(lock) if lock else None, int(rev) if rev is not None else None, base)
-            if h and h.problems:
-                drift += [f"checkout: {x}" for x in h.problems]
-            for d in drift:
-                print(f"  {d}")
-            print(f"{'drift' if drift else 'clean'}: {lock['name']} in {base}")
-            return 1 if drift else 0
-
-        h = load_harness(a.harness, a.scope)
-        if h.problems:
-            raise Refused("the checkout doesn't match its lock, so it isn't what the lock pins:\n  "
-                          + "\n  ".join(h.problems) + "\nrun scripts/relock.py, or check out a committed revision")
-        p = plan_install(h, base)
-        print(_header(h, a.scope, base))
-        for action, rel in p.files:
-            if action != "keep":
-                print(f"  {action:<7} {rel}" + ("  (already these bytes)" if action == "adopt" else ""))
-        kept = sum(1 for x, _ in p.files if x == "keep")
-        if kept:
-            print(f"  keep    {kept} file(s) unchanged")
-        for line in p.settings_lines:
-            print(f"  settings.json {line}")
-        for rel in p.left:
-            print(f"  warning: {rel} is no longer in the harness but was edited; left in place", file=sys.stderr)
-        for n in p.notes:
-            print(f"  note: {n}")
-        if p.conflicts:
-            print("refused, nothing written:", file=sys.stderr)
-            for c in p.conflicts:
-                print(f"  conflict: {c}", file=sys.stderr)
-            return 1
-        runtime, model = h.lock["runtime"], h.lock["model"]
-        print(f"  pinned: Claude Code {runtime.get('version')}, model {model.get('id')} (not installed by this script)")
-        cmds = mcp_commands(h, a.scope)
-        if cmds:
-            where = "" if a.scope == "user" else f", from {a.target}"
-            print(f"MCP servers: run these yourself{where}, after setting each $VARIABLE from your secret manager "
-                  "(its value is the whole header, such as `Bearer <token>`):")
-            for c in cmds:
-                print(f"  {c}")
-        plugins = plugin_commands(h, a.scope)
-        if plugins:
-            print("Plugins: run these yourself:")
-            for c in plugins:
-                print(f"  {c}")
-        changes = any(x != "keep" for x, _ in p.files) or p.settings is not None or read_manifest(base) is None
-        if not a.apply:
-            print("dry run: nothing written; run again with --apply" if changes else "up to date")
-            return 0
-        apply_install(h, p, a.scope)
-        print(f"installed {h.name} r{h.revision} into {base}" if changes else "up to date")
-        return 0
+        with tempfile.TemporaryDirectory(prefix="team-harness-") as scratch:
+            return _run(a, base, Path(scratch))
     except Refused as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except OSError as e:
+        print(f"error: {e.filename or ''}: {e.strerror or e}".replace("error: : ", "error: "), file=sys.stderr)
+        return 2
+
+
+def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
+    if a.uninstall:
+        name = _lock_at(a.harness)["name"]
+        m = read_manifest(base)
+        if m and m["harness"] != name:
+            raise Refused(f"{base} has {m['harness']} installed, not {name}; name that harness")
+        removed, left = uninstall(base)
+        for r in removed:
+            print(f"  removed {r}")
+        for r in left:
+            print(f"  warning: left {r}", file=sys.stderr)
+        print(f"uninstalled from {base}")
+        return 0
+    if a.check:
+        name = _lock_at(a.harness)["name"]
+        m = read_manifest(base)
+        channel = a.channel or (m or {}).get("channel") or "stable"
+        src = resolve(a.harness, channel, scratch)
+        try:
+            h: Harness | None = load_harness(src.root, a.scope)
+        except Refused:
+            h = None
+        drift = check(h, src.digest, src.revision, base, channel)
+        if h and h.problems:
+            drift += [f"checkout: {x}" for x in h.problems]
+        for d in drift:
+            print(f"  {d}")
+        print(f"{'drift' if drift else 'clean'}: {name}@{channel} in {base}")
+        return 1 if drift else 0
+
+    src = resolve(a.harness, a.channel or "stable", scratch)
+    h = load_harness(src.root, a.scope)
+    if src.commit:
+        h.source = {"commit": src.commit, "dirty": False}
+        if a.scope == "user":
+            h.source["path"] = str(a.harness.resolve())
+    elif h.source.get("dirty") is not False and not a.allow_dirty:
+        why = "has uncommitted changes" if h.source.get("dirty") else "is not in a git checkout"
+        raise Refused(f"{a.harness} {why}, so it may not be what {h.name}@{src.channel} pins; commit or stash them, "
+                      "or pass --allow-dirty")
+    if h.problems:
+        raise Refused("the checkout doesn't match its lock, so it isn't what the lock pins:\n  "
+                      + "\n  ".join(h.problems) + "\nrun scripts/relock.py, or check out a committed revision")
+    p = plan_install(h, base)
+    print(_header(h, src, a.scope, base))
+    for action, rel in p.files:
+        if action != "keep":
+            print(f"  {action:<7} {rel}" + ("  (already these bytes)" if action == "adopt" else ""))
+    kept = sum(1 for x, _ in p.files if x == "keep")
+    if kept:
+        print(f"  keep    {kept} file(s) unchanged")
+    if p.guide_import:
+        print(f"  CLAUDE.md + {p.guide_import}")
+    for line in p.settings_lines:
+        print(f"  settings.json {line}")
+    for rel in p.left:
+        print(f"  warning: {rel} is no longer in the harness but was edited; left in place", file=sys.stderr)
+    for n in p.notes:
+        print(f"  note: {n}")
+    if a.scope == "user" and (h.settings.get("hooks") or h.settings.get("permissions")):
+        print("  note: user scope applies these hooks and deny rules to every Claude Code session on this machine; "
+              "a work harness belongs in --scope project in each work repository")
+    if p.conflicts:
+        print("refused, nothing written:", file=sys.stderr)
+        for c in p.conflicts:
+            print(f"  conflict: {c}", file=sys.stderr)
+        return 1
+    runtime, model = h.lock["runtime"], h.lock["model"]
+    print(f"  pinned: Claude Code {runtime.get('version')}, model {model.get('id')} (not installed by this script)")
+    cmds = mcp_commands(h, a.scope)
+    if cmds:
+        where = "" if a.scope == "user" else f", from {a.target}"
+        print(f"MCP servers: run these yourself{where}, after setting each $VARIABLE from your secret manager "
+              "(its value is the whole header, such as `Bearer <token>`):")
+        for c in cmds:
+            print(f"  {c}")
+    plugins = plugin_commands(h, a.scope)
+    if plugins:
+        print("Plugins: run these yourself:")
+        for c in plugins:
+            print(f"  {c}")
+    m = read_manifest(base)
+    changes = (any(x != "keep" for x, _ in p.files) or p.settings is not None or p.guide_import is not None
+               or m is None or m.get("channel") != src.channel)
+    if not a.apply:
+        print("dry run: nothing written; run again with --apply" if changes else "up to date")
+        return 0
+    apply_install(h, p, a.scope, src.channel)
+    print(f"installed {h.name}@{src.channel} r{h.revision} into {base}" if changes else "up to date")
+    return 0
 
 
 if __name__ == "__main__":
