@@ -158,6 +158,29 @@ thaws (hangar#221). `env.stable.yaml` still carries exactly the pinned files for
 of a lock, and `scripts/check_registry.py` proves with hangar's own manifest code that a turn on it reports the lock's
 digest.
 
+## The agent environment: one definition, local and cloud
+
+`environments/agent.yaml` (KAN-447) is the environment an agent works a ticket in. hangar runs it in a cloud
+session from `HANGAR_ENV_DIRS`; `make agent-env` starts the same definition on your computer, so a local run, and its
+trace, is evidence about a cloud one. It extends `suite-default` and pins the harness by `harness_digest`, ai-dlc by
+commit (installed from its `uv.lock`), the knowledge format version and the model. `scripts/check_registry.py` fails
+when a pin and what it names disagree.
+
+Variables are names only, listed in `environments/agent.env.example`: the inputs `TICKET_KEY`, `CODE_REPO` and
+`KNOWLEDGE_REPO`, and the credentials, the same names locally and in hangar's secret store. Export them, then:
+
+```sh
+make agent-env          # build, start, clone the inputs, print the pins and `ai-dlc doctor`
+make agent-env-check    # two fresh instances print the same; nothing is mounted; off-list hosts are refused
+make agent-env-down
+```
+
+`scripts/agent_env.py` does the local half with hangar's own code: hangar's renderer builds the image (with the agent
+CLI baked in, since there are no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. The
+container mounts nothing from the host and passes only the contract's names. It reaches the internet only through
+`scripts/egress_proxy.py`, a sidecar on an internal Docker network. The allowlist is GitHub, the package indexes,
+`api.atlassian.com` (tracker and wiki), the bound MCP servers and the model's hosts (`make agent-env-policy`).
+
 ## From change to promotion
 
 ```mermaid
@@ -289,7 +312,8 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
-| `environments/` | Role environments for the four-repo convention and `work-multirepo` for change sets |
+| `environments/` | Role environments for the four-repo convention, `work-multirepo` for change sets, and `agent.yaml` with its variable contract `agent.env.example` |
+| `scripts/agent_env.py`, `Makefile` | Start the agent environment locally (`make agent-env`); `scripts/egress_proxy.py` is its egress sidecar |
 | `changesets/` | An example change-set profile |
 | `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks (on the role environments too), `work-multirepo` covering the roles, change-set profiles well formed |
 | `.github/workflows/check.yml` | This repository's CI |
