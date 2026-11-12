@@ -168,8 +168,10 @@ Copilot's store and vault, and the harness hooks.
 
 - Model traffic: code, ticket text and transcripts go to the model provider.
 - The Jira and GitHub MCP connections the install prints. An Atlassian admin may need to allow the remote MCP.
-- No PR-check Jira token for now (KAN-369), so the ticket check is off at work. Once the organisation approves a
-  method, it is a personal Jira API token with scopes (read scopes only), stored as a CI secret.
+- No PR-check Jira token until the credential method is signed off in KAN-450 (KAN-369 chose none for now). Until
+  then the ticket check is off at work, and the approval gates report `unverified` and fail closed (KAN-365), so a
+  person must approve the merge. Once approved, it is a personal Jira API token with scopes (read scopes only),
+  stored as a CI secret.
 - Off by default until KAN-214: a cloud flightdeck data plane, `report post`, `ingest github`, and any hangar server.
 
 Never send work content to a personal tracker or knowledge base.
