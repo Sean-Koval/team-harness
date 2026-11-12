@@ -50,6 +50,35 @@ BASH = [
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
 
 
+def _commands(command: str) -> list[str]:
+    """The whole call with each line ending made a `;`, then every single command in it. Each is judged, so a
+    newline, `;`, `&&`, `||`, `|` or `&` cannot hide a command from a pattern."""
+    joined = re.sub(r"\s*\r?\n\s*", " ; ", re.sub(r"\\\r?\n", " ", command))
+    return [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
+
+
+def _read_event() -> tuple[object, bool]:
+    """(event, ok): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the console
+    code page). ok is False when the input is not UTF-8: the caller fails closed."""
+    try:
+        text = sys.stdin.buffer.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None, False
+    except OSError:
+        return None, True
+    try:
+        return json.loads(text), True
+    except ValueError:
+        return None, True  # not ours to judge; never wedge a session on a malformed event
+
+
+def _block(message: str) -> int:
+    sys.stderr.flush()
+    sys.stderr.buffer.write((message + "\n").encode("utf-8"))
+    sys.stderr.buffer.flush()
+    return 2
+
+
 def why(event: dict) -> str | None:
     tool = event.get("tool_name")
     args = event.get("tool_input") or {}
@@ -59,22 +88,20 @@ def why(event: dict) -> str | None:
             return "the deploy checkout is read-only: hangar's deploy step bumps it after the other PRs merge"
         return None
     if tool == "Bash":
-        command = str(args.get("command") or "")
-        for pattern, reason in BASH:
-            if re.search(pattern, command):
-                return reason
+        for command in _commands(str(args.get("command") or "")):
+            for pattern, reason in BASH:
+                if re.search(pattern, command):
+                    return reason
     return None
 
 
 def main() -> int:
-    try:
-        event = json.load(sys.stdin)
-    except (ValueError, OSError):
-        return 0  # not ours to judge; never wedge a session on a malformed event
+    event, ok = _read_event()
     reason = why(event) if isinstance(event, dict) else None
+    if not ok:
+        reason = "the tool call is not valid UTF-8, so it cannot be checked"
     if reason:
-        print(f"blocked by the work harness: {reason}. Propose the change in the PR instead.", file=sys.stderr)
-        return 2
+        return _block(f"blocked by the work harness: {reason}. Propose the change in the PR instead.")
     return 0
 
 

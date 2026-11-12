@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 5
+revision: 6
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -46,7 +46,7 @@ components:
   enabled: true
   source: git:https://github.com/Sean-Koval/ai-dlc#plugins/ai-dlc-workflow@fec8b9186a01009b3e58408c37dc0e508b3ec058
 - id: native:claude-code/hooks/guard_readonly.py
-  digest: sha256:b1ab393d2b81fdecf0f1fde7084fa01b7318ec781f4ed7835bfb3b18eaeb43dc
+  digest: sha256:b9505d6b35cb0e9b5c546d328b600893386cfc093fc70643dde6f8ca8f0e7358
   path: native/claude-code/hooks/guard_readonly.py
 - id: native:claude-code/settings.json
   digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca

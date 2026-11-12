@@ -50,10 +50,10 @@ components:
   path: skills/release-approvals
   source: path:skills/release-approvals
 - id: native:claude-code/hooks/guard_work.py
-  digest: sha256:e3567f06861e0b7cc200689296002c1b00a7c80b5e795f70081524a5b66f92ca
+  digest: sha256:e117327c95ff707534359e66d4c91035913f8f3423f1ab9e8d1d112de954b2a9
   path: native/claude-code/hooks/guard_work.py
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:cdd83523ae9c703772659fbeba979a3820f78d31efa46bad44a3fd89c6dd2c1f
+  digest: sha256:343b4eb3a60ab049c7127eea13b0b118cd410f79e1ad743eb8e9993cbf6b8b0f
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:a76da701261e382af1c27995b232fc582245ef1370b15201e36df93f5d37f584

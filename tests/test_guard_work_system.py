@@ -321,3 +321,30 @@ def test_backslash_drive_paths_reach_the_right_repository(repo):
     keyed, bare = repo("KAN-4-w"), repo("main")
     assert bash(f'git -C "{bare}" commit -m x', keyed) == 2
     assert bash(f"cd {keyed} && git commit -m x", bare) == 0
+
+
+# Every command in a call is judged, however it is separated (KAN-460 review).
+
+@pytest.mark.parametrize("command", [
+    "echo ok\ngit push origin main",
+    "echo ok\r\ngit push --force origin KAN-1-x",
+    "true & git push origin main",
+    "git status\n  gh pr merge 12 --admin",
+    "echo a; gh pr create --fill",
+    "git \\\npush origin main",
+])
+def test_every_line_and_separator_is_judged(command):
+    assert bash(command) == 2
+
+
+def test_newline_commit_on_main_is_judged(repo):
+    assert bash("git add -A\ngit commit -m wip", repo("main")) == 2
+
+
+def test_redirect_ampersand_is_not_a_separator():
+    assert bash("git push origin KAN-1-x 2>&1 | tail -1") == 0
+
+
+def test_input_that_is_not_utf8_fails_closed():
+    r = run_bytes(b'{"tool_name": "Bash", "tool_input": {"command": "git status \xe9\xff"}}')
+    assert r.returncode == 2 and b"not valid UTF-8" in r.stderr
