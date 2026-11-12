@@ -178,6 +178,35 @@ thaws (hangar#221). `env.stable.yaml` still carries exactly the pinned files for
 of a lock, and `scripts/check_registry.py` proves with hangar's own manifest code that a turn on it reports the lock's
 digest.
 
+## Run it on a laptop
+
+Claude Code on your own machine can carry the same harness, pinned to a channel's lock. For a work harness, install
+it into each work repository (`project` scope):
+
+```sh
+cd ~/src/svc
+python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project            # the plan
+python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --apply    # into .claude/
+python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --check    # drift, or stable moved
+```
+
+It installs `stable` by default (`--channel candidate` to try the next revision). When the checkout's lock isn't that
+channel's, it installs the channel's revision from git history. It refuses a checkout with uncommitted changes in the
+harness unless you pass `--allow-dirty`.
+
+Why project scope: work-default's guards are written for hangar's sandbox. `guard_work.py` blocks `terraform plan`,
+`kubectl exec` and `env`, and its `/workspace/deploy` rules match nothing on a laptop. In `user` scope
+(`~/.claude/`) they would apply to every session on the machine. `user` scope suits suite-default.
+
+The script copies the skills and hooks, and merges the hooks and deny rules into `settings.json`. A symlinked
+`settings.json` is written through to its target. The guide goes to `.claude/team-harness/<harness>.md`, and one
+`@import` line is added to `CLAUDE.md`, so your own edits there never block an upgrade.
+
+It never overwrites a file it didn't install. `.claude/team-harness.json` records what it wrote, so `--uninstall`
+removes only that, the `@import` line included. The record names each settings entry before `settings.json` is
+written, so an interrupted install can still be undone. It prints the `claude mcp add` commands with credential
+placeholders; it never handles a credential.
+
 ## From change to promotion
 
 ```mermaid
@@ -311,6 +340,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
+| `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
 | `environments/` | Role environments for the four-repo convention and `work-multirepo` for change sets |
 | `changesets/` | An example change-set profile |
 | `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks (on the role environments too), `work-multirepo` covering the roles, change-set profiles well formed |
