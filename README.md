@@ -119,8 +119,21 @@ CI fails when a copy differs or a placeholder is unfilled (`--check`). What diff
 | How a Decision is filed | work type Decision with its fields | the Decision type if the project has one, else a Task labelled `type:decision` |
 | Knowledge base | `seanmkoval.atlassian.net`, space SD (Second brain) | the company site and space, set by the company overlay; no page is written until it is |
 | Merge | agents may merge their own PR on green checks, never `--admin` | never: SRE approves or merges, hangar lands change sets; the hook refuses `gh pr merge` |
-| Approval steps | none beyond checks | `release-approvals`: SRE ticket linking the PR, infosec ticket, drafted (never posted) Symphony review request |
+| Approval steps | none beyond checks | `release-approvals`: one ticket per gate the org overlay declares (the example: SRE and infosec), drafted (never posted) review request |
 | The wall | refuses `origin: work` and company content | employer content never leaves company systems and approved tools |
+
+A company's own flow (its ticket types, approval tickets and gates) drops in as an **org overlay**,
+[`orgs/<org>/`](orgs/README.md), with no edit to a shared file. It holds the company's flow skill, `org-process`,
+copied in as it is, and an `org.yaml` (`team-harness.org/v1`) that declares the same flow as data. A work harness names
+it with one line in `targets.yaml` (`org: orgs/example-co`); a company's private fork changes that line to its own.
+`sync_shared.py` validates `org.yaml`, lets its `params` win over the profile's, renders `release-approvals` with
+tables of its ticket types and gates, and copies `org-process` into the harness. `--check` fails on an invalid org, a
+drifted copy, or an org on `suite-default` (the work/home wall).
+
+work-default's agents read `org-process` before they plan. Once a PR is open, `release-approvals` files one ticket per
+gate that applies and adds its `<line>: <KEY>` to the PR body; the review request is still drafted, never posted.
+If `org-process` and `org.yaml` disagree, `org-process` wins and the PR says so. The shipped `orgs/example-co/` is all
+placeholders (`placeholder: true`), so agents on it file nothing and say the overlay isn't applied.
 
 Lanes are projects (Jira epics). Who executes a ticket is its execution label, `exec:agent|pair|human`; the older
 `lane:*` names are accepted by the hook, the PR check and the behaviour specs until Jira is relabelled. A ruling on a
@@ -281,6 +294,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | --- | --- |
 | `harnesses/<name>/` | One harness: native files plus `harness.lock` |
 | `shared/work-system/` | The work-system skills and hook, edited once; `targets.yaml` names the harnesses that carry them |
+| `orgs/<org>/` | A company's org overlay: its `org-process` flow skill and `org.yaml` (ticket types, gates, review request); `example-co` is the placeholder |
 | `actions/work-system-pr/` | The PR check other repositories call, pinned by commit |
 | `templates/` | The PR template the PR check reads |
 | `scripts/sync_shared.py` | Copy the shared layer into each harness; `--check` in CI |
