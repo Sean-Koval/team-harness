@@ -3,7 +3,7 @@ description: >-
   Fails a pull request that doesn't name its ticket (title key and a Jira line), doesn't say where its docs went, or
   implements a Decision without an ADR; with Jira credentials, also checks the ticket is open, laned and not blocked by
   an open Decision. With an org file, also holds the PR until the approval tickets of the org's merge gates are linked
-  (and, with Jira credentials, approved). Read-only.
+  (and, with Jira credentials, approved; without them a gate that needs an approval fails). Read-only.
 inputs:
   github-token:
     description: Token to list the PR's files (the default job token is enough)
@@ -37,10 +37,16 @@ inputs:
     default: ""
   org-file:
     description: >-
-      Path to an org.yaml (schema team-harness.org/v1), relative to the caller's checkout (optional). Every merge gate
-      whose `when` matches the PR then needs a `<pr_line>: <KEY>` line in the body; with Jira credentials the key must be
-      in the gate's project and, if the gate lists approved_statuses, in one of them. Needs actions/checkout first.
+      Path to an org.yaml (schema team-harness.org/v1) in the repository (optional). It is read at the PR's base commit
+      through the contents API, so a PR can't loosen its own gates. Every merge gate whose `when` matches the PR then
+      needs a `<pr_line>: <KEY>` line in the body naming a ticket in the gate's project; with Jira credentials the
+      ticket must also have the gate's issue type and links and, if the gate lists approved_statuses, be in one of them.
     default: ""
+  allow-unverified:
+    description: >-
+      "true" lets a gate with approved_statuses pass, with a warning, when its ticket can't be read (no Jira
+      credentials, as on fork and Dependabot PRs, or Jira down). Default "false": such a gate fails.
+    default: "false"
 runs:
   using: composite
   steps:
@@ -73,3 +79,4 @@ runs:
         INPUT_JIRA_USER: ${{ inputs.jira-user }}
         INPUT_JIRA_TOKEN: ${{ inputs.jira-token }}
         INPUT_ORG_FILE: ${{ inputs.org-file }}
+        INPUT_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}
