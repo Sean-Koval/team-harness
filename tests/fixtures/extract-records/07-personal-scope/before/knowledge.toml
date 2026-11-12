@@ -1,2 +1,5 @@
 [format]
 version = 1
+
+[check]
+roots = ["personal", "team"]

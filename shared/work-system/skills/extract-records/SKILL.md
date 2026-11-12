@@ -48,20 +48,34 @@ choice and the draft picks one option. Then write both: the question, and the de
 
 ## 3. Choose records: fewer is better
 
+Every record needs a **quotable sentence** from the Source as its basis. If you cannot quote one, drop the record.
+
 - **Decision:** a choice the Source says was made. One decision per choice. Its sub-points (what was chosen, which
-  sources, adapters, folders, schedules, fields, statuses) go in **its body**, even when worded "only" or "never".
-  Split a part into its own decision only when it has a different status or life, such as an amendment a later
-  comment says survives the rest.
-- **Convention:** a standing rule that work **other than carrying out this decision** must obey, one a reviewer
-  would check on a later PR or record ("raw sources expire after 30 days", "never sync backwards"). Test: would
-  someone working on something else need to follow it? If not, it stays in the decision body. A convention links
-  `implements: <decision id>`; it never stands alone.
+  sources, adapters, folders, schedules, fields, statuses, scopes, ids) go in **its body**, even when worded "only"
+  or "never". Split a part into its own decision only when it has a different status or life, such as an amendment
+  a later comment says survives the rest.
+- **Convention:** a durable team rule that someone would break without it, stated as a rule that changes how people
+  or agents work ("raw sources expire after 30 days"). An architectural fact the decision already states is **not**
+  a convention. **Default: fold it into the decision record.** A convention links `implements: <decision id>`.
 - **Action:** work the Source says is owed because of the decision or before it ("prerequisite", "needs", "will",
   "must", "TODO"). Work the decision lists as part of its own outcome stays in its body. **Never drop an action for
   lack of an owner:** write `owner: unknown`, add `tags: [owner-unknown]`, and list it in the PR body.
 - **Question:** an open question put to someone. Its owner is who must answer.
 - **Lesson:** something learned from what happened, with what to do next time.
 - Background, options and rationale are never records: they go in the body of the record they explain.
+- **Restated rules produce nothing.** A rule the Source repeats from an earlier decision ("unchanged", "still",
+  "as before") is not a record and not an edit, whether or not a record holds it. Name it under Not extracted.
+
+**Ceilings per Source.** Trial extraction over-produced: reviewers dropped four records in ten. These caps hold
+even when more items look plausible. Over a cap, keep the items with the strongest quotes and list the rest under
+Not extracted.
+
+| Source kind | At most |
+| --- | --- |
+| Decision record | 1 decision (2 when a part survives the rest), 2 conventions or lessons, 2 actions |
+| Meeting or chat | 1 record per decision, action or question actually stated; 2 conventions or lessons in all |
+| Marked notes | 1 record per marked line |
+| Review draft | its questions put to someone, and 2 proposed decisions; no conventions, lessons or actions |
 
 ## 4. Supersession and duplicates
 
@@ -73,13 +87,16 @@ choice and the draft picks one option. Then write both: the question, and the de
   and `valid_to` changed; edit nothing else in an accepted decision. Retire (`status: retired`) a convention whose
   decision was replaced and which the Source drops. If the old decision has no record, cite it in the body and
   say so in the PR.
-- **Duplicates:** before writing any record, compare it with the step 1.3 hits. When one already says the same thing,
-  write no new record. For a convention, lesson, question or action, propose the existing record again with a
-  `derived_from` link to this Source and its `sources` entry added. Leave an accepted decision untouched. List each
-  duplicate in the PR body as "already recorded as <id>". A rule the Source restates as "unchanged" is a duplicate
-  when a record holds it, and a new convention only when none does.
+- **Duplicates:** compare every candidate with the step 1.3 hits. When a record already says the same thing, write
+  nothing and edit nothing; list it in the PR body as "already recorded as <id>".
 
-## 5. Write each record
+## 5. Final pass
+
+Count the records. For each one ask: **would a reviewer delete this?** Delete it if it restates another record,
+has no quote, is a fact inside a decision, is advice from a draft, or breaks a ceiling. Write the count before and
+after this pass in the PR body.
+
+## 6. Write each record
 
 Start from the type's template. Header:
 
@@ -105,15 +122,19 @@ Start from the type's template. Header:
 
 Body: the type's template headings, starting with a verbatim quote from the Source and its timestamp or speaker.
 
-Then set the Source's `status: processed` and propose it at its own path, with its other fields unchanged.
+The Source record itself moves into the checked records: propose a copy with `status: processed` at
+`<scope folder>/sources/<Source id>.md`, where the scope folder is `team/`, `personal/` or `projects/<project>/` for
+the Source's `scope`. Every record's `sources` entry and `derived_from` link point at that copy. Leave the `inbox/`
+payload alone: it is outside the checked roots and expires.
 
-## 6. Check, then propose
+## 7. Check, then propose
 
 1. Copy the knowledge repository to a scratch directory, write the records and the processed Source into the copy
-   at their paths (`decisions/`, `conventions/`, `actions/`, `questions/`, `lessons/`, or the layout its README
-   gives), and run `ai-dlc knowledge check <scratch copy>`. Fix every failure and rerun until it exits 0.
+   under the scope folder of each record (`team/decisions/`, `projects/<project>/conventions/`, and so on, the
+   folders the `[check] roots` of its `knowledge.toml` name), and run `ai-dlc knowledge check <scratch copy>`. Fix every failure and rerun until it exits 0.
 2. Write the PR body to a file:
    - each record: id, type, title, and its source quote with the timestamp or speaker;
+   - the record count before and after the final pass;
    - **Not extracted:** each skipped item and why (background, decision body, review advice, duplicate of <id>);
    - **Flags:** owners `unknown`, dates taken from elsewhere, status conflicts, scope narrowed by the map;
    - the last `ai-dlc knowledge check` output.

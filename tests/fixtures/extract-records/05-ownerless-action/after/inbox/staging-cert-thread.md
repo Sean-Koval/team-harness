@@ -2,7 +2,7 @@
 id: staging-cert-thread
 type: source
 scope: team
-status: processed
+status: raw
 date: '2026-11-12'
 owner: lead-example
 sources:

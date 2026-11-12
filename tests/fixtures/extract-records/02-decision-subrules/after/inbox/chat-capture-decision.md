@@ -2,7 +2,7 @@
 id: chat-capture-decision
 type: source
 scope: team
-status: processed
+status: raw
 date: '2026-11-11'
 owner: lead-example
 sources:

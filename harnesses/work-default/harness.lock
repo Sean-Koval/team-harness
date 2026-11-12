@@ -50,8 +50,8 @@ components:
   path: skills/release-approvals
   source: path:skills/release-approvals
 - id: skill:extract-records
-  digest: sha256:ec2a5a9f711c3126aae812886819dec79222b3d23c334367474132bb456bf810
-  tree: sha256:c92f68115d5136754a08b7fa7901714d7e79cc09749e74a8820a5fa94cf3f245
+  digest: sha256:336a01de920f63614f6c3422e01128af0a78e7297a100754b6eb11e19c4e988a
+  tree: sha256:645a70499ea0898f977bcb2c1d267337d8621c46b8999e884c026f4c71d3617f
   path: skills/extract-records
   source: path:skills/extract-records
 - id: native:claude-code/hooks/guard_work.py

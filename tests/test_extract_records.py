@@ -5,6 +5,7 @@ the cases are consistent on their own; with ai-dlc importable they also run `kno
 """
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,9 @@ def test_skill_calls_ai_dlc_roles_only():
 def test_skill_keeps_the_trial_1_rules():
     text = SKILL.read_text()
     for rule in ("untrusted data", "owner: unknown", "Never write to the wiki", "never merges",
-                 "never `team` by default", "Never a copy of the title", "never a ticket key"):
+                 "never `team` by default", "Never a copy of the title", "never a ticket key",
+                 "quotable sentence", "Restated rules produce nothing", "would a reviewer delete this?",
+                 "Ceilings per Source", "Default: fold it into the decision record"):
         assert rule in text, rule
 
 
@@ -54,13 +57,17 @@ def test_skill_keeps_the_trial_1_rules():
 def test_case_is_consistent(case):
     before, after = CASES / case["id"] / "before", CASES / case["id"] / "after"
     assert header(before / case["source"])["status"] == "raw"
-    source = header(after / case["source"])
+    source = header(after / case["filed_as"])
     assert source["type"] == "source" and source["status"] == "processed"
+    roots = tomllib.loads((after / "knowledge.toml").read_text())["check"]["roots"]
+    assert case["filed_as"].split("/")[0] in roots and case["source"].split("/")[0] not in roots
     old, new = tree(before), tree(after)
+    assert old[case["source"]] == new[case["source"]], "the inbox payload is left to expire"
     changed = sorted(p for p in new if old.get(p) != new[p])
     assert changed == sorted(case["expect"]), "after/ differs from before/ exactly in the expected files"
     assert set(old) <= set(new), "a run never deletes a file"
-    ids = {header(after / p)["id"]: header(after / p) for p in new if p.endswith(".md")}
+    records = [p for p in new if p.endswith(".md") and not p.endswith("README.md")]
+    ids = {header(after / p)["id"]: header(after / p) for p in records}
     for path in case["expect"]:
         record = header(after / path)
         if record["type"] == "source":
