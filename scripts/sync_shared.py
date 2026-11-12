@@ -65,7 +65,7 @@ def _profile(shared: Path, h: str, entry: dict, problems: list[str]) -> dict[str
         problems.append(f"{h}: targets.yaml names no profile")
         return {}
     try:
-        return (yaml.safe_load((shared / path).read_text()) or {}).get("params") or {}
+        return (yaml.safe_load((shared / path).read_text(encoding="utf-8")) or {}).get("params") or {}
     except (OSError, yaml.YAMLError) as e:
         problems.append(f"{h}: cannot read {path}: {e}")
         return {}
@@ -74,7 +74,7 @@ def _profile(shared: Path, h: str, entry: dict, problems: list[str]) -> dict[str
 def plan(root: Path = ROOT) -> tuple[list[tuple[Path, Path, dict[str, bytes]]], list[str]]:
     """(source, destination, rendered files) for every copy that is out of sync, and problems."""
     shared = root / "shared" / "work-system"
-    t = yaml.safe_load((shared / "targets.yaml").read_text())
+    t = yaml.safe_load((shared / "targets.yaml").read_text(encoding="utf-8"))
     stale: list[tuple[Path, Path, dict[str, bytes]]] = []
     problems: list[str] = []
     hook_src = shared / t["hook"]
@@ -102,7 +102,7 @@ def plan(root: Path = ROOT) -> tuple[list[tuple[Path, Path, dict[str, bytes]]], 
             stale.append((hook_src, dst, {"": want_hook}))
         settings = hd / "native" / "claude-code" / "settings.json"
         try:
-            pre = json.loads(settings.read_text()).get("hooks", {}).get("PreToolUse", [])
+            pre = json.loads(settings.read_text(encoding="utf-8")).get("hooks", {}).get("PreToolUse", [])
         except (OSError, ValueError) as e:
             problems.append(f"{h}: cannot read {settings.relative_to(root)}: {e}")
             continue

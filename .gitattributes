@@ -2,3 +2,4 @@
 # Git for Windows' autocrlf included (KAN-460).
 shared/** text=auto eol=lf
 harnesses/** text=auto eol=lf
+templates/** text=auto eol=lf
