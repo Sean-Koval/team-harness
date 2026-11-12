@@ -41,9 +41,9 @@ jobs:
       - name: Hook tests
         run: python -m pytest -q tests
 
-  # Coworkers run the hooks natively on Windows (KAN-460). No bash: every step is Python under PowerShell, and the
-  # default checkout keeps Git for Windows' CRLF conversion, as a coworker's clone would. The installer's tests join
-  # this list when scripts/install_local.py lands (KAN-367).
+  # Coworkers run the hooks natively on Windows (KAN-460). No bash: every step is Python under PowerShell. The checkout
+  # keeps Git for Windows' default CRLF conversion, as a coworker's clone would; .gitattributes holds the pinned
+  # harness files at LF. The installer's tests join this list when scripts/install_local.py lands (KAN-367).
   windows:
     runs-on: windows-latest
     strategy:
