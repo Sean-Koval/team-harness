@@ -37,5 +37,5 @@ here (the harness hook in `shared/work-system/` only catches them earlier). See 
 At work, set `jira-base-url` to the company site and `key-pattern` if keys look different. No static Jira credential
 is used at work today (KAN-369): leave `jira-user` and `jira-token` unset until the credential method is signed off
 in KAN-450. Until then the check runs rules 1-5 without the ticket check, and the org's approval gates report
-`unverified` and fail closed (KAN-365), so a person must approve the merge. There is no setting that lets an
-unverified gate pass.
+`unverified` and fail closed (KAN-365), so a person must approve the merge. At work, keep `allow-unverified` false
+(leave it unset) until KAN-450, so the gates stay closed.
