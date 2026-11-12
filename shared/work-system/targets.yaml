@@ -8,7 +8,7 @@
 # the approval steps. Nothing person- or company-specific is written into a shared file itself.
 #
 # team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
-skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr]   # every harness below
+skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
 hook_command: python3 "$HOME/.claude/hooks/guard_work_system.py"
 harnesses:

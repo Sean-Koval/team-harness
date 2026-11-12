@@ -25,5 +25,10 @@ params:
     delete the branch: `gh pr merge <n> --squash --delete-branch`. In a hangar job, hangar lands it. Never use
     `--admin`, never bypass branch protection, and never merge a PR you were told to leave for review. The merge moves
     the ticket to Done.
+  scope_map: >-
+    Sean's side projects (Cabinet, Symphony Coach, Early Signal, mesh, Model Risk and the like) are `personal`. The
+    knowledge system, the work system and the shared suite tools (ai-dlc, team-harness, hangar, flightdeck, the trace
+    compiler) are `team`. This harness holds no customer engagements. When a Source names none of these, keep the
+    Source's own scope.
   approvals: >-
     None beyond the PR's own checks: a suite PR needs no separate approval tickets.
