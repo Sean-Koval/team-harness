@@ -37,7 +37,8 @@ inputs:
     default: ""
   org-file:
     description: >-
-      Path to an org.yaml (schema team-harness.org/v1) in the repository (optional). It is read at the PR's base commit
+      Path to an org.yaml (schema team-harness.org/v1) relative to the repository root (optional; absolute paths and
+      ".." are refused). It is read at the PR's base commit
       through the contents API, so a PR can't loosen its own gates. Every merge gate whose `when` matches the PR then
       needs a `<pr_line>: <KEY>` line in the body naming a ticket in the gate's project; with Jira credentials the
       ticket must also have the gate's issue type and links and, if the gate lists approved_statuses, be in one of them.

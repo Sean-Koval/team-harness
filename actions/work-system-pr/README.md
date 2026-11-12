@@ -65,7 +65,8 @@ jobs:
 `work-system / pr` run stays failed. Once the SRE (or other) ticket is approved, re-run the job from the PR's Checks
 tab (or `gh run rerun <run id> --failed`); editing the PR body also re-runs it.
 
-**The gates come from the base commit.** The check reads `org-file` at the PR's base commit through the contents API,
+**The gates come from the base commit.** `org-file` is a path relative to the repository root (an absolute path or one
+with `..` fails the check). The check reads it at the PR's base commit through the contents API,
 not from the checkout, so a PR can't loosen its own gates (for example by setting `placeholder: true`). A PR that
 changes the org file is held to the base commit's version; its change applies from the next PR. If the file can't be
 read at the base commit (it is new, or the API failed), the checked-out copy is used only when the PR doesn't change

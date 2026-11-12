@@ -681,6 +681,28 @@ def test_main_uses_the_checkout_when_the_base_read_fails_and_the_pr_leaves_it_al
     assert "read from the checkout" in r.stdout
 
 
+@pytest.mark.parametrize("org_file", ["{tmp}/orgs/test-co/org.yaml", "/etc/org.yaml", "../org.yaml",
+                                      "orgs/../../org.yaml", "./..", "C:/org.yaml", "\\\\host\\org.yaml"])
+def test_main_rejects_an_org_file_outside_the_repository(tmp_path, fake_api, org_file):
+    # an absolute or escaping path would skip the base-commit read, so a PR could set its own gates
+    fake_api.files(["README.md", "orgs/test-co/org.yaml"])
+    fake_api.base_org(ORG_YAML)
+    placeholder = ORG_YAML.replace("placeholder: false", "placeholder: true")
+    r, _ = run_main(tmp_path, BODY, placeholder, org_file=org_file.format(tmp=tmp_path), api=fake_api,
+                    extra_env={"INPUT_ALLOW_UNVERIFIED": "true"})
+    assert r.returncode == 1 and "must be a path inside the repository" in r.stdout
+    assert "is a placeholder" not in r.stdout and not any("/contents/" in p for p in fake_api.seen)
+
+
+def test_main_normalises_a_dotted_org_file_path_and_reads_it_at_base(tmp_path, fake_api):
+    fake_api.files(["README.md", ORG_PATH])
+    fake_api.base_org(ORG_YAML)
+    placeholder = ORG_YAML.replace("placeholder: false", "placeholder: true")
+    r, _ = run_main(tmp_path, BODY, placeholder, org_file="./orgs/x/../test-co/org.yaml", api=fake_api)
+    assert r.returncode == 1 and "::error::gate 'sre'" in r.stdout and "is a placeholder" not in r.stdout
+    assert f"/repos/o/r/contents/{ORG_PATH}?ref={BASE_SHA}" in fake_api.seen
+
+
 def _jira_world(api, sre=None, work_labels=("exec:pair",)):
     api.files(["README.md"])
     api.base_org(ORG_YAML)

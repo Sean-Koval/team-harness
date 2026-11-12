@@ -604,10 +604,14 @@ def load_gate_org(org_file: str, pr: dict, files: list[dict] | None, *, repo: st
     """The org file the gates come from, and warnings. Read from the PR's base commit so a PR can't loosen its own
     gates. If that read fails, the checked-out copy is used only when the PR provably leaves the file unchanged."""
     warnings: list[str] = []
-    rel = os.path.normpath(org_file)
+    rel = os.path.normpath(org_file.replace("\\", "/")) if org_file else ""
+    if not org_file or os.path.isabs(org_file) or org_file.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", org_file) \
+            or rel == "." or rel == ".." or rel.startswith("../"):
+        raise OrgError("must be a path inside the repository, relative to its root (no absolute path, no '..'), so "
+                       "it can be read at the PR's base commit")
     base_sha = (pr.get("base") or {}).get("sha") or ""
-    why = "the org file is an absolute path" if os.path.isabs(org_file) else "the PR event has no base commit"
-    if base_sha and not os.path.isabs(org_file):
+    why = "the PR event has no base commit"
+    if base_sha:
         try:
             text = _org_at_base(repo, rel, base_sha, token, api)
         except urllib.error.HTTPError as e:
@@ -625,7 +629,7 @@ def load_gate_org(org_file: str, pr: dict, files: list[dict] | None, *, repo: st
     if rel in _changed_paths(files):
         raise OrgError(f"{why}, and this PR changes it: a PR can't set its own merge gates (a maintainer merges "
                        "changes to the org file)")
-    path = org_file if os.path.isabs(org_file) else os.path.join(workspace, org_file)
+    path = os.path.join(workspace, rel)
     warnings.append(f"{org_file} was read from the checkout because {why}; the PR does not change it")
     return load_org(path, tracker_line=tracker_line), warnings
 
