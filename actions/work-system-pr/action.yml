@@ -2,7 +2,8 @@ name: Work-system PR check
 description: >-
   Fails a pull request that doesn't name its ticket (title key and a Jira line), doesn't say where its docs went, or
   implements a Decision without an ADR; with Jira credentials, also checks the ticket is open, laned and not blocked by
-  an open Decision. Read-only.
+  an open Decision. With an org file, also holds the PR until the approval tickets of the org's merge gates are linked
+  (and, with Jira credentials, approved; without them a gate that needs an approval fails). Read-only.
 inputs:
   github-token:
     description: Token to list the PR's files (the default job token is enough)
@@ -34,11 +35,39 @@ inputs:
   jira-token:
     description: Read-only Jira API token (optional; pass from a secret)
     default: ""
+  org-file:
+    description: >-
+      Path to an org.yaml (schema team-harness.org/v1) relative to the repository root (optional; absolute paths and
+      ".." are refused). It is read at the PR's base commit
+      through the contents API, so a PR can't loosen its own gates. Every merge gate whose `when` matches the PR then
+      needs a `<pr_line>: <KEY>` line in the body naming a ticket in the gate's project; with Jira credentials the
+      ticket must also have the gate's issue type and links and, if the gate lists approved_statuses, be in one of them.
+    default: ""
+  allow-unverified:
+    description: >-
+      "true" lets a gate with approved_statuses pass, with a warning, when its ticket can't be read (no Jira
+      credentials, as on fork and Dependabot PRs, or Jira down). Default "false": such a gate fails.
+    default: "false"
 runs:
   using: composite
   steps:
+    # The org file is YAML. When it is set and the runner's python3 has no PyYAML, install one pinned version into a
+    # throwaway venv (the runner's system Python refuses pip installs); without org-file nothing is installed.
+    - id: python
+      shell: bash
+      env:
+        INPUT_ORG_FILE: ${{ inputs.org-file }}
+        VENV: ${{ runner.temp }}/work-system-pr-venv
+      run: |
+        py=python3
+        if [ -n "$INPUT_ORG_FILE" ] && ! python3 -c "import yaml" 2>/dev/null; then
+          python3 -m venv "$VENV"
+          "$VENV/bin/python" -m pip install --quiet --disable-pip-version-check --only-binary=:all: "pyyaml==6.0.3"
+          py="$VENV/bin/python"
+        fi
+        echo "path=$py" >> "$GITHUB_OUTPUT"
     - shell: bash
-      run: python3 "${{ github.action_path }}/check.py"
+      run: '"${{ steps.python.outputs.path }}" "${{ github.action_path }}/check.py"'
       env:
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         INPUT_KEY_PATTERN: ${{ inputs.key-pattern }}
@@ -50,3 +79,5 @@ runs:
         INPUT_JIRA_BASE_URL: ${{ inputs.jira-base-url }}
         INPUT_JIRA_USER: ${{ inputs.jira-user }}
         INPUT_JIRA_TOKEN: ${{ inputs.jira-token }}
+        INPUT_ORG_FILE: ${{ inputs.org-file }}
+        INPUT_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}
