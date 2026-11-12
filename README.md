@@ -172,6 +172,22 @@ thaws (hangar#221). `env.stable.yaml` still carries exactly the pinned files for
 of a lock, and `scripts/check_registry.py` proves with hangar's own manifest code that a turn on it reports the lock's
 digest.
 
+## Run it on a laptop
+
+Claude Code on your own machine can carry the same harness, pinned to the same lock:
+
+```sh
+python scripts/install_local.py harnesses/work-default --scope user              # the plan; writes nothing
+python scripts/install_local.py harnesses/work-default --scope user --apply      # into ~/.claude
+python scripts/install_local.py harnesses/work-default --scope user --check      # exit 1 on drift or a newer revision
+```
+
+`--scope project --target DIR` writes into `DIR/.claude/` instead. The script copies the skills, hooks and guide, and
+merges the hooks and deny rules into your `settings.json`. It never overwrites a file it didn't install, and keeps
+your own `CLAUDE.md` (it prints the one `@import` line to add). `.claude/team-harness.json` records what it wrote, so
+`--uninstall` removes only that. It prints the `claude mcp add` commands with credential placeholders; it never
+handles a credential.
+
 ## From change to promotion
 
 ```mermaid
@@ -304,6 +320,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
+| `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
 | `environments/` | Role environments for the four-repo convention and `work-multirepo` for change sets |
 | `changesets/` | An example change-set profile |
 | `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks (on the role environments too), `work-multirepo` covering the roles, change-set profiles well formed |
