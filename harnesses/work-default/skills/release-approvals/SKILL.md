@@ -23,7 +23,7 @@ below disagree, `org-process` wins: follow it, and say in the PR which row diffe
 | Ticket type | Project | Issue type | Role | Summary |
 | --- | --- | --- | --- | --- |
 | `work` | `WORKPROJ` | Story | work | - |
-| `sre-approval` | `SREPROJ` | Task | approval | `SRE approval: {work_key} {pr_title}` |
+| `sre-approval` | `SREPROJ` | Task | approval | `SRE approval: {pr_title}` |
 | `infosec-review` | `SECPROJ` | Task | approval | `Infosec review: {repo} {work_key}` |
 
 ## Gates, in order

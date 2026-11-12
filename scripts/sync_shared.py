@@ -9,20 +9,25 @@ file and each harness gets concrete text. For each target harness this:
 - renders `shared/work-system/skills/<name>/` into `harnesses/<h>/skills/<name>/` (the whole directory), for the
   shared skill list plus the harness's own `skills:` from targets.yaml;
 - renders the hook into `harnesses/<h>/native/claude-code/hooks/`;
+- deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
+  own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
   tools (it never edits settings.json: that file is the harness's own).
 
 A harness may also name a company's org overlay (`org: orgs/<org>` in targets.yaml). Its `org.yaml`
-(`team-harness.org/v1`) is validated; its `params` win over the profile's; it fills the generated placeholders
+(`team-harness.org/v1`) is validated; its `params` may set only `tracker` and the `kb_*` keys, and win over the
+profile's for those (the merge rule, the wall and the rest stay the profile's); it fills the generated placeholders
 `{{org_status}}`, `{{org_ticket_types}}`, `{{org_gates}}` and `{{org_review_request}}` (markdown); and each of its
-`skills/<name>/` (at least `org-process`, the company's own flow skill) is rendered into the harness's skills too.
-suite-default never takes an org: that is the work/home wall.
+`skills/<name>/` (at least `org-process`, the company's own flow skill) is copied into the harness's skills verbatim,
+never rendered, so a company document may hold `{{ }}` freely. suite-default never takes an org: that is the
+work/home wall.
 
 A placeholder the profile does not fill is an error, never an empty string.
 
     python scripts/sync_shared.py            # write the copies
-    python scripts/sync_shared.py --check    # CI: exit 1 when a copy differs, a placeholder is unfilled, the hook
-                                             # is not registered, an org is invalid, or suite-default names an org
+    python scripts/sync_shared.py --check    # CI: exit 1 when a copy differs, a skill copy is left over, a
+                                             # placeholder is unfilled, the hook is not registered, an org is
+                                             # invalid, or suite-default names an org
 
 After a write, re-pin each changed harness (`python scripts/relock.py harnesses/<h> --write`) and re-render its
 environments (`python scripts/render_envs.py harnesses/<h>`).
@@ -57,6 +62,10 @@ FILED_BY = {"agent", "person"}
 SUMMARY_FIELDS = {"work_key", "pr_title", "pr_url", "repo"}
 TEMPLATE_FIELDS = SUMMARY_FIELDS | {"summary", "gate_lines", "risk"}
 RESERVED_PR_LINES = {"jira", "docs", "decision"}  # the PR check's own lines
+# What an org may override: where tickets and pages go. The merge rule, the wall, the approval steps and the rest are
+# the harness profile's, so a company fork cannot turn on merging or drop the wall from org.yaml.
+ORG_PARAMS = frozenset({"tracker"})
+ORG_PARAM_PREFIXES = ("kb_",)
 PR_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]*$")
 
 
@@ -95,7 +104,20 @@ def _profile(shared: Path, h: str, entry: dict, problems: list[str]) -> dict[str
 
 
 def _fields(template: str) -> set[str]:
+    """The {field} names in a str.format template; ValueError when it is malformed (an unmatched brace)."""
     return {f for _, f, _, _ in string.Formatter().parse(template) if f}
+
+
+def _template_problems(where: str, template: str, allowed: set[str]) -> list[str]:
+    """Problems with a {field} template: malformed, an unknown field, or a doubled brace (which would reach the
+    agent as a literal `{{x}}`)."""
+    if "{{" in template or "}}" in template:
+        return [f"{where}: doubled braces ({{{{ or }}}}) are not allowed; use {{field}} with one of {sorted(allowed)}"]
+    try:
+        fields = _fields(template)
+    except ValueError as e:
+        return [f"{where}: malformed template ({e})"]
+    return [f"{where} field {{{f}}} is not one of {sorted(allowed)}" for f in sorted(fields - allowed)]
 
 
 def _unknown(where: str, d: dict, allowed: set[str], problems: list[str]) -> None:
@@ -125,6 +147,9 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
             problems.append(f"{where}: params.{k} must be a string")
         if str(k).startswith("org_"):
             problems.append(f"{where}: params.{k}: org_* placeholders are generated from org.yaml")
+        elif k not in ORG_PARAMS and not str(k).startswith(ORG_PARAM_PREFIXES):
+            problems.append(f"{where}: params.{k} cannot be set by an org (only tracker and kb_* may be; the merge "
+                            f"rule, the wall and the rest stay the harness profile's)")
         elif profile_keys is not None and k not in profile_keys:
             problems.append(f"{where}: params.{k} is not a profile parameter (org params override the profile's)")
 
@@ -147,8 +172,11 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
             if not isinstance(t["summary"], str):
                 problems.append(f"{w}: summary must be a string")
             else:
-                for f in sorted(_fields(t["summary"]) - SUMMARY_FIELDS):
-                    problems.append(f"{w}: summary field {{{f}}} is not one of {sorted(SUMMARY_FIELDS)}")
+                errs = _template_problems(f"{w}: summary", t["summary"], SUMMARY_FIELDS)
+                problems.extend(errs)
+                if not errs and {"work_key", "pr_title"} <= _fields(t["summary"]):
+                    problems.append(f"{w}: summary uses both {{work_key}} and {{pr_title}}, but the PR title already "
+                                    f"starts with the work key; drop {{work_key}}")
         if isinstance(t.get("id"), str):
             if t["id"] in types:
                 problems.append(f"{w}: ticket type id {t['id']!r} is not unique")
@@ -215,14 +243,7 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
             if not isinstance(rr.get(k), str) or not rr.get(k).strip():
                 problems.append(f"{where}: review_request.{k} is required (a string)")
         if isinstance(rr.get("template"), str):
-            try:
-                fields = _fields(rr["template"])
-            except ValueError as e:
-                problems.append(f"{where}: review_request.template: {e}")
-            else:
-                for f in sorted(fields - TEMPLATE_FIELDS):
-                    problems.append(f"{where}: review_request.template field {{{f}}} is not one of "
-                                    f"{sorted(TEMPLATE_FIELDS)}")
+            problems.extend(_template_problems(f"{where}: review_request.template", rr["template"], TEMPLATE_FIELDS))
     return problems
 
 
@@ -317,13 +338,15 @@ def _skill_name(skill_md: Path) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def plan(root: Path = ROOT, warnings: list[str] | None = None) -> tuple[list[tuple[Path, Path, dict[str, bytes]]], list[str]]:
-    """(source, destination, rendered files) for every copy that is out of sync, and problems. Notes that are not
-    errors (a placeholder org) are appended to `warnings`."""
+def plan(root: Path = ROOT, warnings: list[str] | None = None
+         ) -> tuple[list[tuple[Path, Path, dict[str, bytes] | None]], list[str]]:
+    """(source, destination, rendered files) for every copy that is out of sync, and problems. A left-over skill
+    directory is (it, it, None): `write` deletes it. Notes that are not errors (a placeholder org) are appended to
+    `warnings`."""
     warnings = [] if warnings is None else warnings
     shared = root / "shared" / "work-system"
     t = yaml.safe_load((shared / "targets.yaml").read_text())
-    stale: list[tuple[Path, Path, dict[str, bytes]]] = []
+    stale: list[tuple[Path, Path, dict[str, bytes] | None]] = []
     problems: list[str] = []
     hook_src = shared / t["hook"]
     harnesses = t["harnesses"]
@@ -338,24 +361,34 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None) -> tuple[list[tup
         params = _profile(shared, h, entry, problems)
         org_dir, org_params = _org(root, h, entry, params, problems, warnings)
         params = {**params, **org_params}  # the org wins
-        sources = [(shared / "skills" / s, s) for s in list(t["skills"]) + list(entry.get("skills") or [])]
+        sources = [(shared / "skills" / s, s, True) for s in list(t["skills"]) + list(entry.get("skills") or [])]
+        own = set(entry.get("own_skills") or [])
+        for s in sorted(own & {n for _, n, _ in sources}):
+            problems.append(f"{h}: own_skills names {s}, which the shared layer renders")
         if org_dir is not None:
             for d in sorted(p for p in (org_dir / "skills").iterdir() if p.is_dir()):
-                if d.name in {n for _, n in sources}:
-                    problems.append(f"{h}: org skill {d.name} has the name of a shared skill")
+                if d.name in {n for _, n, _ in sources} | own:
+                    problems.append(f"{h}: org skill {d.name} has the name of a shared or harness skill")
                     continue
-                if (d / "SKILL.md").is_file() and _skill_name(d / "SKILL.md") not in (None, d.name):
-                    problems.append(f"{h}: {d.relative_to(root)}/SKILL.md must be named {d.name}")
-                sources.append((d, d.name))
-        for src, s in sources:
+                if (d / "SKILL.md").is_file() and _skill_name(d / "SKILL.md") != d.name:
+                    problems.append(f"{h}: {d.relative_to(root)}/SKILL.md must have frontmatter name: {d.name}")
+                sources.append((d, d.name, False))  # the company's own files: copied verbatim, never rendered
+        for src, s, rendered in sources:
             dst = hd / "skills" / s
             if not src.is_dir():
                 problems.append(f"{h}: shared skill {s} does not exist")
                 continue
             where = f"{h}: {src.relative_to(root)}"
-            want = {rel: render(b, params, f"{where}/{rel}", problems) for rel, b in _files(src).items()}
+            want = {rel: render(b, params, f"{where}/{rel}", problems) if rendered else b
+                    for rel, b in _files(src).items()}
             if not dst.is_dir() or want != _files(dst):
                 stale.append((src, dst, want))
+        produced = {s for _, s, _ in sources} | own
+        skills_dir = hd / "skills"
+        org_failed = bool(entry.get("org")) and org_dir is None and h not in NO_ORG
+        for d in sorted(p for p in skills_dir.iterdir() if p.is_dir()) if skills_dir.is_dir() and not org_failed else []:
+            if d.name not in produced:
+                stale.append((d, d, None))  # left over: an org skill removed or renamed, or a dropped shared skill
         dst = hd / "native" / "claude-code" / "hooks" / hook_src.name
         want_hook = render(hook_src.read_bytes(), params, f"{h}: {t['hook']}", problems)
         if not dst.is_file() or dst.read_bytes() != want_hook:
@@ -375,8 +408,12 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None) -> tuple[list[tup
     return stale, problems
 
 
-def write(stale: list[tuple[Path, Path, dict[str, bytes]]], root: Path = ROOT) -> None:
+def write(stale: list[tuple[Path, Path, dict[str, bytes] | None]], root: Path = ROOT) -> None:
     for src, dst, files in stale:
+        if files is None:
+            shutil.rmtree(dst)
+            print(f"removed {dst.relative_to(root)} (no longer produced)")
+            continue
         if src.is_dir():
             if dst.exists():
                 shutil.rmtree(dst)
@@ -399,7 +436,11 @@ def main(argv: list[str] | None = None) -> int:
     for w in warnings:
         print(f"warning: {w}", file=sys.stderr)
     if args.check:
-        for src, dst, _ in stale:
+        for src, dst, files in stale:
+            if files is None:
+                print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org or own_skills "
+                      "(a removed or renamed skill?); python scripts/sync_shared.py deletes it", file=sys.stderr)
+                continue
             print(f"error: {dst.relative_to(ROOT)} differs from the rendering of {src.relative_to(ROOT)} "
                   "(edit shared/work-system/, then python scripts/sync_shared.py)", file=sys.stderr)
     elif not problems:

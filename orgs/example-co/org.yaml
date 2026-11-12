@@ -6,14 +6,14 @@
 schema: team-harness.org/v1
 name: example-co
 placeholder: true            # the public example: agents file nothing and say the overlay is not applied
-params:                      # override the harness profile's params (same keys; the org wins)
+params:                      # only tracker and kb_* may be set here (the org wins for those)
   tracker: "the WORKPROJ project on COMPANY-SITE.atlassian.net"
   kb_site: "COMPANY-SITE.atlassian.net"
   kb_space: "COMPANY-SPACE"
 ticket_types:                # every ticket kind the flow uses
   - {id: work, project: WORKPROJ, issue_type: Story, role: work}
   - {id: sre-approval, project: SREPROJ, issue_type: Task, role: approval,
-     summary: "SRE approval: {work_key} {pr_title}"}
+     summary: "SRE approval: {pr_title}"}   # the PR title starts with the work key
   - {id: infosec-review, project: SECPROJ, issue_type: Task, role: approval,
      summary: "Infosec review: {repo} {work_key}"}
 gates:                       # what must exist before a PR merges, in order

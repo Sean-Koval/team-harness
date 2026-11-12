@@ -45,8 +45,8 @@ components:
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:release-approvals
-  digest: sha256:759d6df615f491744ceac0c606eedfdabc15be3fac8d0bc722311a35043d8e6f
-  tree: sha256:d55a9d14514b110312500120bcb6c44ea17896a7e5e37683b8a06db85a91fd2e
+  digest: sha256:647b87fa086402378c72e59bcebab995e0da30ff448d235443fb699f76c5b5d1
+  tree: sha256:f860a66a401b43800cef537c4a007d7434b4c1943e16d3c05fe5994531ce6298
   path: skills/release-approvals
   source: path:skills/release-approvals
 - id: skill:org-process

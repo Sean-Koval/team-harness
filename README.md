@@ -48,7 +48,7 @@ harnesses/work-default/
     change-set/SKILL.md              plan across /workspace/<role>, keep each repo safe on its own, say what depends on what
     jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml
     github-pr/SKILL.md               the per-repo PR description; hangar opens, links and lands the PRs; never merge
-    release-approvals/SKILL.md       the company SDLC: SRE ticket linking the PR, infosec ticket, drafted Symphony review request
+    release-approvals/SKILL.md       runs the gates the org overlay declares: one approval ticket per gate, drafted review request
   native/claude-code/
     settings.json                    hooks + deny rules
     hooks/guard_work.py              PreToolUse: no terraform apply or real backends, no shared databases, no
@@ -126,9 +126,10 @@ A company's own flow (its ticket types, approval tickets and gates) drops in as 
 [`orgs/<org>/`](orgs/README.md), with no edit to a shared file. It holds the company's flow skill, `org-process`,
 copied in as it is, and an `org.yaml` (`team-harness.org/v1`) that declares the same flow as data. A work harness names
 it with one line in `targets.yaml` (`org: orgs/example-co`); a company's private fork changes that line to its own.
-`sync_shared.py` validates `org.yaml`, lets its `params` win over the profile's, renders `release-approvals` with
-tables of its ticket types and gates, and copies `org-process` into the harness. `--check` fails on an invalid org, a
-drifted copy, or an org on `suite-default` (the work/home wall).
+`sync_shared.py` validates `org.yaml` and lets its `params` win for `tracker` and `kb_*` only (never the merge rule or
+the wall). It renders `release-approvals` with tables of its ticket types and gates, copies the org's skills into the
+harness verbatim, and deletes a skill copy nothing produces any more. `--check` fails on an invalid org, a drifted or
+left-over copy, or an org on `suite-default` (the work/home wall).
 
 work-default's agents read `org-process` before they plan. Once a PR is open, `release-approvals` files one ticket per
 gate that applies and adds its `<line>: <KEY>` to the PR body; the review request is still drafted, never posted.

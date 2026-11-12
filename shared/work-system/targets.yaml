@@ -9,8 +9,12 @@
 #
 # A work harness may also name an org overlay (`org: orgs/<org>`, a path from the repository root): the company's own
 # flow skill (`org-process`) and its org.yaml (team-harness.org/v1: ticket types, gates, review request). Its params
-# win over the profile's, it fills the generated {{org_*}} placeholders, and its skills are rendered into the harness
-# too (orgs/README.md). A company's private fork changes that one line to its own org. suite-default never takes one.
+# win over the profile's, it fills the generated {{org_*}} placeholders, and its skills are copied into the harness
+# too, verbatim (orgs/README.md). It may override only `tracker` and the `kb_*` params. A company's private fork
+# changes that one line to its own org. suite-default never takes one.
+#
+# `own_skills:` lists a harness's own skills, which sync_shared.py leaves alone. Any other directory under
+# harnesses/<h>/skills/ that the layer or the org does not produce is deleted by sync_shared.py and fails --check.
 #
 # team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
 skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr]   # every harness below
@@ -23,3 +27,4 @@ harnesses:
     profile: profiles/work-default.yaml
     org: orgs/example-co                  # placeholder org: agents file no approval tickets until a company's replaces it
     skills: [release-approvals]           # in addition to the list above
+    own_skills: [change-set]              # the harness's own, not rendered here
