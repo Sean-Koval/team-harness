@@ -35,7 +35,7 @@ harnesses/team-default/
   harness.lock                       pins all of the above, plus the CLI version, model and MCP bindings
   env.stable.yaml                    hangar environments that provide these files (generated)
   env.candidate.yaml
-channels.yaml                        team-default: {stable: sha256:…, candidate: sha256:…}; work-default: {stable: …}
+channels.yaml                        {stable: sha256:…, candidate: sha256:…} for each harness
 ```
 
 A second harness, `work-default`, and the environments around it are for a company's four-repo services (see
@@ -46,14 +46,16 @@ harnesses/work-default/
   CLAUDE.md, AGENTS.md               how the agent works across a service's infra, database, code and deploy repos
   skills/
     change-set/SKILL.md              plan across /workspace/<role>, keep each repo safe on its own, say what depends on what
-    jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml
+    jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml:
+                                     jira-ticket, work-start, decision-ticket, work-docs, and these two
     github-pr/SKILL.md               the per-repo PR description; hangar opens, links and lands the PRs; never merge
-    release-approvals/SKILL.md       the company SDLC: SRE ticket linking the PR, infosec ticket, drafted Symphony review request
+    release-approvals/SKILL.md       runs the gates the org overlay declares: one approval ticket per gate, drafted review request
   native/claude-code/
-    settings.json                    hooks + deny rules
+    settings.json                    hooks + deny rules (gh pr merge is denied)
     hooks/guard_work.py              PreToolUse: no terraform apply or real backends, no shared databases, no
                                      cluster changes, no edits under /workspace/deploy
-  harness.lock, env.stable.yaml      as for team-default
+    hooks/guard_work_system.py       PreToolUse: the shared work-system hook (see below); refuses every merge here
+  harness.lock, env.stable.yaml      as for team-default; `stable` and `candidate` are both r3 (11 components)
 environments/
   roles/{infra,code,database,deploy}.yaml   role-infra, role-code, role-database, role-deploy: work-default + each role's tools
   work-multirepo.yaml                one image with the infra, code and database roles' tools, for change sets
@@ -66,7 +68,7 @@ names, never values:
 ```yaml
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 4
+revision: 5
 runtime: {harness: claude-code, version: 2.1.296}
 model: {id: claude-opus-5-5, policy: balanced}
 components:
@@ -80,8 +82,12 @@ binding:
   - {name: gke, transport: stdio, command: kubernetes-mcp-server, args: [--read-only], env_names: [KUBECONFIG]}
   - {name: jira, transport: http, endpoint: "https://mcp.atlassian.com/v1/mcp", header_names: [Authorization]}
   - {name: splunk, transport: http, endpoint: "https://splunk.example.com:8089/services/mcp", header_names: [Authorization]}
+  hooks:
+  - {event: SessionStart, source: environment:.claude/settings.json, digest: sha256:6165…}
+  - {event: PreToolUse, source: environment:.claude/settings.json, digest: sha256:6165…}
   permissions: {approvals: deny-risky}
 plugins: {autoUpdate: false}
+remote: []
 ```
 
 Its identity is one digest, `harness_digest`. A turn hangar runs from this harness reports the same digest in its
@@ -89,7 +95,7 @@ manifest; if the sandbox had anything else, the difference is recorded as drift.
 
 ```console
 $ hangar harness check harnesses/team-default
-ok: team-default r4, 24 component(s), harness_digest sha256:…
+ok: team-default r5, 9 component(s), harness_digest sha256:…
 ```
 
 ## The work system: every surface, same rules
@@ -119,8 +125,22 @@ CI fails when a copy differs or a placeholder is unfilled (`--check`). What diff
 | How a Decision is filed | work type Decision with its fields | the Decision type if the project has one, else a Task labelled `type:decision` |
 | Knowledge base | `seanmkoval.atlassian.net`, space SD (Second brain) | the company site and space, set by the company overlay; no page is written until it is |
 | Merge | agents may merge their own PR on green checks, never `--admin` | never: SRE approves or merges, hangar lands change sets; the hook refuses `gh pr merge` |
-| Approval steps | none beyond checks | `release-approvals`: SRE ticket linking the PR, infosec ticket, drafted (never posted) Symphony review request |
+| Approval steps | none beyond checks | `release-approvals`: one ticket per gate the org overlay declares (the example: SRE and infosec), drafted (never posted) review request |
 | The wall | refuses `origin: work` and company content | employer content never leaves company systems and approved tools |
+
+A company's own flow (its ticket types, approval tickets and gates) drops in as an **org overlay**,
+[`orgs/<org>/`](orgs/README.md), with no edit to a shared file. It holds the company's flow skill, `org-process`,
+copied in as it is, and an `org.yaml` (`team-harness.org/v1`) that declares the same flow as data. A work harness names
+it with one line in `targets.yaml` (`org: orgs/example-co`); a company's private fork changes that line to its own.
+`sync_shared.py` validates `org.yaml` and lets its `params` win for `tracker` and `kb_*` only (never the merge rule or
+the wall). It renders `release-approvals` with tables of its ticket types and gates, copies the org's skills into the
+harness verbatim, and deletes a skill copy nothing produces any more. `--check` fails on an invalid org, a drifted or
+left-over copy, or an org on `suite-default` (the work/home wall).
+
+work-default's agents read `org-process` before they plan. Once a PR is open, `release-approvals` files one ticket per
+gate that applies and adds its `<line>: <KEY>` to the PR body; the review request is still drafted, never posted.
+If `org-process` and `org.yaml` disagree, `org-process` wins and the PR says so. The shipped `orgs/example-co/` is all
+placeholders (`placeholder: true`), so agents on it file nothing and say the overlay isn't applied.
 
 Lanes are projects (Jira epics). Who executes a ticket is its execution label, `exec:agent|pair|human`; the older
 `lane:*` names are accepted by the hook, the PR check and the behaviour specs until Jira is relabelled. A ruling on a
@@ -242,8 +262,9 @@ the profiles a company actually runs) is the company overlay template in
   Replace the toolchains with your services'.
 - **One sandbox for a change set.** `environments/work-multirepo.yaml` carries the infra, code and database roles'
   tools together; `check_registry.py` fails if a role installs something it doesn't.
-- **The harness.** `work-default` (r1, `stable`) is pinned the same way as `team-default`: native files and a
-  `harness.lock` (written with `scripts/relock.py`; replace it with `hangar harness freeze` from a good run), with the skills for a company SDLC (Jira ticket, GitHub PR, change sets across the four repos) and a
+- **The harness.** `work-default` (r3, `stable` since KAN-436) is pinned the same way as `team-default`: native files and a
+  `harness.lock` (written with `scripts/relock.py`; replace it with `hangar harness freeze` from a good run). It carries
+  `change-set` for the four repos, the shared work-system skills with `release-approvals`, the work-system hook, and a
   guard hook that keeps shared systems read-only and the deploy checkout untouched. Its MCP servers are GitHub and
   Jira; the credential names are in `bindings/work-default.yaml`.
 - **A change-set profile.** `changesets/example-service.yaml` shows the shape hangar's change sets take
@@ -281,6 +302,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | --- | --- |
 | `harnesses/<name>/` | One harness: native files plus `harness.lock` |
 | `shared/work-system/` | The work-system skills and hook, edited once; `targets.yaml` names the harnesses that carry them |
+| `orgs/<org>/` | A company's org overlay: its `org-process` flow skill and `org.yaml` (ticket types, gates, review request); `example-co` is the placeholder |
 | `actions/work-system-pr/` | The PR check other repositories call, pinned by commit |
 | `templates/` | The PR template the PR check reads |
 | `scripts/sync_shared.py` | Copy the shared layer into each harness; `--check` in CI |

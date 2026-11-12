@@ -5,8 +5,8 @@ team-default:
   stable: "sha256:8242a53f8befb71236d41fb3188e50c0dd6c674a59c821f64d853c05bd81b074"  # r1 (re-keyed: hangar#221 changed the digest form; same lock)
   candidate: "sha256:8c644baec76060fbf3cd46ed3fe32bcabd3e08b4f9e10b3ffd0b5d9b7b44b6aa"  # r5: + ai-dlc workflow plugin (Claude); Codex form dropped, jira-ticket status rule stated (KAN-324)
 work-default:
-  stable: "sha256:a7953f6685f2967d3919f794e7bc08e21279c4448f8e0ec763d07c5b43ecfe31"  # r1: the company SDLC harness (Jira, GitHub PRs, change sets)
-  candidate: "sha256:6ca5287736a87b67e178907b0967776f00e12a91e799d3b522f161189db7fd55"  # r3: work-system layer rendered from the work profile, company SDLC approvals, never merge (KAN-324)
+  stable: "sha256:6ca5287736a87b67e178907b0967776f00e12a91e799d3b522f161189db7fd55"  # r3, promoted from candidate (KAN-436); r1 was a7953f66…
+  candidate: "sha256:e58943905926e935ce10274ed1e87442f019620c4775b032c32ff84c1b1cec5c"  # r4: org overlay slot (orgs/example-co placeholder, org-process skill), release-approvals runs the gates org.yaml declares
 suite-default:
-  stable: "sha256:0176852a9bebf43b10b1660d28ab72127add68037a203990eca9f4f5299a6998"  # r1: Sean's projects on the work system (KAN-315); first pin, not a promotion
+  stable: "sha256:49f699725ca6be505fa74819bd89479490c9d4adf7355ec0ea88a9a9fdd04fba"  # r2, promoted from candidate (KAN-436); r1 (0176852a…) was the first pin
   candidate: "sha256:49f699725ca6be505fa74819bd89479490c9d4adf7355ec0ea88a9a9fdd04fba"  # r2: rendered from the suite profile, may merge on green, exec:* labels (KAN-324)

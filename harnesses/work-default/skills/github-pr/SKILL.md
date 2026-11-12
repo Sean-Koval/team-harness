@@ -37,7 +37,7 @@ fails any PR that breaks the contract below, whichever surface opened it.
 
 ## Approvals
 
-Every PR goes through the company's review steps: use the `release-approvals` skill once the PR is open (an SRE ticket that links the PR, an infosec ticket that links the repository, and a drafted review request for the team's Symphony room that a person posts).
+Every PR goes through the company's review steps: use the `release-approvals` skill once the PR is open. It files one approval ticket per gate the company's org overlay declares (`org-process` describes the flow), adds each gate's line to the PR body, and drafts a review request that a person posts.
 
 ## Checks and reviews
 
@@ -47,4 +47,4 @@ Every PR goes through the company's review steps: use the `release-approvals` sk
 - Never approve your own PR, dismiss a review, push to `main`, push to another repository's branch, or change branch
   protection.
 
-**Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. SRE approves (or merges) the PR after reviewing the SRE ticket that links it (`release-approvals`); hangar lands change sets only after each repository's own approvers approve. The hook refuses `gh pr merge`.
+**Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. The approvers the company's org overlay declares approve (or merge) the PR from their gate tickets (`release-approvals`); hangar lands change sets only after each repository's own approvers approve. The hook refuses `gh pr merge`.
