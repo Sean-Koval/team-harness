@@ -1,6 +1,8 @@
 """The shared work-system PreToolUse guard: work carries a ticket key, and agents don't move tickets."""
 
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +14,8 @@ HOOK = ROOT / "shared/work-system/hooks/guard_work_system.py"
 
 
 def run(event) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event), capture_output=True, text=True)
+    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event), capture_output=True,
+                          encoding="utf-8")
 
 
 def bash(command: str, cwd: Path | None = None) -> int:
@@ -147,7 +150,7 @@ def test_key_pattern_is_configurable(repo):
     event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": str(d)})
     assert subprocess.run(env_cmd, input=event, capture_output=True, text=True).returncode == 2
     r = subprocess.run(env_cmd, input=event, capture_output=True, text=True,
-                       env={"PATH": "/usr/bin:/bin", "WORK_SYSTEM_KEY": r"ABC_[0-9]+"})
+                       env={**os.environ, "WORK_SYSTEM_KEY": r"ABC_[0-9]+"})
     assert r.returncode == 0
 
 
@@ -193,7 +196,8 @@ def test_editing_without_touching_lanes_is_allowed():
 
 
 def run_hook(hook: Path, event) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(hook)], input=json.dumps(event), capture_output=True, text=True)
+    return subprocess.run([sys.executable, str(hook)], input=json.dumps(event), capture_output=True,
+                          encoding="utf-8")
 
 
 SUITE_HOOK = ROOT / "harnesses/suite-default/native/claude-code/hooks/guard_work_system.py"
@@ -221,3 +225,99 @@ def test_suite_default_may_merge_but_never_with_admin():
 def test_rendered_hooks_still_refuse_transitions(hook):
     r = run_hook(hook, {"tool_name": "mcp__atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "KAN-1"}})
     assert r.returncode == 2
+
+
+# Native Windows (KAN-460): the same verdicts and the same message bytes on every platform.
+
+def load_hook():
+    spec = importlib.util.spec_from_file_location("guard_work_system", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def run_bytes(data: bytes) -> subprocess.CompletedProcess:
+    # no PYTHONIOENCODING/PYTHONUTF8: the hook must not depend on the console code page
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    return subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True, env=env)
+
+
+def test_blocked_message_is_the_same_utf8_bytes_everywhere():
+    event = {"tool_name": "Bash", "tool_input": {"command": "git push origin main"}}
+    r = run_bytes(json.dumps(event).encode())
+    assert r.returncode == 2
+    assert r.stderr == b"blocked by the work-system hook: never push to main: push the ticket branch and open a PR.\n"
+
+
+def test_utf8_event_with_non_ascii_text_is_still_judged():
+    # raw UTF-8 (not \\u escapes), as Claude Code sends it; a cp1252 decode would fail and let it through
+    blocked = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'café ✓' && git push origin main"}}
+    assert run_bytes(json.dumps(blocked, ensure_ascii=False).encode("utf-8")).returncode == 2
+    ok = {"tool_name": "mcp__github__create_pull_request",
+          "tool_input": {"title": "KAN-315: naïve résumé ✓", "body": "Jira: KAN-315\nDocs: none needed – café"}}
+    assert run_bytes(json.dumps(ok, ensure_ascii=False).encode("utf-8")).returncode == 0
+
+
+def test_event_with_a_byte_order_mark_is_read():
+    event = {"tool_name": "Bash", "tool_input": {"command": "git push origin main"}}
+    assert run_bytes(b"\xef\xbb\xbf" + json.dumps(event).encode()).returncode == 2
+
+
+def test_non_ascii_reason_is_written_as_utf8(repo):
+    d = repo("fix-café")
+    event = {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": str(d)}
+    r = run_bytes(json.dumps(event).encode())
+    assert r.returncode == 2
+    assert "'fix-café' has no ticket key".encode("utf-8") in r.stderr
+
+
+@pytest.mark.parametrize("encoding, bom", [("utf-8", b""), ("utf-8", b"\xef\xbb\xbf"), ("utf-16-le", b"\xff\xfe")])
+def test_body_file_from_any_windows_editor(tmp_path, encoding, bom):
+    # Windows PowerShell 5 `Out-File` writes UTF-16 with a BOM; Notepad may add a UTF-8 BOM
+    (tmp_path / "body.md").write_bytes(bom + (GOOD_BODY + " – é").replace("\n", "\r\n").encode(encoding))
+    assert bash("gh pr create --title 'KAN-315: x' --body-file body.md", tmp_path) == 0
+    (tmp_path / "bad.md").write_bytes(bom + "no lines – é".encode(encoding))
+    assert bash("gh pr create --title 'KAN-315: x' --body-file bad.md", tmp_path) == 2
+
+
+@pytest.mark.parametrize("segment, words", [
+    (r"git -C C:\Users\me\repo commit -m x", ["git", "-C", r"C:\Users\me\repo", "commit", "-m", "x"]),
+    (r'cd "C:\Users\me\my repo"', ["cd", r"C:\Users\me\my repo"]),
+    (r"git commit -m a\ b", ["git", "commit", "-m", "a b"]),  # POSIX escapes still hold without a drive path
+])
+def test_windows_drive_paths_keep_their_backslashes(segment, words):
+    assert load_hook()._words(segment) == words
+
+
+@pytest.mark.parametrize("command", [
+    "git.exe push origin main",
+    "GIT.EXE push --force origin KAN-1-x",
+    r'"C:\Program Files\Git\cmd\git.exe" push origin main',
+    "/mingw64/bin/git push origin main",
+    "gh.exe pr merge 12 --admin",
+    r"C:\tools\gh.exe pr create --fill",
+])
+def test_windows_program_names_are_recognised(command):
+    assert bash(command) == 2
+
+
+def test_relative_body_file_with_backslashes(tmp_path):
+    (tmp_path / "pr").mkdir()
+    (tmp_path / "pr" / "body.md").write_text(GOOD_BODY, encoding="utf-8")
+    sep = "\\" if os.name == "nt" else "/"
+    assert bash(f"gh pr create --title 'KAN-315: x' --body-file 'pr{sep}body.md'", tmp_path) == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git Bash drive paths exist only on Windows")
+def test_git_bash_drive_path_is_mapped(repo):
+    bare, keyed = repo("main"), repo("KAN-3-z")
+    msys = "/" + str(bare)[0].lower() + str(bare)[2:].replace("\\", "/")
+    assert bash(f"cd {msys} && git commit -m x", keyed) == 2
+    assert bash(f"git -C {msys} commit -m x", keyed) == 2
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows only")
+def test_backslash_drive_paths_reach_the_right_repository(repo):
+    keyed, bare = repo("KAN-4-w"), repo("main")
+    assert bash(f'git -C "{bare}" commit -m x', keyed) == 2
+    assert bash(f"cd {keyed} && git commit -m x", bare) == 0
