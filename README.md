@@ -35,7 +35,7 @@ harnesses/team-default/
   harness.lock                       pins all of the above, plus the CLI version, model and MCP bindings
   env.stable.yaml                    hangar environments that provide these files (generated)
   env.candidate.yaml
-channels.yaml                        team-default: {stable: sha256:…, candidate: sha256:…}; work-default: {stable: …}
+channels.yaml                        {stable: sha256:…, candidate: sha256:…} for each harness
 ```
 
 A second harness, `work-default`, and the environments around it are for a company's four-repo services (see
@@ -46,14 +46,16 @@ harnesses/work-default/
   CLAUDE.md, AGENTS.md               how the agent works across a service's infra, database, code and deploy repos
   skills/
     change-set/SKILL.md              plan across /workspace/<role>, keep each repo safe on its own, say what depends on what
-    jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml
+    jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml:
+                                     jira-ticket, work-start, decision-ticket, work-docs, and these two
     github-pr/SKILL.md               the per-repo PR description; hangar opens, links and lands the PRs; never merge
     release-approvals/SKILL.md       runs the gates the org overlay declares: one approval ticket per gate, drafted review request
   native/claude-code/
-    settings.json                    hooks + deny rules
+    settings.json                    hooks + deny rules (gh pr merge is denied)
     hooks/guard_work.py              PreToolUse: no terraform apply or real backends, no shared databases, no
                                      cluster changes, no edits under /workspace/deploy
-  harness.lock, env.stable.yaml      as for team-default
+    hooks/guard_work_system.py       PreToolUse: the shared work-system hook (see below); refuses every merge here
+  harness.lock, env.stable.yaml      as for team-default; `stable` and `candidate` are both r3 (11 components)
 environments/
   roles/{infra,code,database,deploy}.yaml   role-infra, role-code, role-database, role-deploy: work-default + each role's tools
   work-multirepo.yaml                one image with the infra, code and database roles' tools, for change sets
@@ -66,7 +68,7 @@ names, never values:
 ```yaml
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 4
+revision: 5
 runtime: {harness: claude-code, version: 2.1.296}
 model: {id: claude-opus-5-5, policy: balanced}
 components:
@@ -80,8 +82,12 @@ binding:
   - {name: gke, transport: stdio, command: kubernetes-mcp-server, args: [--read-only], env_names: [KUBECONFIG]}
   - {name: jira, transport: http, endpoint: "https://mcp.atlassian.com/v1/mcp", header_names: [Authorization]}
   - {name: splunk, transport: http, endpoint: "https://splunk.example.com:8089/services/mcp", header_names: [Authorization]}
+  hooks:
+  - {event: SessionStart, source: environment:.claude/settings.json, digest: sha256:6165…}
+  - {event: PreToolUse, source: environment:.claude/settings.json, digest: sha256:6165…}
   permissions: {approvals: deny-risky}
 plugins: {autoUpdate: false}
+remote: []
 ```
 
 Its identity is one digest, `harness_digest`. A turn hangar runs from this harness reports the same digest in its
@@ -89,7 +95,7 @@ manifest; if the sandbox had anything else, the difference is recorded as drift.
 
 ```console
 $ hangar harness check harnesses/team-default
-ok: team-default r4, 24 component(s), harness_digest sha256:…
+ok: team-default r5, 9 component(s), harness_digest sha256:…
 ```
 
 ## The work system: every surface, same rules
@@ -256,8 +262,9 @@ the profiles a company actually runs) is the company overlay template in
   Replace the toolchains with your services'.
 - **One sandbox for a change set.** `environments/work-multirepo.yaml` carries the infra, code and database roles'
   tools together; `check_registry.py` fails if a role installs something it doesn't.
-- **The harness.** `work-default` (r1, `stable`) is pinned the same way as `team-default`: native files and a
-  `harness.lock` (written with `scripts/relock.py`; replace it with `hangar harness freeze` from a good run), with the skills for a company SDLC (Jira ticket, GitHub PR, change sets across the four repos) and a
+- **The harness.** `work-default` (r3, `stable` since KAN-436) is pinned the same way as `team-default`: native files and a
+  `harness.lock` (written with `scripts/relock.py`; replace it with `hangar harness freeze` from a good run). It carries
+  `change-set` for the four repos, the shared work-system skills with `release-approvals`, the work-system hook, and a
   guard hook that keeps shared systems read-only and the deploy checkout untouched. Its MCP servers are GitHub and
   Jira; the credential names are in `bindings/work-default.yaml`.
 - **A change-set profile.** `changesets/example-service.yaml` shows the shape hangar's change sets take
