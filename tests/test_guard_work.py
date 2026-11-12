@@ -74,9 +74,12 @@ def test_edits(tool, path, code):
     assert run({"tool_name": tool, "tool_input": {"file_path": path}}) == code
 
 
-def test_malformed_input_passes():
-    assert subprocess.run([sys.executable, str(HOOK)], input="not json", capture_output=True,
-                          text=True).returncode == 0
+def test_input_that_is_not_json_fails_closed():
+    r = subprocess.run([sys.executable, str(HOOK)], input=b"not json", capture_output=True)
+    assert r.returncode == 2 and b"not valid JSON" in r.stderr
+
+
+def test_json_that_is_not_an_event_passes():
     assert run(["a list"]) == 0
 
 

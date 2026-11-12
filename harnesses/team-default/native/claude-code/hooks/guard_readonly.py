@@ -38,19 +38,19 @@ def _commands(command: str) -> list[str]:
     return [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
 
 
-def _read_event() -> tuple[object, bool]:
-    """(event, ok): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the console
-    code page). ok is False when the input is not UTF-8: the caller fails closed."""
+def _read_event() -> tuple[object, str | None]:
+    """(event, problem): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the
+    console code page). problem names why the input cannot be checked (not UTF-8, not JSON): the caller fails closed."""
     try:
         text = sys.stdin.buffer.read().decode("utf-8-sig")
     except UnicodeDecodeError:
-        return None, False
+        return None, "the tool call is not valid UTF-8, so it cannot be checked"
     except OSError:
-        return None, True
+        return None, None
     try:
-        return json.loads(text), True
+        return json.loads(text), None
     except ValueError:
-        return None, True  # not ours to judge; never wedge a session on a malformed event
+        return None, "the tool call is not valid JSON, so it cannot be checked"
 
 
 def _block(message: str) -> int:
@@ -61,10 +61,9 @@ def _block(message: str) -> int:
 
 
 def main() -> int:
-    event, ok = _read_event()
-    if not ok:
-        return _block("blocked by the team harness: the tool call is not valid UTF-8, so it cannot be checked. "
-                      "Diagnose read-only and propose the change in a PR.")
+    event, problem = _read_event()
+    if problem:
+        return _block(f"blocked by the team harness: {problem}. Diagnose read-only and propose the change in a PR.")
     if not isinstance(event, dict) or event.get("tool_name") != "Bash":
         return 0
     for command in _commands(str((event.get("tool_input") or {}).get("command") or "")):

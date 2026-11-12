@@ -154,9 +154,9 @@ def test_key_pattern_is_configurable(repo):
     assert r.returncode == 0
 
 
-def test_malformed_event_is_allowed():
+def test_input_that_is_not_json_fails_closed():
     r = subprocess.run([sys.executable, str(HOOK)], input="not json", capture_output=True, text=True)
-    assert r.returncode == 0
+    assert r.returncode == 2 and "not valid JSON" in r.stderr
 
 
 def test_mcp_create_pull_request_needs_the_contract():

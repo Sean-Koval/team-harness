@@ -57,19 +57,19 @@ def _commands(command: str) -> list[str]:
     return [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
 
 
-def _read_event() -> tuple[object, bool]:
-    """(event, ok): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the console
-    code page). ok is False when the input is not UTF-8: the caller fails closed."""
+def _read_event() -> tuple[object, str | None]:
+    """(event, problem): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the
+    console code page). problem names why the input cannot be checked (not UTF-8, not JSON): the caller fails closed."""
     try:
         text = sys.stdin.buffer.read().decode("utf-8-sig")
     except UnicodeDecodeError:
-        return None, False
+        return None, "the tool call is not valid UTF-8, so it cannot be checked"
     except OSError:
-        return None, True
+        return None, None
     try:
-        return json.loads(text), True
+        return json.loads(text), None
     except ValueError:
-        return None, True  # not ours to judge; never wedge a session on a malformed event
+        return None, "the tool call is not valid JSON, so it cannot be checked"
 
 
 def _block(message: str) -> int:
@@ -96,10 +96,8 @@ def why(event: dict) -> str | None:
 
 
 def main() -> int:
-    event, ok = _read_event()
-    reason = why(event) if isinstance(event, dict) else None
-    if not ok:
-        reason = "the tool call is not valid UTF-8, so it cannot be checked"
+    event, problem = _read_event()
+    reason = problem or (why(event) if isinstance(event, dict) else None)
     if reason:
         return _block(f"blocked by the work harness: {reason}. Propose the change in the PR instead.")
     return 0

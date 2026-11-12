@@ -46,7 +46,7 @@ components:
   enabled: true
   source: git:https://github.com/Sean-Koval/ai-dlc#plugins/ai-dlc-workflow@fec8b9186a01009b3e58408c37dc0e508b3ec058
 - id: native:claude-code/hooks/guard_readonly.py
-  digest: sha256:b9505d6b35cb0e9b5c546d328b600893386cfc093fc70643dde6f8ca8f0e7358
+  digest: sha256:fea2b693f0d42ab048e3649cee613a546b6a528e14cdd3cd88911651d9417f4b
   path: native/claude-code/hooks/guard_readonly.py
 - id: native:claude-code/settings.json
   digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca

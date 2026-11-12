@@ -17,7 +17,7 @@ agent and skips the call) for:
   harness's merge rule is `never` (skill `github-pr`).
 
 Every command in a call is judged: lines, `;`, `&&`, `||`, `|` and `&` separate them. Input that is not
-UTF-8 is blocked (fail closed). Everything else is allowed with exit 0. The only command it runs is `git symbolic-ref --short HEAD` (read-only) to
+UTF-8 or not JSON is blocked (fail closed). Everything else is allowed with exit 0. The only command it runs is `git symbolic-ref --short HEAD` (read-only) to
 learn the branch; it writes nothing. The ticket key pattern is `WORK_SYSTEM_KEY` (a regex, default
 `[A-Z][A-Z0-9]{1,9}-[0-9]+`) and the PR line's name is `WORK_SYSTEM_TRACKER_LINE` (default `Jira`). `MERGE_RULE` is
 rendered per harness by scripts/sync_shared.py from its profile (`allowed` or `never`); anything else, including this
@@ -258,7 +258,7 @@ def main() -> int:
     try:
         event = json.loads(text)
     except ValueError:
-        return 0  # not ours to judge; never wedge a session on a malformed event
+        return _block("the tool call is not valid JSON, so it cannot be checked")  # fail closed
     reason = why(event) if isinstance(event, dict) else None
     return _block(reason) if reason else 0
 
