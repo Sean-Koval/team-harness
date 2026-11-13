@@ -36,7 +36,8 @@ not blind: their author saw the case list. `baseline.json` holds these numbers; 
 
 ## Next step for Sean
 
-The recording predates the newest `SKILL.md`, so `--require-fresh`, and with it CI, fails until a live re-record.
-That is intended. On a machine logged in to Claude Code, run
+The recording predates the newest `SKILL.md`. While `baseline.json` says `"live": false`, `--require-fresh` only
+warns about that; the 25% and other gates still apply. `--live --record` sets `"live": true`, and from then on a stale
+recording fails CI. On a machine logged in to Claude Code, run
 `python scripts/extract_eval.py --live --runner claude-cli --record`, then commit `recorded/` and update
 `baseline.json` from its summary. Record again the same way after every skill change.
