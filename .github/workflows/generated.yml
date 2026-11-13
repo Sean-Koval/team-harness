@@ -1,9 +1,11 @@
 # Builds the generated files on main after each merge (KAN-481): the shared layer's copies, each harness's lock and
 # env files, `candidate` and the agent environment's harness pin (scripts/build_generated.py). PRs commit sources
 # only, so they never conflict on these. `stable` and releases/ are left alone: only scripts/promote.py moves them.
-# The build is checked as PR CI would check it, then pushed to main. If main moved during the build, the run queued
-# behind this one rebuilds; if main refuses the push (protection), it goes to bot/generated as a PR, and check.yml is
-# started on that branch by workflow_dispatch (a push or PR made with GITHUB_TOKEN starts no workflows itself).
+# Two jobs, as ai-dlc's release.yml splits them: `build` installs hangar and runs the build and the checks with read-only access,
+# and hands over a patch; `push` holds the write token, installs nothing and runs no repository code: it applies the
+# patch and pushes it to main. If main moved during the build, the run queued behind this one rebuilds; if main
+# refuses the push (protection), it goes to bot/generated as a PR, and check.yml is started on that branch by
+# workflow_dispatch (a push or PR made with GITHUB_TOKEN starts no workflows itself).
 name: generated
 on:
   push:
@@ -23,15 +25,15 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
-      pull-requests: write
-      actions: write   # to start check.yml on bot/generated
+      contents: read
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+      base: ${{ steps.diff.outputs.base }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
-          fetch-depth: 0
-          persist-credentials: false   # the token reaches only the push step
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -48,19 +50,50 @@ jobs:
           for d in harnesses/*/; do hangar harness check "$d"; done
           python scripts/check_registry.py .
           python -m pytest -q tests
-      - name: Commit and push
+      - name: Patch of the generated files
+        id: diff
+        run: |
+          git add -A -- harnesses channels.yaml environments
+          git diff --cached --binary > "$RUNNER_TEMP/generated.patch"
+          echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ -s "$RUNNER_TEMP/generated.patch" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/upload-artifact@v4
+        if: steps.diff.outputs.changed == 'true'
+        with:
+          name: generated-patch
+          path: ${{ runner.temp }}/generated.patch
+          retention-days: 1
+
+  push:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write   # to start check.yml on bot/generated
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.build.outputs.base }}   # the commit the patch was built on
+          persist-credentials: false             # the token reaches only the push below
+      - uses: actions/download-artifact@v4
+        with:
+          name: generated-patch
+          path: ${{ runner.temp }}
+      - name: Apply, commit and push
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE: ${{ needs.build.outputs.base }}
         run: |
-          if [ -z "$(git status --porcelain)" ]; then echo "generated files are current"; exit 0; fi
+          git apply --index "$RUNNER_TEMP/generated.patch"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A harnesses channels.yaml environments
           git commit -q -m "build: regenerate after $(git rev-parse --short HEAD) (KAN-481)"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push "$remote" HEAD:main && exit 0
           git fetch -q "$remote" main
-          if [ "$(git rev-parse FETCH_HEAD)" != "$(git rev-parse HEAD^)" ]; then
+          if [ "$(git rev-parse FETCH_HEAD)" != "$BASE" ]; then
             echo "main moved during the build; the run queued for that merge rebuilds"; exit 0
           fi
           echo "main refused the push; opening a PR from bot/generated instead"
