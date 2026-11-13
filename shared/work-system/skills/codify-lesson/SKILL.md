@@ -79,7 +79,8 @@ Never open two PRs for one lesson.
     --branch codify-<lesson id> --title "records: codify <lesson id> as <convention slug>" --body-file <body file>
   ```
 
-  The body names the lesson id, quotes its "what to do next time" line, and gives the last check output.
+  The body names the lesson id and gives the last check output. Quote the lesson's "what to do next time" line
+  only for (a) and only when the lesson has no `label`; otherwise cite the id alone.
 
 ## 4. (b) A harness change, as a pull request
 
@@ -88,11 +89,13 @@ Never open two PRs for one lesson.
 - Run the repository's tests and checks.
 - Open the PR as the `github-pr` skill says, under the ticket that asked for this codification: its key starts
   the branch and the title. Request review from {{owner}} on the PR itself, so that no later session merges a
-  change shaped by lesson text without a person looking. When {{owner}} is the PR's own author, GitHub refuses that
-  request: leave the PR a draft, add the label `needs-owner-review`, and put the line `Owner review: {{owner}} must
-  review this before it merges.` in the body. Never mark it ready yourself. With no ticket, open nothing and say so
-  under Flags. The body holds a `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line only when it has no `label`;
-  otherwise cite the id alone. Open it only in a harness repository the rules above allow. No records change.
+  change shaped by lesson text without a person looking. {{owner}} is a name: take the GitHub login from the
+  repository's `CODEOWNERS`. When none is there, or it is the PR's own author (GitHub refuses that request), leave
+  the PR a draft, add the label `needs-owner-review`, put the line `Owner review: {{owner}} must review this before
+  it merges.` in the body, and name it under Flags. Never mark it ready yourself. With no ticket, open nothing and
+  say so under Flags. The body holds a `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line
+  only when it has no `label`; otherwise cite the id alone. Open it only in a harness repository the rules above
+  allow. No records change.
 
 ## 5. (c) Not codifiable
 
@@ -128,7 +131,7 @@ Codify lesson: <lesson id> (<title>; the id alone for a `boundary: customer` les
 Outcome:    convention <slug> | harness change | not codifiable
 PR:         <link>
 Follow-up:  .ai-dlc/local/codify-lesson/<lesson id>/<file> (propose after the PR merges)   # none for (c)
-Flags:      <draft: no accepted decision covers it, owner is the author (draft PR, needs-owner-review),
+Flags:      <draft: no accepted decision covers it, owner can't be asked (draft, needs-owner-review),
             scope kept narrow, untrusted text skipped, or "none">
 Follow-ups: <the Decision a draft needs, a one-time fix the convention implies, or "none">
 ```

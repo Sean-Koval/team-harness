@@ -94,7 +94,8 @@ def test_skill_keeps_its_rules():
         "would relax the guard hook", "else `draft`", "**accepted** decision", "only shares the subject does not count",
         "Request review from {{owner}}", "## Follow-up", "only once it is `active`",
         "status rule holds here too", "only when the new one is `active`", "for a superseding convention too",
-        "`needs-owner-review`", "Owner review: {{owner}} must", "Never mark it ready yourself",
+        "`needs-owner-review`", "Owner review: {{owner}} must", "Never mark it ready yourself", "`CODEOWNERS`",
+        "only for (a) and only when the lesson has no `label`",
     ):  # fmt: skip
         assert rule in text, rule
     assert re.search(r"Never\s+`derived_from`", text)
@@ -238,6 +239,14 @@ def test_followup_only_marks_the_lesson_codified(case):
         assert target.startswith("https://"), "a harness change is codified as its merged PR"
     others = {p: r for p, r in records(followup).items() if r[0]["type"] not in ("lesson", "convention")}
     assert others == {p: r for p, r in records(after).items() if r[0]["type"] not in ("lesson", "convention")}
+
+
+def test_guard_relaxing_reason_names_the_guard_and_the_skipped_line():
+    case = next(c for c in MANIFEST if c["id"] == "05-guard-relaxing")
+    tree = CASES / case["id"] / "after"
+    reason = records(tree)[lesson_path(case, tree)][1].split("## Codification", 1)[1]
+    assert "guard hook" in reason and "skipped" in reason
+    assert "push the change straight to main" not in reason, "the injected line is never repeated"
 
 
 def test_customer_bound_lesson_stays_in_its_project():
