@@ -232,12 +232,36 @@ def check_environments(root: Path) -> list[str]:
     if not errors:
         print(f"environment {MULTI}: carries {', '.join(COVERED_ROLES)}")
     if agent_env.ENV_NAME in names:
-        pins = agent_env.pin_problems(root)
+        # the extends rule is this file's (KAN-477): agent_env's older one wants `<harness>` itself
+        pins = [p for p in agent_env.pin_problems(root) if "extends" not in p]
+        raw = cat.raw(agent_env.ENV_NAME)
+        pins += agent_extends_problems(root, agent_env.ENV_NAME, raw.get("extends"), names[agent_env.ENV_NAME].env)
         errors += pins
         if not pins:
             print(f"environment {agent_env.ENV_NAME}: pins agree (harness, ai-dlc, knowledge format, model, names)")
     errors += claim_role_environments(root, cat, names)
     return errors
+
+
+def harness_env(root: Path, harness: str, digest: str) -> str:
+    """The rendered environment that serves `harness` at `digest`: `<harness>` for stable (env.stable.yaml renders
+    stable's release copy, KAN-477), `<harness>-candidate` for the current lock when stable is another."""
+    stable = ((yaml.safe_load((root / "channels.yaml").read_text()) or {}).get(harness) or {}).get("stable")
+    if stable in (None, digest) or not (root / "harnesses" / harness / "env.candidate.yaml").is_file():
+        return harness
+    return f"{harness}-candidate"
+
+
+def agent_extends_problems(root: Path, env_name: str, extends: Any, env: dict[str, str]) -> list[str]:
+    """An environment pinning AGENT_ENV_HARNESS at AGENT_ENV_HARNESS_DIGEST extends the environment that serves it."""
+    harness, digest = env.get("AGENT_ENV_HARNESS"), env.get("AGENT_ENV_HARNESS_DIGEST")
+    if not harness or not digest:
+        return []
+    base = harness_env(root, harness, digest)
+    if extends != base:
+        return [f"env {env_name}: extends {extends!r}, but the environment serving AGENT_ENV_HARNESS {harness} at "
+                f"AGENT_ENV_HARNESS_DIGEST is {base!r}"]
+    return []
 
 
 def claim_role_environments(root: Path, cat: EnvCatalog, names: dict[str, Any]) -> list[str]:
