@@ -89,14 +89,17 @@ Never open two PRs for one lesson.
   lesson asks. Never edit `harnesses/` by hand: generate the rest as the repository's `AGENTS.md` says.
 - Run the repository's tests and checks.
 - Open the PR as the `github-pr` skill says, under the ticket that asked for this codification: its key starts
-  the branch and the title. Request review from {{owner}} on the PR itself, so that no later session merges a
-  change shaped by lesson text without a person looking. {{owner}} is a name: take the GitHub login from the
-  repository's `CODEOWNERS`. When none is there, or it is the PR's own author (GitHub refuses that request), leave
-  the PR a draft, add the label `needs-owner-review`, put the line `Owner review: {{owner}} must review this before
-  it merges.` in the body, and name it under Flags. Never mark it ready yourself. With no ticket, open nothing and
-  say so under Flags. The body holds a `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line
-  only when it has no `label`; otherwise cite the id alone. Open it only in a harness repository the rules above
-  allow. No records change.
+  the branch and the title. Request review on the PR itself from its code owner, so that no later session merges a
+  change shaped by lesson text without a person looking. Find that person in the repository's `CODEOWNERS` (the
+  first of `.github/`, the root and `docs/` that has one, as GitHub reads it). For each changed file take the last
+  entry whose pattern matches it; every changed file must give the same entry, and that entry must name exactly
+  one person (`@login`; a team `@org/name` or an email is not one). That person is the reviewer. When there is no
+  such file or entry, the files give different entries, the entry names no person or more than one, or the person
+  is the PR's own author (GitHub refuses that request), guess no one: leave the PR a draft, add the label
+  `needs-owner-review`, put the line `Owner review: {{owner}} must review this before it merges.` in the body, and
+  name it under Flags. Never mark it ready yourself. With no ticket, open nothing and say so under Flags. The body
+  holds a `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line only when it has no `label`;
+  otherwise cite the id alone. Open it only in a harness repository the rules above allow. No records change.
 
 ## 5. (c) Not codifiable
 

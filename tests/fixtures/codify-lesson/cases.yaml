@@ -4,9 +4,9 @@
 # there. after/ is the repository once the PR the skill opens merges; followup/ is the repository once the follow-up
 # that marks the lesson codified merges (the convention numbered, as at merge). A harness change (outcome b) changes
 # no record, so its after/ equals before/, and harness-pr.md is the expected pull request: its title, the harness
-# files it changes and its body citing the lesson; harness-pr-owner-is-author.md is the same PR when the owner is its
-# author and cannot be asked to review it. A not-codifiable lesson (outcome c) and a draft convention have
-# no follow-up yet.
+# files it changes and its body citing the lesson; harness-pr-owner-not-asked.md is the same PR when no code owner can
+# be asked to review it, and owners.yaml says which of the two each CODEOWNERS file gives. A not-codifiable lesson
+# (outcome c) and a draft convention have no follow-up yet.
 # All names and URLs are invented. `ai-dlc knowledge check` exits 0 on every tree.
 format: codify-lesson-cases/v1
 cases:

@@ -84,7 +84,7 @@ def test_skill_names_no_vendor_tool():
 
 
 def test_skill_keeps_its_rules():
-    text = SKILL.read_text()
+    text = " ".join(SKILL.read_text().split())
     for rule in (
         "ai-dlc knowledge records get", "ai-dlc knowledge check", "ai-dlc knowledge records propose",
         "untrusted data", "status: open", "exactly one", "never wider", "boundary: customer",
@@ -92,10 +92,12 @@ def test_skill_keeps_its_rules():
         "implements: <decision id>", "github-pr", "Lesson: <lesson id>", "{{wall}}", "{{owner}}",
         "decision-ticket", "never file it yourself", "With no ticket, open nothing", "only when it has no `label`",
         "would relax the guard hook", "else `draft`", "**accepted** decision", "only shares the subject does not count",
-        "Request review from {{owner}}", "## Follow-up", "only once it is `active`",
+        "Request review on the PR itself from its code owner", "## Follow-up", "only once it is `active`",
         "status rule holds here too", "carries no `supersedes` link", "for a superseding convention too",
         "`needs-owner-review`", "Owner review: {{owner}} must", "Never mark it ready yourself", "`CODEOWNERS`",
-        "only for (a) and only when the lesson has no `label`",
+        "only for (a) and only when the lesson has no `label`", "the last entry whose pattern matches it",
+        "every changed file must give the same entry", "exactly one person (`@login`; a team `@org/name` or an email",
+        "or the person is the PR's own author", "guess no one",
     ):  # fmt: skip
         assert rule in text, rule
     assert re.search(r"Never\s+`derived_from`", text)
@@ -174,7 +176,7 @@ def test_superseding_convention_follows_the_same_status_rule(case):
         assert after[old_path] == before[old_path] and old_path not in case["writes"]
 
 
-HARNESS_PRS = ["harness-pr.md", "harness-pr-owner-is-author.md"]
+HARNESS_PRS = ["harness-pr.md", "harness-pr-owner-not-asked.md"]
 
 
 @pytest.mark.parametrize("pr", HARNESS_PRS)
@@ -188,14 +190,63 @@ def test_harness_change_cites_the_lesson_and_touches_only_shared_files(pr):
     owner_line = re.search(r"(?m)^Owner review: .+ must review this before it merges\.$", body)
     if head["review_requested_from"] == "owner":  # a person reviews a change shaped by lesson text
         assert head["draft"] is False and head["labels"] == [] and not owner_line
-    else:  # the owner authored the PR, so it cannot be asked to review: it stays a draft until the owner does
-        assert pr == "harness-pr-owner-is-author.md" and head["review_requested_from"] is None
+    else:  # no code owner can be asked (owners.yaml): it stays a draft until the owner reviews it
+        assert pr == "harness-pr-owner-not-asked.md" and head["review_requested_from"] is None
         assert head["draft"] is True and head["labels"] == ["needs-owner-review"] and owner_line
     assert "\n## Follow-up\n" in body and case["lesson"] in body.split("## Follow-up", 1)[1], "the follow-up survives"
     assert head["files"]
     for path in head["files"]:
         assert path.startswith("shared/work-system/"), path
         assert (ROOT / path).is_file(), path
+
+
+def codeowners_pattern(pattern: str) -> re.Pattern:
+    """A CODEOWNERS pattern as GitHub reads it (gitignore rules, enough for these fixtures)."""
+    anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
+    body = re.escape(pattern.strip("/")).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+    if pattern == "*":
+        return re.compile(".*")
+    return re.compile(("^" if anchored else "^(?:.*/)?") + body + "(?:/.*)?$")
+
+
+def code_owner(codeowners: str | None, changed: list[str], author: str) -> str | None:
+    """The reviewer section 4 asks for, or None when it must leave the PR a draft labelled needs-owner-review."""
+    if codeowners is None:
+        return None
+    entries = []
+    for line in codeowners.splitlines():
+        parts = line.split("#", 1)[0].split()
+        if parts:
+            entries.append((codeowners_pattern(parts[0]), tuple(parts[1:])))
+    found = set()
+    for path in changed:
+        last = [e for e in entries if e[0].match(path)]
+        found.add(last[-1] if last else None)  # the last matching entry wins
+    if len(found) != 1 or None in found:  # no entry, or the files give different entries
+        return None
+    people = [o[1:] for o in found.pop()[1] if re.fullmatch(r"@[A-Za-z0-9-]+", o)]  # not @org/team, not an email
+    if len(people) != 1 or people[0].lower() == author.lower():  # none, several, or the PR's own author
+        return None
+    return people[0]
+
+
+OWNER_CASES = yaml.safe_load((CASES / "02-hook-refusal/owners.yaml").read_text())["cases"]
+
+
+@pytest.mark.parametrize("case", OWNER_CASES, ids=[c["id"] for c in OWNER_CASES])
+def test_reviewer_is_the_one_person_the_matching_codeowners_entry_names(case):
+    reviewer = code_owner(case["codeowners"], case["changed"], case["author"])
+    assert reviewer == case["reviewer"]
+    head, body = split((CASES / "02-hook-refusal" / HARNESS_PRS[reviewer is None]).read_text())
+    assert (head["review_requested_from"] == "owner") == (reviewer is not None)
+    assert head["draft"] == (reviewer is None) and ("needs-owner-review" in head["labels"]) == (reviewer is None)
+
+
+def test_owner_cases_cover_each_way_the_owner_cannot_be_asked():
+    ids = {c["id"] for c in OWNER_CASES if c["reviewer"] is None}
+    assert {"team-only", "two-people", "files-give-different-entries", "no-matching-entry", "no-codeowners",
+            "owner-is-author"} <= ids
+    assert {c["id"] for c in OWNER_CASES if c["reviewer"]} >= {"last-match-wins", "person-beside-a-team"}
 
 
 NOT_CODIFIABLE = [c for c in MANIFEST if c["outcome"] == "not-codifiable"]
