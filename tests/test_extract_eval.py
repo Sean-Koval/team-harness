@@ -570,3 +570,25 @@ def test_a_record_whose_header_does_not_parse_is_produced_and_substantive(tmp_pa
     assert {"record": rel, "fields": ["check"], "severity": "substantive"} in result["edits"]
     summary = grade.summarize([result])
     assert summary["precision"] == 0.5 and summary["substantive"] == 1
+@pytest.mark.parametrize(("live", "code"), [(False, 0), (True, 1)])
+def test_stale_recording_warns_until_a_live_baseline_exists(tmp_path, monkeypatch, live, code):
+    if not (ROOT / "tests/fixtures/extract-records/cases.yaml").is_file():
+        pytest.skip("the skill's example cases (KAN-435) are not on this branch")
+    eval_dir = tmp_path / "eval"
+    shutil.copytree(EVAL, eval_dir)
+    meta = json.loads((eval_dir / "recorded/run.json").read_text())
+    meta["skill_sha256"] = "0" * 64  # older than any SKILL.md
+    (eval_dir / "recorded/run.json").write_text(json.dumps(meta))
+    baseline = json.loads((eval_dir / "baseline.json").read_text())
+    (eval_dir / "baseline.json").write_text(json.dumps({**baseline, "live": live}))
+    monkeypatch.setattr(extract_eval, "EVAL", eval_dir)
+    monkeypatch.setattr(extract_eval, "gates", lambda summary, config, stale: stale)  # only freshness here
+    assert extract_eval.main(["--require-fresh"]) == code
+
+
+def test_live_record_marks_the_baseline_live(tmp_path):
+    path = tmp_path / "baseline.json"
+    path.write_text(json.dumps({"live": False, "precision": 1.0}))
+    assert not extract_eval.baseline_is_live(path)
+    extract_eval.mark_live(path)
+    assert extract_eval.baseline_is_live(path) and json.loads(path.read_text())["precision"] == 1.0
