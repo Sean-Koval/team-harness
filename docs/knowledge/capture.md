@@ -56,16 +56,17 @@ GitHub.
 Each session runs restricted: it loads no user, project or local settings, no skills and no MCP servers. The batch
 gives it its rules and the `extract-records` instructions itself. Its only folder is a throwaway copy of the knowledge
 repository, without `.git`, `.claude/`, `CLAUDE.md` or symlinks, in any letter case. There it may read and write
-records and run `ai-dlc knowledge check`. It cannot read your project, propose, push, or use `gh`, `git` or web tools.
+records, run `ai-dlc knowledge check` on the copy and print record templates. It cannot read your project, propose, push, or use `gh`, `git` or web tools.
 One run holds the lock at a time; a run that was killed releases it.
 
 The batch proposes what the session wrote from your project, as a draft PR on a `records-` branch. Records reach the
-default branch only when a person merges that PR. To check the lockdown on your machine, run
+default branch only when a person merges that PR. The PR body lists any existing record the session
+changed beyond marking it superseded, and an `@name` in it notifies nobody. To check the lockdown on your machine, run
 `python3 ~/src/team-harness/scripts/capture_smoke.py` once; it costs one short session.
 
 Each run appends a line to `capture/runs.jsonl` in the knowledge repository's working tree, in ai-dlc's capture run
 format (`contracts/capture-run.schema.json`). It lists each Source filtered, extracted, failed or left at the ceiling,
-with tokens, cost and its draft PR. A session that failed reports no usage, so its tokens and cost are left unknown. A transcript also carries its length, so `ai-dlc knowledge stats` can give a cost
+with tokens, cost and its draft PR. Usage nobody reported, such as a failed session's, is left unknown rather than 0. A transcript also carries its length, so `ai-dlc knowledge stats` can give a cost
 per transcript hour. It holds Source ids, never titles, paths or pull output, which go only to the terminal.
 The batch commits and pushes nothing; records reach the repository only through their PRs. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
 makes no model call. Tune the filter and the ceiling in `knowledge.toml`:

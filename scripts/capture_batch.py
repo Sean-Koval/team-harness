@@ -96,9 +96,18 @@ SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # its files are not working directories. It may read and write the copy and run two ai-dlc commands; it never
 # proposes (the batch does, with the project's knowledge role), so it cannot push anywhere.
 SESSION_TOOLS = "Read,Write,Edit,Glob,Grep,Bash"
-SESSION_BASH = ["Bash(ai-dlc knowledge check:*)", "Bash(ai-dlc knowledge records template:*)"]
-SESSION_DENY = ["Bash(ai-dlc knowledge records:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)", "Bash(wget:*)",
-                "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Skill"]  # fmt: skip
+# `check` is allowed only on the copy, exactly (its --vault, --config and a path argument reach any file); `template`
+# prints a packaged template and reads nothing. Deny wins over allow, so the other `records` commands are denied by
+# name rather than with a `records:*` prefix that would also deny `template`.
+SESSION_TEMPLATE = "Bash(ai-dlc knowledge records template:*)"
+SESSION_DENY = ["Bash(ai-dlc knowledge records get:*)", "Bash(ai-dlc knowledge records search:*)",
+                "Bash(ai-dlc knowledge records changed:*)", "Bash(ai-dlc knowledge records captured:*)",
+                "Bash(ai-dlc knowledge records propose:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)",
+                "Bash(wget:*)", "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Skill"]  # fmt: skip
+SUPERSEDE_FIELDS = {"status", "valid_to"}  # what extract-records may change in an existing record
+# An @name in a PR body notifies that person. Every one is defused, inside backticks too: an unclosed backtick is no
+# code span, and telling the two apart is not worth the risk.
+MENTION = re.compile(r"(?<![\w.+-])@(?=[A-Za-z0-9])")
 SESSION_MODE = "dontAsk"
 SKILL = ".claude/skills/extract-records/SKILL.md"  # in the project; the batch hands its text to the session
 # Left out of the copy at any depth, compared without case: .Claude/ and claude.md are .claude/ and CLAUDE.md on the
@@ -113,7 +122,7 @@ PROMPT = (
     "`ai-dlc knowledge records get`, `search` and `captured` are not available: use Grep and Read on the copy "
     "instead (the Source's hash is in its `sources` entry; Grep the copy for it to see whether it was captured).\n"
     "Write the records and the processed Source into the copy at their repository paths (step 7.1, the copy is "
-    "made), run `ai-dlc knowledge check {scratch}` until it exits 0, and write the PR body to {body}. "
+    "made), run exactly `{check}` until it exits 0, and write the PR body to {body}. "
     "Do not propose: when you finish, the batch proposes the records you wrote as one draft PR. "
     "If nothing should be proposed, write no record and say why.\n"
     "Read the record templates with `ai-dlc knowledge records template <type>`.\n"
@@ -305,11 +314,23 @@ def rule_path(path: Path) -> str:
     return "//" + text.lstrip("/")
 
 
+def check_command(scratch: Path) -> str:
+    """The one `check` command the session may run, as the prompt gives it and the allow rule matches it.
+
+    A path with a space (a Windows user folder, say) is double-quoted, which bash and PowerShell both read as one
+    argument; the prompt and the rule then carry the same quoted text.
+    """
+    where = str(scratch)
+    return f'ai-dlc knowledge check "{where}"' if any(c.isspace() for c in where) else f"ai-dlc knowledge check {where}"
+
+
 def session_settings(scratch: Path) -> dict:
     """The session's only permission rules, given with --settings (the one settings source --restricted keeps)."""
     where = rule_path(scratch)
+    check = [f"Bash({check_command(scratch)})", f"Bash({check_command(scratch)} --json)"]
     return {"permissions": {"defaultMode": SESSION_MODE, "deny": SESSION_DENY,
-                            "allow": [f"Read({where}/**)", f"Write({where}/**)", f"Edit({where}/**)", *SESSION_BASH]}}
+                            "allow": [f"Read({where}/**)", f"Write({where}/**)", f"Edit({where}/**)", *check,
+                                      SESSION_TEMPLATE]}}  # fmt: skip
 
 
 def session_command(exe: str, settings: Path, system: Path, config: dict) -> list[str]:
@@ -347,7 +368,57 @@ def written(repo: Path, scratch: Path) -> list[str]:
     return found
 
 
-def propose(source: dict, scratch: Path, files: list[str], config: dict) -> str:
+def split(text: str) -> tuple[dict | None, str]:
+    """A record's header and its body."""
+    text = text.replace("\r\n", "\n")
+    end = text.find("\n---", 4) if text.startswith("---\n") else -1
+    if end < 0:
+        return None, text
+    try:
+        header = yaml.safe_load(text[4:end])
+    except yaml.YAMLError:
+        header = None
+    return (header if isinstance(header, dict) else None), text[end + 4 :]
+
+
+def changed_records(repo: Path, scratch: Path, files: list[str]) -> list[str]:
+    """One line per existing record the session changed beyond a supersede (`status`, `valid_to`)."""
+    lines = []
+    for relative in files:
+        before = repo / relative
+        if not before.is_file():
+            continue
+        (old, old_body), (new, new_body) = split(before.read_text("utf-8")), split((scratch / relative).read_text("utf-8"))
+        if old is None or new is None:
+            lines.append(f"- `{relative}`: header unreadable before or after; read the whole diff")
+            continue
+        fields = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k) and k not in SUPERSEDE_FIELDS)
+        if old_body.strip() != new_body.strip():
+            fields.append("body")
+        if fields:
+            lines.append(f"- `{relative}`: {', '.join(fields)}")
+    return lines
+
+
+def pr_body(repo: Path, scratch: Path, files: list[str]) -> Path | None:
+    """The session's PR body, @mentions defused, with any change to an existing record beyond a supersede listed."""
+    path = scratch / PR_BODY
+    text = path.read_text("utf-8", errors="replace") if path.is_file() else ""
+    text = MENTION.sub("\uff20", text)  # a full-width @ notifies nobody
+    changed = changed_records(repo, scratch, files)
+    if changed:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + (
+            "## Existing records changed beyond a supersede\n\n"
+            "The capture batch found these changes to records already on the default branch. Check them before merging.\n\n"
+            + "\n".join(changed) + "\n")  # fmt: skip
+    if not text.strip():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def propose(source: dict, repo: Path, scratch: Path, files: list[str], config: dict) -> str:
     """Step 7.4 for the session: one draft records PR through the project's knowledge role, with a fixed root."""
     exe = shutil.which("ai-dlc")
     if not exe:
@@ -357,8 +428,9 @@ def propose(source: dict, scratch: Path, files: list[str], config: dict) -> str:
     for relative in files:
         command += ["--path", relative]
     command += ["--branch", f"records-{source['id']}-{stamp}", "--title", f"records: {source['id']}"]
-    if (scratch / PR_BODY).is_file():
-        command += ["--body-file", str(scratch / PR_BODY)]
+    body = pr_body(repo, scratch, files)
+    if body is not None:
+        command += ["--body-file", str(body)]
     run = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
                          cwd=config["project"], timeout=600, check=False)  # fmt: skip
     if run.returncode:
@@ -380,7 +452,7 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
         settings, system = scratch.parent / "settings.json", scratch.parent / "extract-records.md"
         settings.write_text(json.dumps(session_settings(scratch), indent=2), encoding="utf-8")
         system.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
-        prompt = PROMPT.format(path=scratch / source["path"], id=source["id"], scratch=scratch,
+        prompt = PROMPT.format(path=scratch / source["path"], id=source["id"], scratch=scratch, check=check_command(scratch),
                                body=scratch / PR_BODY)  # fmt: skip
         run = subprocess.run(session_command(exe, settings, system, config), input=prompt, capture_output=True,
                              text=True, encoding="utf-8", errors="replace", cwd=scratch,
@@ -393,11 +465,13 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
             raise RuntimeError(f"session failed ({run.returncode}): {str(reply.get('result'))[:300]}")
         files = written(repo, scratch)
         # Only propose's own output can carry the PR link: the session's words never reach extract().
-        result = propose(source, scratch, files, config) if files else ""
+        result = propose(source, repo, scratch, files, config) if files else ""
     finally:
         shutil.rmtree(scratch.parent, ignore_errors=True)
     usage = reply.get("usage") or {}
     keys = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    if "output_tokens" not in usage:  # the CLI reported no usage: unknown, not 0
+        return {"result": result, "input": None, "output": None, "cost_usd": reply.get("total_cost_usd")}
     return {"result": result, "input": sum(usage.get(k, 0) for k in keys),
             "output": usage.get("output_tokens", 0), "cost_usd": reply.get("total_cost_usd")}  # fmt: skip
 
@@ -428,7 +502,7 @@ def cost(usage: dict, config: dict) -> float | None:
     if isinstance(usage.get("cost_usd"), (int, float)):
         return float(usage["cost_usd"])
     price = config["price_usd_per_mtok"]
-    if not price:
+    if not price or usage.get("input") is None or usage.get("output") is None:
         return None
     return (usage["input"] * price.get("input", 0) + usage["output"] * price.get("output", 0)) / 1_000_000
 
@@ -451,8 +525,11 @@ def extract(repo: Path, source: dict, config: dict, runner: Runner, state: dict,
         entry["reason"] = str(exc).split(":", 1)[0][:80]
         return {"id": source["id"], "path": source["path"], "error": str(exc)[:300], "tokens": charge}
     links = list(PR_LINK.finditer(usage.get("result", "")))
-    input_tokens, output_tokens = int(usage.get("input", 0)), int(usage.get("output", 0))
-    record = {"id": source["id"], "pr": links[-1].group(0) if links else None, "tokens": input_tokens + output_tokens,
+    known = usage.get("input") is not None and usage.get("output") is not None
+    input_tokens = int(usage["input"]) if known else None
+    output_tokens = int(usage["output"]) if known else None
+    record = {"id": source["id"], "pr": links[-1].group(0) if links else None,
+              "tokens": input_tokens + output_tokens if known else charge,
               "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost(usage, config)}  # fmt: skip
     record["path"] = source["path"]
     if record["pr"] is None:  # the session wrote no record: keep the Source in the inbox, visible, for a person
@@ -494,18 +571,15 @@ def duration_seconds(repo: Path, source: dict) -> float | None:
 def run_entry(repo: Path, source: dict, what: str, outcome: str, record: dict | None = None) -> dict:
     """One Source in ai-dlc's capture run format (`CaptureEntry`).
 
-    A failed session reports no usage, so its tokens and cost are null (unknown), not 0; a Source whose session
-    finished but failed after (its PR outside the knowledge repository) keeps what it spent.
+    Usage nobody reported is null (unknown), never 0: a failed session's tokens and cost, and the cost when the CLI
+    gives none and no price is configured. A Source whose session finished but failed after keeps what it spent.
     """
     entry: dict[str, Any] = {"id": source["id"], "kind": RUN_LOG_KINDS.get(what, "other"), "outcome": outcome}
     if record and outcome in ("extracted", "failed"):
-        known = "input_tokens" in record
-        entry["input_tokens"] = record["input_tokens"] if known else None
-        entry["output_tokens"] = record["output_tokens"] if known else None
-        if not known:
-            entry["cost_usd"] = None
-        else:
-            entry["cost_usd"] = round(record["cost_usd"], 6) if record.get("cost_usd") is not None else 0
+        entry["input_tokens"] = record.get("input_tokens")
+        entry["output_tokens"] = record.get("output_tokens")
+        spent = record.get("cost_usd")
+        entry["cost_usd"] = round(spent, 6) if spent is not None else None
         number = PR_LINK.fullmatch(record.get("pr") or "")
         entry["pull_request"] = int(number.group(1)) if number else None
     if what == "transcript":
