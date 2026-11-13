@@ -1,0 +1,33 @@
+---
+id: run-verify-before-pr
+type: convention
+scope: team
+status: active
+date: '2026-11-13'
+owner: lead-example
+sources:
+  - {id: LES-0008, resource: team/lessons/LES-0008.md}
+  - {resource: 'https://traces.example.invalid/review/2026-11-05'}
+links:
+  - {type: implements, target: DEC-0020}
+title: Run the verify command before opening a pull request
+description: The ticket's verify command passes, and its result is in the PR body, before the PR is opened
+domain: sdlc
+author: agent:example-model
+---
+# Run the verify command before opening a pull request
+
+## Rule
+
+Before opening a pull request, run the ticket's verify command and paste the command and its result into the
+pull request body.
+
+## Why
+
+Lesson LES-0008: in the trace review of 5 November, three agent pull requests were opened before the verify
+command ran, and each failed CI on a check that command runs. DEC-0020 already requires the verification.
+
+## Examples
+
+- Follows it: the PR body shows `pytest -q` with `412 passed`, run before the PR was opened.
+- Breaks it: a PR opened with "CI will tell us" and no verify output.

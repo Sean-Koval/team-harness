@@ -36,6 +36,5 @@ Some steps rely on work that is still open. Each such step says so where it appe
 | --- | --- |
 | KAN-433, one install | One command installs ai-dlc, the harness and the knowledge clone, and `ai-dlc doctor` checks them. Until then, quickstart steps 1 to 3 do it by hand |
 | ai-dlc #172 | Supports installing ai-dlc natively on Windows. Until then, ai-dlc on Windows is unsupported, and every Windows step that runs `ai-dlc` may fail |
-| KAN-458 | A nightly batch pulls meeting transcripts into the inbox and opens the records PRs. The pull itself is on ai-dlc main (`ai-dlc knowledge pull-transcripts`, KAN-457) but not yet tried against a live meeting account |
 | KAN-450 | Written sign-off on what may be stored, and on how a meeting opts out |
 | KAN-475 | Creates a separate knowledge repository for a customer |

@@ -41,8 +41,8 @@ Open the processed Source in the PR beside each record and ask:
 5. **Owner and date.** The owner is who decided, owes or must answer. A due date sits in `stale_after`.
 
 A record made from a meeting or chat Source also carries `quote`, `speaker` and `at` (or a `permalink`) in its
-`sources` entry, because the raw payload doesn't last: policy is to delete it by hand after 30 days. The check fails a record without them, so you don't check that by
-eye.
+`sources` entry, because the raw payload is deleted after 30 days. The check fails a record without them, so you
+don't check that by eye.
 
 ## Fix, drop or mark a duplicate
 

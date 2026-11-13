@@ -45,9 +45,8 @@ py -3 "$th\scripts\install_local.py" "$th\harnesses\work-default" --scope projec
 the flag once a promotion moves `stable` past r6.
 
 **Windows:** the hooks run natively on Windows (#16). The installer writes `py -3` into `.claude/settings.local.json` and its
-`--check` starts each hook once; a hook that cannot start fails the check with `its guard is OFF` (#33). Still open
-(KAN-460): the probe starts hooks through cmd, while Claude Code runs them in Git Bash or PowerShell. So do step 2's
-test even when `--check` is clean.
+`--check` starts each hook once, in Git Bash or PowerShell as Claude Code does (#40). A hook that cannot start fails the
+check with `its guard is OFF` (#33). Step 2's test is still worth doing once.
 
 ## 2. Point your shell at the knowledge repository
 

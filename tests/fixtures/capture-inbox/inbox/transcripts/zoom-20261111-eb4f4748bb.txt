@@ -1,0 +1,5 @@
+# Release review
+# Participants: Chen Li, Ana Ruiz
+
+[14:02:00] Chen Li: Question for Ana: do the wiki pages stay as redirects?
+[14:03:30] Ana Ruiz: Not decided yet; we'll pick next week.

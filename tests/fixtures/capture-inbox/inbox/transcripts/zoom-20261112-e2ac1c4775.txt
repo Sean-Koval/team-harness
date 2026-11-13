@@ -1,0 +1,5 @@
+# Incident retro
+# Participants: Ben Okafor, Dee Park
+
+[16:10:00] Dee Park: We learned the pager rotation had a gap over the holiday.
+[16:11:20] Ben Okafor: Going forward the rotation export is checked every Monday.

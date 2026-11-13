@@ -72,7 +72,8 @@ def test_no_host_paths_in_the_spec():
 def test_makefile_runs_the_hangar_ci_pins():
     ci = re.search(r"HANGAR_REF: (\w+)", (ROOT / ".github/workflows/check.yml").read_text()).group(1)
     make = re.search(r"HANGAR_REF := (\w+)", (ROOT / "Makefile").read_text()).group(1)
-    assert make == ci
+    built = re.search(r"HANGAR_REF: (\w+)", (ROOT / ".github/workflows/generated.yml").read_text()).group(1)
+    assert make == ci == built  # the build on main (KAN-481) relocks with the hangar CI checks against
 
 
 def test_no_runner_or_proxy_code_here():
