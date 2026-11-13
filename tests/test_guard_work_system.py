@@ -818,7 +818,19 @@ def test_a_closed_stdin_fails_closed():
     'Invoke-Command {gh pr merge 12}',
     'icm -ScriptBlock { gh pr merge 12 }',
     'Invoke-Command -ComputerName build -ScriptBlock { git push origin HEAD:main }',
-    'GH.EXE pr merge 12',
+    'Invoke-Command{gh pr merge 12}',
+    'INVOKE-EXPRESSION -Command:"gh pr merge 12"',
+    "Invoke-Expression -C 'gh pr merge 12'",
+    "iex -Com 'gh pr merge 12'",
+    "iex -Command('gh pr merge 12')",
+    "iex('gh pr merge 12; echo ''hi''')",
+    "'gh pr merge 12' | iex",
+    'Invoke-Command -ScriptBlock {param($n) gh pr merge $n} -ArgumentList 12',
+    'Invoke-Command { if ($true) { gh pr merge 12 } }',
+    "Invoke-Command -ArgumentList 'a|b' -ScriptBlock {gh pr merge 12}",
+    '$sb={gh pr merge 12}; Invoke-Command $sb',
+    '1 | % { gh pr merge 12 }',
+    'Start-Job { gh pr merge 12 }',
 ])
 def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
     """KAN-491, the PR 40 post-merge review: iex('...'), -Command, an Invoke-Command or icm script block, and a
@@ -827,6 +839,22 @@ def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
     assert r.returncode == 2, (command, r.stderr)
 
 
-@pytest.mark.parametrize("command", ["iex('git status')", 'Invoke-Command { git log -1 }', 'icm {Get-ChildItem}'])
+@pytest.mark.parametrize("command", [
+    "iex('git status')", 'Invoke-Command { git log -1 }', 'icm {Get-ChildItem}', "'git status' | iex",
+    "git commit -m 'icm { gh pr merge 5 } is now blocked'", 'Get-ChildItem | Where-Object { $_.Length -gt 0 }',
+    '$c = "x"; Write-Output ${c}',
+])
 def test_harmless_iex_and_invoke_command_still_pass(command):
     assert _tool("PowerShell", command).returncode == 0, command
+
+
+def test_a_long_powershell_call_is_judged_in_linear_time():
+    """The unwrapping is one pass: thousands of `icm` or `iex(` words cannot hold the hook past its timeout, which
+    would let the call through."""
+    import time
+    for filler in ("icm ", "iex('", "{param($n) } ", "{param(("):
+        start = time.monotonic()
+        r = _tool("PowerShell", "Write-Output " + filler * 30000 + "; iex('gh pr merge 1')")
+        assert time.monotonic() - start < 10, filler
+        if filler != "{param((":  # unbalanced: PowerShell refuses to parse it, so nothing runs
+            assert r.returncode == 2, (filler, r.stderr)

@@ -40,8 +40,8 @@ decide it are not in the call. Not covered: shell aliases and functions defined 
 outside it, code fetched or built at run time (`bash -c "$(curl ...)"`, base64 decoding, IFS tricks, string
 concatenation in a script), and commands build tools read from their own files (`make`, `npm run`, `just`); the PR
 check and branch protection still apply. A PowerShell call is also read as PowerShell runs it: `iex` and
-`Invoke-Expression` (also `iex('...')` and `-Command`) are judged as `eval`, an `Invoke-Command` or `icm` script block
-as the commands in it, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a backtick before a
+`Invoke-Expression` (also `iex('...')`, `-Command` and a string piped into it) are judged as `eval`, every script
+block (`Invoke-Command`, `icm`, `% {...}`, `$sb = {...}`, nested) as the commands in it, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a backtick before a
 character or a line end is that character or a continuation, and `$c = 'x'` sets c as `c=x` does. Not covered there:
 a program name built at run time (`& ('g'+'h')`), splatting (`gh @a`) and `[scriptblock]::Create`.
 Input that is not UTF-8, not JSON or not an object, a shell call without command text, a closed stdin and any error
@@ -441,16 +441,45 @@ def _powershell(command: str) -> str:
         out.append(c)
         i += 1
     text = "".join(out)
-    # iex('gh pr merge 5') and Invoke-Expression -Command '...': the code iex runs, as `iex '...'` reads it
-    text = PS_IEX_CALL.sub(lambda m: f"{m.group(1)} {m.group(2)}", text)
+    # Invoke-Expression -Command '...' (or -C, -Com: PowerShell takes any prefix of a parameter name) and iex('...'):
+    # the code iex runs, as `iex '...'` reads it. The call's closing parenthesis stays, which changes no verdict.
     text = PS_IEX_COMMAND.sub(r"\1 ", text)
-    # Invoke-Command {gh pr merge 5} and icm -ScriptBlock { ... }: the block runs here, as `& { ... }` does
-    return PS_INVOKE_COMMAND.sub(lambda m: "& {" + m.group(1) + "}", text)
+    text = PS_IEX_CALL.sub(r"\1 ", text)
+    return _script_blocks(text)
 
 
-PS_IEX_CALL = re.compile(r"(?i)\b(iex|invoke-expression)\s*\(\s*('[^']*'|\"[^\"]*\")\s*\)")
-PS_IEX_COMMAND = re.compile(r"(?i)\b(iex|invoke-expression)\s+-command(?::\s*|(?=\s))")
-PS_INVOKE_COMMAND = re.compile(r"(?i)\b(?:invoke-command|icm)\b[^{;|&\n]*\{([^{}]*)\}")
+def _script_blocks(text: str) -> str:
+    """Every script block's body as commands of its own: `{` and `}` outside quotes become `;`, and a leading
+    `param(...)` is dropped. Invoke-Command {...}, icm -ScriptBlock {...}, `% {...}`, Start-Job {...}, an `if` body and
+    `$sb={...}` then each have their commands judged, however deeply they nest and whether or not the block runs.
+    `${name}` is a variable, not a block, and stays. One pass, so a long call costs linear time."""
+    out, i, n, quote = [], 0, len(text), ""
+    while i < n:
+        c = text[i]
+        if quote:
+            quote = "" if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif c == "{" and i and text[i - 1] == "$":
+            end = text.find("}", i)
+            end = n - 1 if end < 0 else end
+            out.append(text[i:end + 1])
+            i = end + 1
+            continue
+        elif c in "{}":
+            out.append(" ; ")
+            i += 1
+            m = PS_PARAM.match(text, i) if c == "{" else None
+            i = m.end() if m else i  # param($n, [int]$m = 1): dropped; it stops at the next parenthesis, so stays linear
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+PS_IEX_CALL = re.compile(r"(?i)\b(iex|invoke-expression)\s*\(")
+PS_IEX_COMMAND = re.compile(r"(?i)\b(iex|invoke-expression)\s+-c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?(?::|(?=[\s('\"]))")
+PS_PARAM = re.compile(r"(?i)\s*param\s*\((?:[^()]|\([^()]*\))*\)")
 
 
 # Claude Code's shell tools: Bash, and on Windows PowerShell (where Git Bash isn't installed). Both carry the command
@@ -756,9 +785,9 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
             if m:
                 ctx.aliases[m.group(1)] = m.group(2)
         return None
-    if prog in ("iex", "invoke-expression"):  # PowerShell's eval
+    if prog in ("iex", "invoke-expression"):  # PowerShell's eval; with no argument, the code comes down the pipeline
         return _judge(" ".join(words[1:]), ctx, depth + 1) or \
-            (_scan(ctx.full, ctx) if re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
+            (_scan(ctx.full, ctx) if len(words) == 1 or re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
     if prog == "cmd":
         code = next((i for i, w in enumerate(words[1:], 1) if w.lower() in ("/c", "/k", "/r")), None)
         return _judge(" ".join(words[code + 1:]), ctx, depth + 1) if code else None

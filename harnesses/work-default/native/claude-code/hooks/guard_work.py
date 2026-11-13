@@ -33,7 +33,8 @@ BASH = [
     (r"\bterraform\b(?:\s+-\S+)*\s+init\b(?![^;&|]*-backend=false)", "terraform init needs -backend=false here"),
     (r"\bterraform\b(?:\s+-\S+)*\s+plan\b",
      "terraform plan reads real state: validate here, and leave plan to the infra repo's CI"),
-    (rf"\b(psql|pg_dump|pg_restore|mysql|mysqldump|sqlcmd)\b[^;&|]*\s(?:-h\s*|--host[= ])(?!{LOCAL_DB})\S+",
+    # -h stays lower case: -H is another flag (psql's HTML output, sqlcmd's workstation name)
+    (rf"\b(psql|pg_dump|pg_restore|mysql|mysqldump|sqlcmd)\b[^;&|]*\s(?:(?-i:-h)\s*|--host[= ])(?!{LOCAL_DB})\S+",
      "database clients may only reach the sandbox's own database (localhost or the service name)"),
     (rf"\b(postgres(?:ql)?|mysql|sqlserver)://[^\s/@]*@(?!{LOCAL_DB})[^\s/:]+",
      "connection URLs may only point at the sandbox's own database"),
