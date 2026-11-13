@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse hook for the work harness: shared systems stay read-only, and the deploy checkout stays untouched.
 
-Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash
-from PowerShell; both are judged alike. This exits 2 with the reason on stderr (Claude Code shows it to the
-agent and skips the call) for:
+Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash from
+PowerShell; both are judged alike. This exits 2 with the reason on stderr and prints a PreToolUse deny with the same
+reason on stdout, which Claude Code reads even where PowerShell has turned the exit code into 1 (Claude Code shows
+it to the agent and skips the call) for:
 
 - Terraform that changes real infrastructure or state (`apply`, `destroy`, `import`, state edits, an `init` that
   isn't `-backend=false`, and `plan`, which reads real state);
@@ -106,6 +107,18 @@ def _read_event() -> tuple[object, str | None]:
 
 
 def _block(message: str) -> int:
+    # Two channels carry one verdict. Exit 2 with the reason on stderr is the contract every shell that keeps the
+    # exit code honours (sh, Git Bash, a direct caller). PowerShell turns a native exit 2 into 1, and Claude Code then
+    # shows its own error, so stdout also carries a PreToolUse deny: valid JSON decides the call whatever the exit code.
+    # If something else writes to stdout (a shell profile) the JSON is not read, and the non-zero exit still blocks.
+    deny = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": message}}
+    try:
+        sys.stdout.flush()
+        sys.stdout.buffer.write(json.dumps(deny, ensure_ascii=True).encode("ascii") + b"\n")
+        sys.stdout.buffer.flush()
+    except (OSError, ValueError):
+        pass  # the exit code below still blocks
     sys.stderr.flush()
     sys.stderr.buffer.write((message + "\n").encode("utf-8"))
     sys.stderr.buffer.flush()

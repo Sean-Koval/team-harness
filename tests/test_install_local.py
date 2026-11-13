@@ -929,6 +929,18 @@ GUARD_BLOCKS = [  # (harness, guard, a command it blocks, its reason)
 ]
 
 
+def deny_reason(stdout: bytes) -> str | None:
+    """The reason a PreToolUse hook's stdout denies the call with, read the way Claude Code reads it: one JSON object
+    with nothing around it but whitespace, else it is plain text and decides nothing."""
+    text = stdout.decode("utf-8").strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    out = json.loads(text).get("hookSpecificOutput") or {}
+    if out.get("hookEventName") != "PreToolUse" or out.get("permissionDecision") != "deny":
+        return None
+    return out.get("permissionDecisionReason")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
 @pytest.mark.parametrize("shell", ["git-bash", "powershell"])
 @pytest.mark.parametrize("scope", ["user", "project"])
@@ -938,8 +950,9 @@ def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypa
                                                               guard, command, reason):
     """The probe only proves a hook starts; this proves a block survives the shell, in both scopes, from a path with a
     space and letters outside the console code page, for a Bash call and a PowerShell call. Git Bash passes exit 2 and
-    the reason through. PowerShell's -Command turns a native exit 2 into 1, which Claude Code also treats as a block
-    when Git Bash isn't installed (a PreToolUse exit other than 0 or 2 fails closed); the reason still reaches stderr."""
+    the reason through. PowerShell's -Command turns a native exit 2 into 1, so Claude Code would show its own error
+    rather than the guard's (KAN-460): the guard's reason must also reach stdout as a PreToolUse deny, which Claude
+    Code honours whatever the exit code. The exit stays non-zero, so a deny it can't read still blocks."""
     if shell == "git-bash" and il._git_bash() is None:
         pytest.skip("no Git Bash on this machine")
     if shell == "powershell":
@@ -954,6 +967,24 @@ def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypa
                        env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
     assert reason in r.stderr, (cmd, r.stderr)
     assert r.returncode == 2 if shell == "git-bash" else r.returncode != 0
+    said = deny_reason(r.stdout)
+    assert said is not None, (cmd, r.stdout)
+    assert reason.decode("utf-8") in said and said in r.stderr.decode("utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX hook shell")
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("harness, guard, command, reason", GUARD_BLOCKS)
+def test_a_guard_blocks_through_sh_with_exit_2_and_a_deny(tmp_path, tool, harness, guard, command, reason):
+    """Off Windows the hook shell keeps exit 2, the contract every existing caller relies on; the deny on stdout says
+    the same reason, so Claude Code shows the guard's words either way."""
+    root = tmp_path / "Jörg Ñúñez"
+    shutil.copytree(harness / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}})
+    r = subprocess.run(il.hook_shell(f'python3 "{root}/.claude/hooks/{guard}"'), input=event.encode("utf-8"),
+                       capture_output=True, timeout=60, cwd=root)
+    assert r.returncode == 2 and reason in r.stderr
+    assert deny_reason(r.stdout) == r.stderr.decode("utf-8").strip()
 
 
 def test_windows_guard_that_cannot_see_powershell_fails_loudly(tmp_path, capsys, monkeypatch):
