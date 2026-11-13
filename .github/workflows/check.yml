@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:   # generated.yml starts it on bot/generated: a PR it opens with GITHUB_TOKEN starts no workflows
 
 permissions:
   contents: read
@@ -39,8 +40,14 @@ jobs:
       # PRs commit sources only; the generated files (shared-layer copies, locks, env files, candidate, the agent
       # environment's pin) are built here on the PR merged with main, and on main after merge by generated.yml
       # (KAN-481). The checks below run on the built tree, so committed generated files needn't be current.
+      - name: The PR commits no generated files (label generated-files for a lock frozen from a run)
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'generated-files')
+        run: python scripts/build_generated.py --guard HEAD^1   # the merge ref's first parent is the base
       - name: Build generated files
         run: python scripts/build_generated.py --note "built in CI"
+      - name: A generated file the PR commits matches the build (a hand-edited copy fails, labelled or not)
+        if: github.event_name == 'pull_request'
+        run: python scripts/build_generated.py --drift HEAD^1
       - name: Changelog fragments
         run: python scripts/collect_changes.py
       - name: hangar harness check

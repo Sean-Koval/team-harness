@@ -30,7 +30,12 @@ This is the example team harness: `harnesses/<name>/` is what agents run with, p
   main; `.github/workflows/generated.yml` commits them on main after each merge. So one PR's merge can't conflict
   with another's.
 - To test locally, run `python scripts/build_generated.py` (needs hangar), run the tests, then
-  `git restore harnesses channels.yaml environments/agent.yaml` before you commit.
+  `python scripts/build_generated.py --restore` before you commit; it puts back only generated files and lines. CI
+  fails a PR that commits them (`--guard`); a lock frozen from a run goes in a PR labelled `generated-files`. After its
+  build, CI also fails any generated file a PR commits that differs from the built one (`--drift`): edit the source.
+- `generated.yml` pushes the build to main only after the same checks pass. Where main refuses the push (once
+  code-owner review is on, KAN-220: locks and `channels.yaml` are owned paths) it opens a `bot/generated` PR and
+  starts `check.yml` on it; that PR still needs a person's merge.
 - The changelog entry is a fragment, `changes/<KEY>.md` (see `changes/README.md`); never edit `CHANGELOG.md`.
 - `stable` and `releases/` still move only by `scripts/promote.py`, in a PR of its own.
 - A new harness revision moves `candidate` in `channels.yaml`; only a promotion moves `stable`.

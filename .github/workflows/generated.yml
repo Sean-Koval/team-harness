@@ -1,16 +1,16 @@
 # Builds the generated files on main after each merge (KAN-481): the shared layer's copies, each harness's lock and
 # env files, `candidate` and the agent environment's harness pin (scripts/build_generated.py). PRs commit sources
 # only, so they never conflict on these. `stable` and releases/ are left alone: only scripts/promote.py moves them.
-# The commit is pushed to main; where branch protection refuses that, it goes to the bot/generated branch as a PR.
+# The build is checked as PR CI would check it, then pushed to main. If main moved during the build, the run queued
+# behind this one rebuilds; if main refuses the push (protection), it goes to bot/generated as a PR, and check.yml is
+# started on that branch by workflow_dispatch (a push or PR made with GITHUB_TOKEN starts no workflows itself).
 name: generated
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 concurrency:
   group: generated-main   # one build at a time, in merge order
@@ -22,18 +22,32 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write   # to start check.yml on bot/generated
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false   # the token reaches only the push step
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install hangar
-        run: pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}"
+        run: pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" pytest
       - name: Build
-        run: python scripts/build_generated.py --note "$(git log -1 --format=%s)"
+        run: |
+          # a merge commit's subject is "Merge pull request #N ..."; its body's first line is the PR title
+          note="$(git log -1 --format=%s)"
+          case "$note" in "Merge pull request"*) note="$(git log -1 --format=%b | head -n 1)";; esac
+          python scripts/build_generated.py --note "$note"
+      - name: Check the build as PR CI would
+        run: |
+          for d in harnesses/*/; do hangar harness check "$d"; done
+          python scripts/check_registry.py .
+          python -m pytest -q tests
       - name: Commit and push
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,11 +57,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A harnesses channels.yaml environments
           git commit -q -m "build: regenerate after $(git rev-parse --short HEAD) (KAN-481)"
-          git push origin HEAD:main && exit 0
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push "$remote" HEAD:main && exit 0
+          git fetch -q "$remote" main
+          if [ "$(git rev-parse FETCH_HEAD)" != "$(git rev-parse HEAD^)" ]; then
+            echo "main moved during the build; the run queued for that merge rebuilds"; exit 0
+          fi
           echo "main refused the push; opening a PR from bot/generated instead"
-          git push -f origin HEAD:refs/heads/bot/generated
+          git push -f "$remote" HEAD:refs/heads/bot/generated
           if [ "$(gh pr list --head bot/generated --state open --json number --jq length)" = "0" ]; then
             gh pr create --head bot/generated --base main \
               --title "KAN-481: regenerate generated files" \
               --body "$(printf 'Built by generated.yml from main: scripts/build_generated.py.\n\nJira: KAN-481\nDocs: none needed - generated files only')"
           fi
+          gh workflow run check.yml --ref bot/generated   # its checks, on the PR's head commit
