@@ -240,3 +240,8 @@ def test_generated_yml_runs_the_checks_with_check_yml_tools():
     build = "\n".join(str(s.get("run", "")) for s in gen["jobs"]["build"]["steps"])
     for k in refs:
         assert "${" + k + "}" in build, f"generated.yml's build installs nothing at {k}"
+    # a tool installed but left off PATH (the ai-dlc CLI's own venv) is as missing as one not installed
+    check_steps = [s for job in check["jobs"].values() for s in job.get("steps", [])]
+    for line in "\n".join(str(s.get("run", "")) for s in check_steps).splitlines():
+        if "GITHUB_PATH" in line:
+            assert line.strip() in build, f"generated.yml's build lacks check.yml's PATH line: {line.strip()}"

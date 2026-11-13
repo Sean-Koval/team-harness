@@ -1,8 +1,8 @@
 # Builds the generated files on main after each merge (KAN-481): the shared layer's copies, each harness's lock and
 # env files, `candidate` and the agent environment's harness pin (scripts/build_generated.py). PRs commit sources
 # only, so they never conflict on these. `stable` and releases/ are left alone: only scripts/promote.py moves them.
-# Two jobs, as ai-dlc's release.yml splits them: `build` installs hangar and runs the build and the checks with read-only access,
-# and hands over a patch; `push` holds the write token, installs nothing and runs no repository code: it applies the
+# Two jobs, as ai-dlc's release.yml splits them: `build` installs check.yml's tools (hangar, flightdeck, the ai-dlc
+# CLI), runs the build and check.yml's checks with read-only access, and hands over a patch; `push` holds the write token, installs nothing and runs no repository code: it applies the
 # patch and pushes it to main. If main moved during the build, the run queued behind this one rebuilds; if main
 # refuses the push (protection), it goes to bot/generated as a PR, and check.yml is started on that branch by
 # workflow_dispatch (a push or PR made with GITHUB_TOKEN starts no workflows itself).
