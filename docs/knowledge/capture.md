@@ -12,8 +12,8 @@ proposes records from each one as a pull request. Nothing becomes a record until
 | Recorded meetings | `ai-dlc knowledge pull-transcripts` lands the transcript (KAN-457); a nightly batch proposes records (KAN-458) | The pull is built but not tried against a live meeting account; the batch is not built. Until then, a person places a transcript by hand |
 
 Everything else stays out: unmarked note lines, rooms you did not pick, meetings nobody recorded, and direct
-messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days. The Source record and the records
-made from it stay.
+messages. The policy is to delete raw payloads in `inbox/` and `processed/` after 30 days. No job does that yet, so
+until one does, a person deletes them by PR. The Source record and the records made from it stay.
 
 ## Mark note lines with `>>`
 
@@ -63,7 +63,7 @@ captured. Until then:
 - don't record the meeting, or don't pick its room;
 - don't mark its notes with `>>`;
 - if a Source arrives anyway, tell `{{convention_owner}}`. Close its records PR unmerged. A PR can delete the raw
-  payload before its 30 days run out.
+  payload at once; nothing deletes it automatically yet.
 
 Ask everyone in a recorded meeting whether it may be captured. Whether participants must be told is part of the
 KAN-450 sign-off.

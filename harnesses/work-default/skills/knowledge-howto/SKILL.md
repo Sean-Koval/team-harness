@@ -1,6 +1,7 @@
 ---
 name: knowledge-howto
 description: Use when a teammate asks how to use the knowledge system itself ("how do I get my first record", "how do I say a decision so it's captured", "how do I opt a meeting out", "how do I review a records PR", "how do I find why we decided X"). Answers from the teammate guide, names the page and section, and never invents a step. Read-only.
+allowed-tools: Read, Grep, Glob
 ---
 
 # How do I… (the knowledge system)
@@ -22,7 +23,7 @@ see what is open on a project, use `whats-next`.
 | How do I get my first record? | `quickstart.md`, all six steps | Install the harness, set `KNOWLEDGE_REPO`, copy the sample meeting into the inbox, run `extract-records`, review the draft PR, merge it. About 15 minutes |
 | How do I install the harness? | `quickstart.md`, 1 | `scripts/install_local.py` previews, `--apply` writes, `--check` prints `clean`; `--uninstall` removes what it wrote |
 | How do I check the guard hook works? | `quickstart.md`, 2 | In a scratch repository on `main`, ask the session to commit; the hook refuses with `blocked by the work-system hook` |
-| What gets captured? | `capture.md`, What is captured | Only `>>` note lines, rooms the person picked, and recorded meetings. Nothing else; raw payloads go after 30 days |
+| What gets captured? | `capture.md`, What is captured | Only `>>` note lines, rooms the person picked, and recorded meetings. Nothing else. Policy deletes raw payloads after 30 days, by hand until a job does it |
 | How do I mark a note line? | `capture.md`, Mark note lines | Start the line with `>>`, then export it to the knowledge clone and run `extract-records` |
 | How do I say a decision so it is captured? | `capture.md`, Say a decision | One sentence starting "Decided:" with the whole choice in it. Actions name an owner and a date. To change a decision, say what it replaces |
 | How do I opt a meeting out? | `capture.md`, Opt a meeting out | No switch yet: don't record it, don't pick its room, don't mark its notes. If a Source arrives anyway, tell the convention owner and close its PR unmerged |

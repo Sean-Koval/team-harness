@@ -48,7 +48,8 @@ two distinctive words. `get` takes a numbered id or the slug the record had as a
 - A `retracted` decision was accepted by mistake. A later decision `retracts` it and says why; `retracted_by` in the
   index names that decision. Treat it as never accepted.
 - The quote at the top of the body is the evidence. The `sources` entry names the Source record it came from.
-- The raw transcript or thread expires after 30 days. The Source record and the quote stay.
+- The policy is to delete the raw transcript or thread after 30 days, though no job does it yet. The Source record
+  and the quote stay.
 
 ## Reconstruct a decision with `knowledge why`
 

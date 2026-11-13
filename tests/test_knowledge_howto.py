@@ -65,4 +65,6 @@ def test_skill_is_read_only_and_names_no_ticket():
     text = SKILL.read_text(encoding="utf-8")
     assert not re.search(r"\b[A-Z]+-\d+\b", text), "a ticket key would leak into the work harness"
     assert "Never run, propose, approve or merge anything" in text
-    assert "never invents a step" in text.split("---")[1]
+    front = text.split("---")[1]
+    assert "never invents a step" in front
+    assert re.search(r"^allowed-tools: Read, Grep, Glob$", front, re.M), "the skill must be read-only by its tools"
