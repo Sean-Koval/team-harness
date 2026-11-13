@@ -18,8 +18,10 @@ fails any PR that breaks the contract below, whichever surface opened it.
 
   `gh pr create --draft --title '<KEY>: <what changes>' --body-file <file>`
 
-  Mark it ready for review once the repository's checks pass. In a cloud session whose branch name was assigned, keep
-  that branch: the title and the `Jira:` line link the PR.
+  Mark it ready for review once the repository's checks pass, unless it carries the label `needs-owner-review`. That
+  PR stays a draft until {{owner}} has reviewed it and marks it ready: never mark it ready, remove the label, drop its
+  `Owner review:` line or open a new PR for its branch yourself. In a cloud session whose branch name was assigned,
+  keep that branch: the title and the `Jira:` line link the PR.
 
 ## The contract
 

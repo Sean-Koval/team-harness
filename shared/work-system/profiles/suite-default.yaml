@@ -26,8 +26,10 @@ params:
   merge_mode: "allowed"
   merge_rule: >-
     **Merging (suite repositories only):** you may merge your own PR once every required check is green, every review
-    thread is answered, and nobody asked to review it first (Sean's rule, 2026-11-08; KAN-278 for hangar). Squash and
-    delete the branch: `gh pr merge <n> --squash --delete-branch`. In a hangar job, hangar lands it. Never use
+    thread is answered, and nobody asked to review it first (Sean's rule, 2026-11-08; KAN-278 for hangar). A draft, or
+    a PR labelled `needs-owner-review`, counts as one somebody asked to review: read both first (`gh pr view <n>
+    --json isDraft,labels`), and never merge such a PR or turn on auto-merge for it; Sean does. Squash and delete the
+    branch: `gh pr merge <n> --squash --delete-branch`. In a hangar job, hangar lands it. Never use
     `--admin`, never bypass branch protection, and never merge a PR you were told to leave for review. The merge moves
     the ticket to Done.
   scope_map: >-
