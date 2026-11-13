@@ -51,10 +51,13 @@ Hook commands are written for Windows: `py -3` instead of `python3`; in user sco
 quotes with forward slashes, built from the profile directory (`--home`) instead of `$HOME`; in project scope a
 `py -3 -c` line that finds the hook through `CLAUDE_PROJECT_DIR`, so no machine path lands in a committed file.
 Each ends in `; exit $LASTEXITCODE`, so a guard's exit 2 survives PowerShell, whose -Command turns it into 1.
+A PreToolUse guard's entry also says `"shell": "powershell"` and `"onFailure": "block"`, and its command first exits 2
+when `$LASTEXITCODE` is empty: then `py` never started, and a bare `exit` would let the call through.
 
 Hooks that don't start. Claude Code carries on when a hook command can't start (no `py` or `python3`, a wrong path),
 so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the shell
-Claude Code uses (`sh -c`; on Windows Git Bash, or PowerShell where Git Bash isn't installed), with a harmless
+Claude Code uses (`sh -c`; on Windows Git Bash, or PowerShell where Git Bash isn't installed or the entry names
+it), with a harmless
 `git status` call on stdin; any exit but 0 fails loudly (exit 1). Each PreToolUse guard is also sent a call it
 can't read, which it must block with exit 2 through that shell, or it fails loudly too.
 On Windows a PreToolUse guard whose matcher names Bash but not PowerShell fails the same way: without Git Bash,
@@ -108,6 +111,12 @@ WINDOWS = os.name == "nt"  # tests set it to check the Windows commands on any O
 # Microsoft's PowerShell docs advise. Git Bash reads the unset variable as a bare `exit`, which keeps the last
 # command's status, so the one line serves both shells. Appended to every Windows hook command.
 EXIT_AS_PY = "; exit $LASTEXITCODE"
+# A guard's Windows command. Where `py` can't start (uninstalled, off PATH), PowerShell leaves $LASTEXITCODE empty and
+# `exit` with nothing exits 0, so the call would go through with the guard off: exit 2 instead, Claude Code's block.
+# The syntax is PowerShell's, so the guard's entry names PowerShell as its shell ("shell": "powershell"): Git Bash,
+# where installed, would read it as a syntax error. "onFailure": "block" covers a PowerShell that can't start.
+GUARD_EXIT = "; if ($null -eq $LASTEXITCODE) { exit 2 }" + EXIT_AS_PY
+GUARD_FIELDS = {"shell": "powershell", "onFailure": "block"}
 
 
 class Refused(Exception):
@@ -349,16 +358,21 @@ def _scoped_settings(s: dict[str, Any], scope: str, src: Path, base: Path | None
             raise Refused(f"{src}: permissions.{k} is not a list of rules; install_local.py can't merge it")
     if scope == "project" or WINDOWS:
         s = copy.deepcopy(s)
-        for groups in (s.get("hooks") or {}).values():
+        for event, groups in (s.get("hooks") or {}).items():
+            guard = WINDOWS and event == "PreToolUse"
             for g in groups:
                 for hk in g.get("hooks") or []:
                     if isinstance(hk.get("command"), str):
-                        hk["command"] = _hook_command(hk["command"], scope, src, base)
+                        hk["command"] = _hook_command(hk["command"], scope, src, base, guard)
+                        if guard and hk["command"].endswith(GUARD_EXIT):
+                            hk.update(GUARD_FIELDS)
     return s
 
 
-def _hook_command(cmd: str, scope: str, src: Path, base: Path | None) -> str:
-    """A harness hook command as this machine runs it: unchanged for user scope on macOS and Linux."""
+def _hook_command(cmd: str, scope: str, src: Path, base: Path | None, guard: bool = False) -> str:
+    """A harness hook command as this machine runs it: unchanged for user scope on macOS and Linux. On Windows a
+    guard's (PreToolUse) command ends in GUARD_EXIT, any other in EXIT_AS_PY."""
+    end = GUARD_EXIT if guard else EXIT_AS_PY
     if not WINDOWS:
         return _HOME_HOOK.sub(r'"$CLAUDE_PROJECT_DIR"/.claude/hooks/\1', cmd) if scope == "project" else cmd
     m = _PY_HOOK.fullmatch(cmd)
@@ -371,12 +385,12 @@ def _hook_command(cmd: str, scope: str, src: Path, base: Path | None) -> str:
     if scope == "project":
         # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for Git Bash and PowerShell alike
         return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
-                f"'.claude','hooks','{name}'),run_name='__main__')\"" + EXIT_AS_PY)
+                f"'.claude','hooks','{name}'),run_name='__main__')\"" + end)
     path = Path(os.path.abspath(base or Path.home() / ".claude")).joinpath("hooks", name).as_posix()
     if any(c in path for c in '"$%`'):
         raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both Git Bash and PowerShell; '
                       "install with --home pointing elsewhere, or use --scope project")
-    return f'py -3 "{path}"' + EXIT_AS_PY
+    return f'py -3 "{path}"' + end
 
 
 # --- settings.json merge ----------------------------------------------------------------------------------------
@@ -915,15 +929,17 @@ def _git_bash() -> str | None:
     return next((str(c) for c in candidates if c.is_file()), None)
 
 
-def hook_shell(cmd: str) -> list[str]:
+def hook_shell(cmd: str, shell: str | None = None) -> list[str]:
     """The argv Claude Code runs a shell-form hook command with: `sh -c` on macOS and Linux; on Windows Git Bash, or
-    PowerShell where Git Bash isn't installed. cmd never runs a hook, so probing through it would test the wrong
+    PowerShell where Git Bash isn't installed. An entry whose shell is "powershell" runs in PowerShell (`pwsh` off
+    Windows, so its commands can be tested there). cmd never runs a hook, so probing through it would test the wrong
     shell."""
-    if os.name != "nt":
-        return ["/bin/sh", "-c", cmd]
-    bash = _git_bash()
-    if bash:
-        return [bash, "-c", cmd]
+    if shell != "powershell":
+        if os.name != "nt":
+            return ["/bin/sh", "-c", cmd]
+        bash = _git_bash()
+        if bash:
+            return [bash, "-c", cmd]
     ps = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
     return [ps, "-NoProfile", "-NonInteractive", "-Command", cmd]
 
@@ -954,25 +970,28 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
             seen.add(cmd)
             event = json.dumps({**PROBE, "hook_event_name": r["key"], "cwd": str(root)}).encode()
             # Run without the exit suffix: in PowerShell a `py` that doesn't start leaves $LASTEXITCODE empty, and
-            # `exit` with nothing exits 0, so only the bare command shows a hook that can't start.
-            rc, said = _probe(cmd.removesuffix(EXIT_AS_PY), event, env, root)
+            # `exit` with nothing exits 0 (a guard's GUARD_EXIT exits 2), so only the bare command shows a hook that
+            # can't start.
+            shell = hk.get("shell")
+            rc, said = _probe(cmd.removesuffix(GUARD_EXIT).removesuffix(EXIT_AS_PY), event, env, root, shell)
             if rc != 0:
                 out.append(f"hook did not run, so its guard is OFF: {r['key']} {cmd!r} ({said})")
                 continue
             if r.get("key") == "PreToolUse":
                 # A guard blocks a call it can't read. Through the full command, as Claude Code runs it, that block
                 # must still be exit 2: any other code is no verdict, and without Git Bash a hook failure.
-                rc, said = _probe(cmd, b"not a tool call", env, root)
+                rc, said = _probe(cmd, b"not a tool call", env, root, shell)
                 if rc != 2:
                     out.append(f"guard's block does not reach Claude Code as exit 2, so it may not block: "
                                f"PreToolUse {cmd!r} ({said})")
     return out
 
 
-def _probe(cmd: str, event: bytes, env: dict[str, str], root: Path) -> tuple[int | None, str]:
+def _probe(cmd: str, event: bytes, env: dict[str, str], root: Path,
+           shell: str | None = None) -> tuple[int | None, str]:
     """(exit code or None, what to show) after running one hook command through the hook shell with event on stdin."""
     try:
-        res = subprocess.run(hook_shell(cmd), input=event, capture_output=True, env=env,  # noqa: S603
+        res = subprocess.run(hook_shell(cmd, shell), input=event, capture_output=True, env=env,  # noqa: S603
                              cwd=root if root.is_dir() else None, timeout=30, check=False)
     except subprocess.TimeoutExpired:
         return None, "error: timed out after 30s"
