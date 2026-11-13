@@ -9,7 +9,7 @@ proposes records from each one as a pull request. Nothing becomes a record until
 | --- | --- | --- |
 | Lines you mark with `>>` in your work notes | `work-copilot export` writes them as one Source per day | On main |
 | Rooms you picked in Work Copilot | Work Copilot's collector reads only allow-listed rooms; export writes them | Collector not yet qualified against the live chat server (KAN-462) |
-| Recorded meetings | A transcript provider lands the transcript (KAN-457); the [nightly batch](#the-nightly-batch) proposes records (KAN-458) | On main. You schedule the batch yourself; it has no cloud runner yet (KAN-432) |
+| Recorded meetings | A transcript provider lands the transcript (KAN-457); the [nightly batch](#the-nightly-batch) proposes records (KAN-458) | Both on main, neither tried against a live meeting account yet. You schedule the batch yourself (no cloud runner until KAN-432) |
 
 Everything else stays out: unmarked note lines, rooms you did not pick, meetings nobody recorded, and direct
 messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days. The Source record and the records
