@@ -18,6 +18,7 @@ MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel
 And for the work conventions: every environment under `environments/` (the role environments and `work-multirepo`)
 loads in hangar's catalog next to the harness environments it extends, `work-multirepo` installs everything the
 infra, code and database roles do, and every change-set profile under `changesets/` is well formed against them.
+The agent environment's pins agree with what they name (`agent_env.pin_problems`).
 
     python scripts/check_registry.py [REPO_ROOT]
 """
@@ -40,6 +41,7 @@ from hangar.envspec import EnvCatalog
 from hangar.harnesses import HARNESSES
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agent_env  # noqa: E402
 import render_envs  # noqa: E402
 
 
@@ -136,6 +138,11 @@ def check_environments(root: Path) -> list[str]:
             errors.append(f"{MULTI} lacks what {role} installs: {', '.join(missing)}")
     if not errors:
         print(f"environment {MULTI}: carries {', '.join(COVERED_ROLES)}")
+    if agent_env.ENV_NAME in names:
+        pins = agent_env.pin_problems(root)
+        errors += pins
+        if not pins:
+            print(f"environment {agent_env.ENV_NAME}: pins agree (harness, ai-dlc, knowledge format, model, names)")
     errors += claim_role_environments(root, cat, names)
     return errors
 
