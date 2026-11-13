@@ -428,8 +428,9 @@ def extract(repo: Path, source: dict, config: dict, runner: Runner, state: dict,
         usage = runner(source, repo, config)
     except Exception as exc:  # noqa: BLE001 - one Source's failure never stops the batch
         entry["status"] = "failed"
-        entry["reason"] = str(exc)[:300]
-        return {"id": source["id"], "path": source["path"], "error": entry["reason"], "tokens": charge}
+        # State keeps only the kind of failure ("session failed (1)"): the text after it can quote a Source.
+        entry["reason"] = str(exc).split(":", 1)[0][:80]
+        return {"id": source["id"], "path": source["path"], "error": str(exc)[:300], "tokens": charge}
     links = list(PR_LINK.finditer(usage.get("result", "")))
     input_tokens, output_tokens = int(usage.get("input", 0)), int(usage.get("output", 0))
     record = {"id": source["id"], "pr": links[-1].group(0) if links else None, "tokens": input_tokens + output_tokens,
@@ -488,7 +489,11 @@ def run_entry(repo: Path, source: dict, what: str, outcome: str, record: dict | 
 
 
 def capture_run(run_id: str, started: datetime, entries: list[dict], *, ceiling_reached: bool) -> dict:
-    """One line of the run log, in ai-dlc's capture run format (`CaptureRun`, schema version 1)."""
+    """One line of the run log, in ai-dlc's capture run format (`CaptureRun`, schema version 1).
+
+    It holds Source ids (kind, date and hash, never a title), kinds, outcomes, tokens, cost, PR numbers and transcript
+    lengths only: no pull output, path, title, reason or session text reaches the knowledge repository's working tree.
+    """
     return {"schema_version": 1, "run_id": run_id, "started_at": started.isoformat(timespec="seconds"),
             "finished_at": datetime.now(UTC).isoformat(timespec="seconds"), "ceiling_reached": ceiling_reached,
             "sources": [entry for entry in entries if entry is not None]}  # fmt: skip
@@ -537,10 +542,13 @@ def pull(repo: Path, config: dict, since: dict[str, str], dry_run: bool) -> list
             run = subprocess.run([exe, *command[1:]], capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", cwd=config["project"], timeout=1800, check=False)  # fmt: skip
         except (OSError, subprocess.TimeoutExpired) as exc:
-            results.append({"step": name, "status": "failed (error)", "detail": str(exc)[:500]})
+            results.append({"step": name, "status": "failed (error)"})
+            print(f"capture: {name} pull: {str(exc)[:500]}", file=sys.stderr)
             continue
         status = "ok" if run.returncode == 0 else f"failed ({run.returncode})"
-        results.append({"step": name, "status": status, "detail": (run.stderr or run.stdout).strip()[-500:]})
+        results.append({"step": name, "status": status})
+        if run.returncode:  # to the terminal only: a pull's output can name customer meetings and repositories
+            print(f"capture: {name} pull: {run.stderr.strip()[-500:]}", file=sys.stderr)
     return results
 
 

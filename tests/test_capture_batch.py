@@ -299,6 +299,43 @@ def test_work_copilot_export_gets_the_owner(repo: Path, tmp_path: Path, monkeypa
     ]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="shell scripts stand in for the pull tools")
+def test_no_pull_output_title_or_customer_path_reaches_the_repository(repo: Path, tmp_path: Path, monkeypatch,
+                                                                      capsys) -> None:  # fmt: skip
+    """A pull's output can name customer meetings and repositories; the run log and state keep none of it."""
+    title, where = "Alpha Corp renewal call", "/home/ana/customers/alpha-knowledge"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tool = bin_dir / "ai-dlc"
+    tool.write_text(f'#!/bin/sh\necho \'{{"routed": [{{"title": "{title}", "into": "{where}"}}]}}\'\n'
+                    f'echo "customer repository for alpha: {where} ({title})" >&2\nexit "${{FAIL:-0}}"\n')  # fmt: skip
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    broken = "zoom-20261111-eb4f4748bb"
+
+    class Leaky(FakeRunner):
+        def __call__(self, source: dict, repo: Path, config: dict) -> dict:
+            if source["id"] == broken:
+                self.calls.append(source["id"])
+                raise RuntimeError(f"session failed (1): could not summarise {title} from {where}")
+            return super().__call__(source, repo, config)
+
+    for fail in ("0", "1"):
+        monkeypatch.setenv("FAIL", fail)
+        log = cb.run_batch(repo, runner=Leaky(), project=tmp_path)
+    assert title in capsys.readouterr().err, "a failed pull still tells the person at the terminal"
+    assert all(set(p) == {"step", "status"} for p in log["pulls"])
+    for name in (cb.LOG, cb.STATE):
+        text = (repo / name).read_text()
+        assert title not in text and where not in text and "Alpha" not in text, name
+    allowed = set(RUN_SCHEMA["$defs"]["CaptureEntry"]["properties"])
+    for run in run_log(repo):
+        assert set(run) <= {"schema_version", "run_id", "started_at", "finished_at", "ceiling_reached", "sources"}
+        assert all(set(e) <= allowed for e in run["sources"])
+    state = json.loads((repo / cb.STATE).read_text())
+    assert [e["reason"] for e in state["sources"].values() if e["id"] == broken] == ["session failed (1)"]
+
+
 def fake_cli(seen: dict, *, record: bool = True, propose_rc: int = 0):
     """subprocess.run for claude_runner: the session writes into its scratch copy, then the batch proposes."""
 
