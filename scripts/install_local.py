@@ -946,9 +946,21 @@ def _original(block: dict[str, Any]) -> bytes | None:
 
 def _same_settings(original: bytes, s: dict[str, Any]) -> bool:
     try:
-        return _parse_settings(original) == s
+        return _pruned(_parse_settings(original)) == _pruned(s)
     except ValueError:
         return False
+
+
+def _pruned(s: dict[str, Any]) -> dict[str, Any]:
+    """`s` without the empty containers `_remove` takes out, so a person's own `"hooks": {}` still matches (KAN-433)."""
+    out: dict[str, Any] = {}
+    for k, v in s.items():
+        if isinstance(v, dict):
+            v = {kk: vv for kk, vv in v.items() if vv != [] and vv != {}}
+            if not v:
+                continue
+        out[k] = v
+    return out
 
 
 # --- CLI --------------------------------------------------------------------------------------------------------

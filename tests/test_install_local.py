@@ -739,6 +739,17 @@ def test_uninstall_leaves_settings_byte_identical(tmp_path, windows):
     assert sorted(p.name for p in base.iterdir()) == ["settings.json"]
 
 
+def test_uninstall_restores_a_persons_own_empty_sections(tmp_path):
+    """KAN-433: an empty "hooks": {} or "deny": [] of the person's own is not lost on the way back."""
+    base = tmp_path / ".claude"
+    base.mkdir()
+    own = b'{\n  "model": "my-own",\n  "hooks": {},\n  "permissions": {"deny": []}\n}\n'
+    (base / "settings.json").write_bytes(own)
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert (base / "settings.json").read_bytes() == own
+
+
 def test_project_uninstall_leaves_settings_byte_identical_across_an_upgrade(tmp_path, windows):
     h = copy_harness(tmp_path)
     target = tmp_path / "svc"
