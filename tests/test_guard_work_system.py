@@ -348,3 +348,149 @@ def test_redirect_ampersand_is_not_a_separator():
 def test_input_that_is_not_utf8_fails_closed():
     r = run_bytes(b'{"tool_name": "Bash", "tool_input": {"command": "git status \xe9\xff"}}')
     assert r.returncode == 2 and b"not valid UTF-8" in r.stderr
+
+
+# Bypasses from the KAN-371 review (comment 10491): commands hidden in substitutions, nested shells, groups and
+# prefixes are judged like any other (KAN-459). The hook is still a convenience; branch protection and CI enforce.
+
+@pytest.mark.parametrize("command", [
+    "$(gh pr merge 5)",
+    "echo $(gh pr merge 5 --squash)",
+    "echo `gh pr merge 5`",
+    "echo \"$(git push origin main)\"",
+    "cat <(git push origin main)",
+    "bash -c 'git push origin main'",
+    "sh -c \"git status; git push --force origin KAN-1-x\"",
+    "bash -lc 'gh pr merge 5'",
+    "eval git push origin main",
+    "eval 'gh pr merge 5'",
+    "(git push origin main)",
+    "( git push origin main )",
+    "{ git push origin main; }",
+    "env git push origin main",
+    "env -i HOME=/x git push origin main",
+    "command git push origin main",
+    "exec gh pr merge 5",
+    "if true; then git push origin main; fi",
+    "gh api repos/o/r/pulls/5/merge -X PUT",
+    "gh api -X PUT /repos/o/r/pulls/12/merge -f merge_method=squash",
+    "gh api repos/o/r/merges -f base=main -f head=x",
+    "bash -c \"bash -c 'eval git push origin main'\"",
+])
+def test_hidden_commands_are_judged(command):
+    assert bash(command) == 2
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m 'KAN-1: a; git push origin main' --dry-run 2>/dev/null || true",
+    "echo 'gh pr merge 5'",
+    "gh api repos/o/r/pulls/5",
+    "gh api repos/o/r/pulls/5/reviews",
+    "bash -c 'git status'",
+    "echo $(git rev-parse HEAD)",
+    "(cd /tmp && ls)",
+    "env FOO=1 git push origin KAN-1-x",
+])
+def test_quoted_and_harmless_commands_pass(command, tmp_path):
+    assert run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}).returncode == 0
+
+
+def test_suite_default_merge_through_the_api_follows_its_rule():
+    ok = run_hook(SUITE_HOOK, {"tool_name": "Bash", "tool_input": {"command": "gh api -X PUT repos/o/r/pulls/5/merge"}})
+    assert ok.returncode == 0
+
+
+# Role and server binding, not Atlassian tool names (KAN-459).
+
+def run_bound(event, bindings: dict) -> subprocess.CompletedProcess:
+    env = {**os.environ, "WORK_SYSTEM_MCP_BINDINGS": json.dumps(bindings)}
+    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event), capture_output=True,
+                          encoding="utf-8", env=env)
+
+
+FAKE = {"tracker": ["tickets"]}  # a tracker server that is not Atlassian's, with its own tool names
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__tickets__issue_transition", {"key": "KAN-1", "to": "Done"}),
+    ("mcp__tickets__moveTicket", {"key": "KAN-1", "status": "In Review"}),
+    ("mcp__tickets__resolve_issue", {"key": "KAN-1"}),
+    ("mcp__tickets__issues_delete", {"key": "KAN-1"}),
+    ("mcp__tickets__removeTicket", {"key": "KAN-1"}),
+    ("mcp__tickets__run", {"operation": "ticket_transition", "args": {}}),
+    ("mcp__tickets__run", {"operation": "ticket_frobnicate"}),
+    ("mcp__tickets__run", {}),
+    ("mcp__tickets__frobnicate", {"key": "KAN-1"}),
+    ("mcp__tickets__ticket_update", {"key": "KAN-1", "labels": ["exec:pair"]}),
+    ("mcp__tickets__new_ticket_create", {"labels": ["exec:agent"]}),
+])
+def test_bound_tracker_with_other_tool_names_is_guarded(tool, args):
+    assert run_bound({"tool_name": tool, "tool_input": args}, FAKE).returncode == 2
+    # the same calls on a server bound to nothing, with no Atlassian-like name, are not the hook's
+    assert run_bound({"tool_name": tool.replace("tickets", "notes"), "tool_input": args}, FAKE).returncode == 0
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__tickets__get_ticket", {"key": "KAN-1"}),
+    ("mcp__tickets__list_transitions", {"key": "KAN-1"}),
+    ("mcp__tickets__search_tickets", {"query": "x"}),
+    ("mcp__tickets__ticket_create", {"summary": "x", "labels": ["exec:pair"]}),
+    ("mcp__tickets__add_comment", {"key": "KAN-1", "body": "file it exec:agent? no, exec:pair"}),
+    ("mcp__tickets__run", {"operation": "get_ticket"}),
+])
+def test_bound_tracker_reads_and_ordinary_writes_pass(tool, args):
+    assert run_bound({"tool_name": tool, "tool_input": args}, FAKE).returncode == 0
+
+
+@pytest.mark.parametrize("tool, code", [
+    ("mcp__ai-dlc__work_context", 0), ("mcp__ai-dlc__work_status", 0), ("mcp__ai-dlc__work_link", 0),
+    ("mcp__ai-dlc__work_start", 0), ("mcp__ai-dlc__work_finish", 0), ("mcp__ai_dlc__knowledge_find", 0),
+    ("mcp__ai-dlc__knowledge_append", 0), ("mcp__ai-dlc__project_docs_gate", 0), ("mcp__ai-dlc__doctor", 0),
+    ("mcp__ai-dlc__work_transition", 2), ("mcp__ai-dlc__tracker_delete", 2), ("mcp__ai-dlc__work_frobnicate", 2),
+])
+def test_ai_dlc_tools_are_judged_by_role_verb(tool, code):
+    assert run({"tool_name": tool, "tool_input": {"work_id": "KAN-1"}}).returncode == code
+
+
+@pytest.mark.parametrize("tool", ["mcp__claude_ai_Atlassian__transitionJiraIssue",
+                                  "mcp__plugin_x_jira__deleteJiraIssue", "mcp__Atlassian_MCP__executeDestructive"])
+def test_unbound_atlassian_like_servers_are_still_guarded(tool):
+    assert run({"tool_name": tool, "tool_input": {}}).returncode == 2
+
+
+def test_profiles_bind_roles_to_the_servers_their_locks_pin():
+    import yaml
+    targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text())
+    for h, entry in targets["harnesses"].items():
+        params = yaml.safe_load((ROOT / "shared/work-system" / entry["profile"]).read_text())["params"]
+        bindings = json.loads(params["mcp_bindings"])
+        lock = yaml.safe_load((ROOT / "harnesses" / h / "harness.lock").read_text())
+        pinned = {m["name"] for m in lock["binding"]["mcp"]}
+        for role in ("tracker", "wiki"):
+            assert bindings[role] and set(bindings[role]) <= pinned, (h, role, bindings[role], pinned)
+
+
+@pytest.mark.parametrize("hook, server", [(SUITE_HOOK, "atlassian"), (WORK_HOOK, "jira")])
+def test_rendered_hooks_carry_their_binding(hook, server):
+    r = run_hook(hook, {"tool_name": f"mcp__{server}__frobnicate", "tool_input": {}})
+    assert r.returncode == 2 and "fail closed" in r.stderr
+
+
+@pytest.mark.parametrize("tool", ["mcp__ai-dlc__tracker_create", "mcp__tickets__tracker_create"])
+def test_exec_agent_is_refused_on_any_tracker_role_create(tool):
+    args = {"project": "KAN", "summary": "x", "labels": ["exec:agent", "repo:x"]}
+    r = run_bound({"tool_name": tool, "tool_input": args}, FAKE)
+    assert r.returncode == 2 and "exec:agent" in r.stderr
+    args["labels"] = ["exec:pair"]
+    assert run_bound({"tool_name": tool, "tool_input": args}, FAKE).returncode == 0
+
+
+@pytest.mark.parametrize("tool", ["mcp__ai-dlc__tracker_update", "mcp__ai-dlc__work_update", "mcp__tickets__tracker_update"])
+def test_execution_label_edits_are_refused_on_any_tracker_role_update(tool):
+    r = run_bound({"tool_name": tool, "tool_input": {"key": "KAN-1", "labels": ["exec:human"]}}, FAKE)
+    assert r.returncode == 2 and "execution label" in r.stderr
+
+
+def test_ai_dlc_knowledge_notes_may_mention_labels():
+    event = {"tool_name": "mcp__ai-dlc__knowledge_note", "tool_input": {"body": "Sean files it exec:agent later."}}
+    assert run(event).returncode == 0
