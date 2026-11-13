@@ -45,8 +45,8 @@ components:
   path: skills/extract-records
   source: path:skills/extract-records
 - id: skill:plan-to-tickets
-  digest: sha256:145cc91573ecf5484c59ce954c894d434c66085eb7daf5bbcd5dcd96b88b0fc6
-  tree: sha256:21f8bd4b556afe17fd48641098cec9c64cefdbff1ec856fe505f37e508817f2d
+  digest: sha256:77fa10be1f88fbe46209ee3547a81339d28c8ddae0aaa10eca0feeceb4bd5fc7
+  tree: sha256:cd5bbda9256eb5604ed6a1dfc9805d90cc5185eab5906ae7723c9da391b8ad84
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: native:claude-code/hooks/guard_work_system.py

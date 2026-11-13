@@ -53,7 +53,9 @@ Test every item before drafting anything. An item is **not ready** when any of t
 
 - `Repo:` is missing, names two or more repositories, or says "all" or "each";
 - `Verify:` is missing, has no command in backticks, or is a judgement ("check by hand", "review it", "looks right");
-- it has no acceptance criterion: no `Acceptance:` lines and no decision `checks`;
+- it has no `Acceptance:` line of its own, or an acceptance line is a judgement ("looks right", "by hand",
+  "works well") rather than something a test or command checks. The decision's `checks` do not count: they
+  are rules for the agent's behaviour, not the item's acceptance;
 - `Goal:` or `What changes:` is missing.
 
 A not-ready item gets **no draft**. List it in the report with the question that would make it ready, addressed to
@@ -69,7 +71,9 @@ Drafts live in `.ai-dlc/local/plan-to-tickets/<decision id>/`, one `<item-slug>.
 Plan item: <decision id>#<item-slug>
 ```
 
-Before writing a draft, read the one already there, if any:
+Before comparing, resolve `Start after` through `filed_as`: a plan item whose draft has a key in `filed_as`
+becomes that key, in `Start after` and in the blocked-by links, so a filed dependency never looks like a change.
+Then, before writing a draft, read the one already there, if any:
 
 - **None:** write it. The item is `created`.
 - **Same sections, labels and links:** the item is `unchanged`. Rewrite nothing.
@@ -172,5 +176,5 @@ Notes:      <ignored lines, exec:agent requests turned into exec:pair, untrusted
 ## Example
 
 `examples/decision.md` is an accepted decision with three plan items; one is not ready. `examples/run-1/` is the
-first run: two drafts, a filing checklist, one item reported. `examples/run-2.md` is the rerun after the person
-filed both: nothing created.
+first run: two drafts, a filing checklist, one item reported. `examples/run-2/` is the rerun after the person
+filed both: the drafts as filed, and a report with nothing created and nothing changed.

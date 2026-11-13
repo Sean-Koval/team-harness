@@ -18,7 +18,7 @@ EXAMPLES = SKILL_DIR / "examples"
 # Vendor tools and products the skill must not name: it goes through ai-dlc's roles only.
 VENDORS = re.compile(r"jira|confluence|atlassian|mcp__|github|\bgh\b|zoom|google meet|symphony|slack|notion", re.I)
 SECTIONS = ["Goal", "What changes", "Acceptance criteria", "Verify", "Out of scope", "Governing spec"]
-JUDGEMENT = re.compile(r"by hand|review it|looks right", re.I)
+JUDGEMENT = re.compile(r"by hand|review it|looks right|works well", re.I)
 
 
 def split(path: Path) -> tuple[dict, str]:
@@ -46,8 +46,9 @@ def plan_items(body: str) -> dict[str, dict[str, list[str]]]:
     return items
 
 
-def not_ready(item: dict[str, list[str]], checks: list) -> list[str]:
-    """The skill's readiness test (section 1): the reasons an item is not ready."""
+def not_ready(item: dict[str, list[str]]) -> list[str]:
+    """The skill's readiness test (section 1): the reasons an item is not ready. The decision's checks never count
+    as acceptance: they are rules for the agent's behaviour."""
     reasons = []
     repo = " ".join(item.get("Repo", []))
     if not repo or re.search(r",|\band\b|\ball\b|\beach\b", repo):
@@ -55,7 +56,8 @@ def not_ready(item: dict[str, list[str]], checks: list) -> list[str]:
     verify = " ".join(item.get("Verify", []))
     if not re.search(r"`[^`]+`", verify) or JUDGEMENT.search(verify):
         reasons.append("verify")
-    if not item.get("Acceptance") and not checks:
+    acceptance = item.get("Acceptance") or []
+    if not acceptance or any(JUDGEMENT.search(line) for line in acceptance):
         reasons.append("acceptance")
     if not item.get("Goal") or not item.get("What changes"):
         reasons.append("goal")
@@ -64,7 +66,7 @@ def not_ready(item: dict[str, list[str]], checks: list) -> list[str]:
 
 DECISION, DECISION_BODY = split(EXAMPLES / "decision.md")
 ITEMS = plan_items(DECISION_BODY)
-READY = [s for s, i in ITEMS.items() if not not_ready(i, DECISION.get("checks") or [])]
+READY = [s for s, i in ITEMS.items() if not not_ready(i)]
 
 
 def test_skill_is_registered_for_every_harness():
@@ -100,7 +102,17 @@ def test_example_has_three_items_one_not_ready():
     assert DECISION["type"] == "decision" and DECISION["status"] == "accepted"
     assert list(ITEMS) == ["retention-job", "retention-check", "retention-notice"]
     assert READY == ["retention-job", "retention-check"]
-    assert set(not_ready(ITEMS["retention-notice"], DECISION["checks"])) == {"repo", "verify"}
+    assert set(not_ready(ITEMS["retention-notice"])) == {"repo", "verify", "acceptance"}
+
+
+def test_acceptance_must_be_the_items_own_and_checkable():
+    text = SKILL.read_text()
+    assert "The decision's `checks` do not count" in text and '"looks right", "by hand"' in text
+    good = dict(ITEMS["retention-job"])
+    assert not_ready(good) == []
+    assert not_ready({**good, "Acceptance": []}) == ["acceptance"], "decision checks do not stand in for acceptance"
+    assert not_ready({**good, "Acceptance": ["The dashboard looks right"]}) == ["acceptance"]
+    assert not_ready({**good, "Acceptance": ["Checked by hand on staging"]}) == ["acceptance"]
 
 
 def test_first_run_drafts_exactly_the_ready_items():
@@ -137,8 +149,32 @@ def test_draft_follows_the_layout(slug):
     assert body.rstrip().endswith(f"Plan item: {DECISION['id']}#{slug}")
 
 
+def resolve_filed(text: str, filed: dict[str, str]) -> str:
+    """Section 2: plan-item references become the keys their drafts were filed as."""
+    for ref, key in filed.items():
+        text = text.replace(ref, key)
+    return text
+
+
 def test_rerun_creates_nothing():
-    report = (EXAMPLES / "run-2.md").read_text()
+    report = (EXAMPLES / "run-2/report.md").read_text()
     assert re.search(r"^Created: +none$", report, flags=re.M)
+    assert re.search(r"^Changed: +none$", report, flags=re.M)
     unchanged = re.findall(r"^Unchanged: +(\S+) ", report, flags=re.M)
     assert sorted(unchanged) == sorted(READY)
+    assert not list((EXAMPLES / "run-2").glob("*.revision.md"))
+
+
+def test_rerun_resolves_start_after_through_filed_as():
+    """A regenerated draft, with plan-item references resolved through filed_as, equals the filed draft; without
+    the resolution it would differ, and the rerun would write a spurious revision."""
+    assert "resolve `Start after` through `filed_as`" in SKILL.read_text()
+    filed_drafts = {slug: split(EXAMPLES / "run-2" / f"{slug}.md")[0]["filed_as"] for slug in READY}
+    filed = {f"{DECISION['id']}#{slug}": key for slug, key in filed_drafts.items()}
+    for slug in READY:
+        regenerated = (EXAMPLES / "run-1" / f"{slug}.md").read_text()
+        regenerated = regenerated.replace("filed_as:\n", f"filed_as: {filed_drafts[slug]}\n")
+        on_record = (EXAMPLES / "run-2" / f"{slug}.md").read_text()
+        assert resolve_filed(regenerated, {k: v for k, v in filed.items() if not k.endswith("#" + slug)}) == on_record
+    unresolved = (EXAMPLES / "run-1/retention-check.md").read_text().replace("filed_as:\n", "filed_as: ABC-302\n")
+    assert unresolved != (EXAMPLES / "run-2/retention-check.md").read_text()
