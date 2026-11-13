@@ -34,16 +34,12 @@ empty temporary directory with every tool off, so it cannot read `after/`. In CI
 
 ## Current numbers
 
-Cases 10–12 are run 3: blind, by a separate agent, with the skill from main at 2ec5b48. Precision and recall are
-91%. Of their records, 45% need a substantive edit and none a cosmetic one. Over all cases, 21% are substantive and
-3% cosmetic (24% total). The 10% gate fails.
+Cases 10–12 are run 4: blind, by a separate agent, with the skill from #30 at abb5fe1, which sets `belongs_to` by
+type. Precision and recall are 100%, and no record needs an edit. Over all cases, 3% are substantive and 3% cosmetic
+(7% total), so the 10% gate passes.
 
-Four substantive edits are an extra `belongs_to` link. The skill now links every record to the ticket its Source
-names, but the expected convention and lesson in case 10 have none. In case 12 the ticket appears only in ci-bot
-messages. The fifth is a question in case 12 whose header is not valid YAML; the check refuses it. Case 07 lacks a
-`belongs_to` link.
-
-Cases 01–09 are not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
+The one substantive edit is case 07's missing `belongs_to` link; the cosmetic one is case 08's reworded title. Cases
+01–09 are not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
 
 ## Next step for Sean
 
