@@ -2,8 +2,8 @@
 # local run is evidence about a cloud one:
 #
 # - cloud: hangar loads it from HANGAR_ENV_DIRS (this directory) and renders and runs it, like the role environments;
-# - local: `make agent-env` renders it with the same hangar renderer, builds that image and starts it under this
-#   egress policy, with no host directory mounted (scripts/agent_env.py).
+# - local: `make agent-env` runs it with `hangar env local` (KAN-472): hangar's renderer builds the image, and it
+#   starts under this egress policy, with no host directory mounted and no DNS out.
 #
 # Pinned here: the harness (suite-default, by its harness_digest), ai-dlc (a commit, installed from its uv.lock), the
 # knowledge format version and the model. scripts/check_registry.py fails when a pin and what it names disagree.
@@ -28,10 +28,24 @@ dependencies:
     UV_PYTHON_DOWNLOADS=never uv sync --locked --no-dev --python "$(mise which python)"
     mkdir -p /home/agent/.local/bin
     ln -sf /home/agent/.local/share/ai-dlc/.venv/bin/ai-dlc /home/agent/.local/bin/ai-dlc
+files:                            # ai-dlc's machine file for `ai-dlc doctor` on the cloned inputs (the Makefile)
+  .agent-env/machine.toml: |
+    schema = 4
+
+    [paths]
+    vault = "/workspace/knowledge"
+
+    [target]
+    name = "local"
+    headless = true
+
+    [credentials.github]
+    source = "environment"
+    variable = "GH_TOKEN"
 env:
   AGENT_ENV: agent
   AGENT_ENV_HARNESS: suite-default
-  AGENT_ENV_HARNESS_DIGEST: "sha256:873486f67cc1785b276dbdcb98d27794cf3767b9dc139bffaf1949d8f5688be0"  # r7
+  AGENT_ENV_HARNESS_DIGEST: "sha256:63be16efd51b3f74d5e81f5d29d9ad13c6477ccf6e11699698b8182185adb7d3"  # r8
   AI_DLC_REF: "cf665b96c13710025fc1a4a2932cc18f1f97b431"
   KNOWLEDGE_FORMAT_VERSION: "1"   # ai-dlc's knowledge-record FORMAT_VERSION; a knowledge repo pins [format] version
 secrets:                          # ENV_VAR: hangar credential name (values never live here)
