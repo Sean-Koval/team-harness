@@ -25,6 +25,9 @@ params:
   decision_labels: >-
     `exec:human`, the work ticket's `repo:` or component label, and `type:decision` when it is a Task; assign it to
     the ticket's owner (its assignee, otherwise its reporter)
+  # The guard hook's MCP roles: which servers this harness binds as the tracker and the wiki (names from
+  # harness.lock binding.mcp; a test holds them equal), and the ai-dlc server. JSON.
+  mcp_bindings: '{"tracker": ["jira"], "wiki": ["jira"], "ai-dlc": ["ai-dlc"]}'
   merge_mode: "never"
   merge_rule: >-
     **Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. The approvers
