@@ -5,7 +5,7 @@ description: Use when work arrives as a ticket key (ABC-123, SVC-412), when a ti
 
 # Tickets
 
-Every piece of work is one ticket, one branch, one pull request. The ticket lives in the WORKPROJ project on COMPANY-SITE.atlassian.net. Read and write it
+Every piece of work is one ticket, one branch, one pull request. The ticket lives in the team's Jira project on the company's Atlassian site. Read and write it
 with the Atlassian MCP server: it is named `jira` or `atlassian` in a harness, or it is the Atlassian connector in a
 local or cloud session. Confluence tools come from the same server.
 

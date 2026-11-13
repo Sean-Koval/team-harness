@@ -7,7 +7,7 @@ description: Use at the start of any coding task that has no ticket key yet (a r
 
 Nothing is edited before the work has a ticket key. If you were given a key, skip to step 3.
 
-1. **Find the ticket.** Search the WORKPROJ project on COMPANY-SITE.atlassian.net with JQL through the Atlassian MCP server. Look in the project's epic for
+1. **Find the ticket.** Search the team's Jira project on the company's Atlassian site with JQL through the Atlassian MCP server. Look in the project's epic for
    an open ticket that already covers the request:
 
    `project = <KEY> AND statusCategory != Done AND text ~ "<words>"`

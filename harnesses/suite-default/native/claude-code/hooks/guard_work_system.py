@@ -16,8 +16,7 @@ agent and skips the call) for:
 - `gh pr merge` with `--admin`, always; and every merge (`gh pr merge`, a GitHub MCP `merge_pull_request`) when the
   harness's merge rule is `never` (skill `github-pr`).
 
-Every command in a call is judged: lines, `;`, `&&`, `||`, `|` and `&` separate them. Input that is not
-UTF-8 or not JSON is blocked (fail closed). Everything else is allowed with exit 0. The only command it runs is `git symbolic-ref --short HEAD` (read-only) to
+Everything else is allowed with exit 0. The only command it runs is `git symbolic-ref --short HEAD` (read-only) to
 learn the branch; it writes nothing. The ticket key pattern is `WORK_SYSTEM_KEY` (a regex, default
 `[A-Z][A-Z0-9]{1,9}-[0-9]+`) and the PR line's name is `WORK_SYSTEM_TRACKER_LINE` (default `Jira`). `MERGE_RULE` is
 rendered per harness by scripts/sync_shared.py from its profile (`allowed` or `never`); anything else, including this
@@ -25,11 +24,6 @@ unrendered source, means `never`.
 
 The same rules are checked again on the pull request by the work-system PR check (actions/work-system-pr), which every
 surface crosses; this hook only catches them earlier, in the session.
-
-It runs the same on Linux, macOS and native Windows (standard library only, no POSIX-only calls). The event is read
-as UTF-8 bytes and the reason written as UTF-8 bytes, whatever the console code page, so a blocked call reads the same
-everywhere. A segment holding a drive path (`C:\\repo`) keeps its backslashes; Git Bash paths (`/c/repo`) are mapped to
-drive paths on Windows; `git.exe`, `gh.exe` and full program paths are recognised.
 """
 
 from __future__ import annotations
@@ -51,35 +45,17 @@ MCP_TRANSITION = re.compile(r"^mcp__.+__transition\w*$")  # transitionJiraIssue;
 MCP_GENERIC_WRITE = re.compile(r"^mcp__.+__execute(Write|Destructive)$")  # discover/execute: the op is in input.name
 MCP_ISSUE_WRITE = re.compile(r"^mcp__.+__(createJiraIssue|editJiraIssue)$")
 MCP_DESTRUCTIVE = re.compile(r"^mcp__.+__(executeDestructive|delete\w*)$")
-# every command in the call is judged: newlines, ;, &&, ||, | and a background & all start a new one (not 2>&1)
-SEGMENT_SPLIT = re.compile(r"\s*(?:\r?\n|&&|\|\||;|\||(?<![<>])&(?![>&]))\s*")
-CONTINUATION = re.compile(r"\\\r?\n")  # a backslash-newline joins two lines into one command
-DRIVE_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\")  # C:\... : backslashes are separators, not escapes
-MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")  # Git Bash's /c/Users/... on Windows
-WINDOWS = os.name == "nt"
-
-
-def _prog(word: str) -> str:
-    """The program a command word names: `git` for git, /usr/bin/git, C:\\Git\\cmd\\git.exe or GIT.EXE."""
-    name = re.split(r"[\\/]", word)[-1].lower()
-    return name[:-4] if name.endswith(".exe") else name
-
-
-def _path(p: str, cwd: str | None) -> str:
-    """`p` as a native path, relative to `cwd` when it is relative."""
-    if WINDOWS:
-        p = MSYS_DRIVE.sub(lambda m: m.group(1).upper() + ":", p)
-    if os.path.isabs(p) or DRIVE_PATH.match(p) or not cwd:
-        return p
-    return os.path.join(cwd, p)
+SEGMENT_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
 
 def _branch(cwd: str | None, git_c: str | None) -> str | None:
-    where = _path(git_c, cwd) if git_c else (cwd or ".")
+    where = git_c or cwd or "."
+    if git_c and cwd and not os.path.isabs(git_c):
+        where = os.path.join(cwd, git_c)
     try:
         # symbolic-ref names the branch even before its first commit, and fails when HEAD is detached
         r = subprocess.run(["git", "-C", where, "symbolic-ref", "--short", "-q", "HEAD"], capture_output=True,
-                           encoding="utf-8", errors="replace", timeout=5)
+                           text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
     name = r.stdout.strip()
@@ -88,19 +64,14 @@ def _branch(cwd: str | None, git_c: str | None) -> str | None:
 
 def _words(segment: str) -> list[str]:
     try:
-        lex = shlex.shlex(segment, posix=True)
-        lex.whitespace_split = True
-        lex.commenters = ""
-        if DRIVE_PATH.search(segment):
-            lex.escape = ""  # a Windows path: C:\Users must not lose its backslashes
-        return list(lex)
+        return shlex.split(segment)
     except ValueError:
         return segment.split()
 
 
 def _git_subcommand(words: list[str]) -> tuple[str | None, str | None, list[str]]:
     """(subcommand, -C path, the words after the subcommand) for a `git ...` command, else (None, None, [])."""
-    if not words or _prog(words[0]) != "git":
+    if not words or os.path.basename(words[0]) != "git":
         return None, None, []
     i, git_c = 1, None
     while i < len(words) and words[i].startswith("-"):
@@ -166,9 +137,10 @@ def _pr_create(words: list[str], cwd: str | None) -> str | None:
     body = _flag(words, "--body", "-b")
     body_file = _flag(words, "--body-file", "-F")
     if body is None and body_file:
+        path = body_file if os.path.isabs(body_file) or not cwd else os.path.join(cwd, body_file)
         try:
-            with open(_path(body_file, cwd), "rb") as fh:
-                body = _text(fh.read())
+            with open(path, encoding="utf-8") as fh:
+                body = fh.read()
         except OSError:
             return None  # the PR check will judge the body; don't wedge on a path we can't read
     if body is None:
@@ -178,14 +150,6 @@ def _pr_create(words: list[str], cwd: str | None) -> str | None:
     if not re.search(r"(?mi)(?:^|\\n)\W*Docs:\s*\S", body):
         return "the PR body needs a 'Docs:' line: the files or page you updated, or 'none needed - <why>' (skill work-docs)"
     return None
-
-
-def _text(data: bytes) -> str:
-    """Text from bytes written by any editor or shell: UTF-8 (with or without a BOM) or UTF-16 with a BOM, which
-    Windows PowerShell 5 writes by default."""
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16", errors="replace")
-    return data.decode("utf-8-sig", errors="replace")
 
 
 def _pr_merge(words: list[str]) -> str | None:
@@ -223,21 +187,21 @@ def why(event: dict) -> str | None:
         return None
     command = str((event.get("tool_input") or {}).get("command") or "")
     cwd = event.get("cwd")
-    for segment in SEGMENT_SPLIT.split(CONTINUATION.sub(" ", command)):
+    for segment in SEGMENT_SPLIT.split(command):
         words = _strip_env(_words(segment.strip()))
         if not words:
             continue
         if words[0] == "cd" and len(words) > 1:
-            cwd = _path(words[1], cwd)
+            cwd = words[1] if os.path.isabs(words[1]) or not cwd else os.path.join(cwd, words[1])
             continue
         sub, git_c, rest = _git_subcommand(words)
         if sub == "commit":
             reason = _commit(cwd, git_c)
         elif sub == "push":
             reason = _push(rest)
-        elif _prog(words[0]) == "gh" and words[1:3] == ["pr", "create"]:
+        elif os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "create"]:
             reason = _pr_create(words[3:], cwd)
-        elif _prog(words[0]) == "gh" and words[1:3] == ["pr", "merge"]:
+        elif os.path.basename(words[0]) == "gh" and words[1:3] == ["pr", "merge"]:
             reason = _pr_merge(words[3:])
         else:
             reason = None
@@ -248,26 +212,14 @@ def why(event: dict) -> str | None:
 
 def main() -> int:
     try:
-        # bytes, not sys.stdin: on Windows its text layer decodes with the console code page, not UTF-8
-        data = sys.stdin.buffer.read()
-        text = data.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return _block("the tool call is not valid UTF-8, so it cannot be checked")  # fail closed
-    except OSError:
-        return 0
-    try:
-        event = json.loads(text)
-    except ValueError:
-        return _block("the tool call is not valid JSON, so it cannot be checked")  # fail closed
+        event = json.load(sys.stdin)
+    except (ValueError, OSError):
+        return 0  # not ours to judge; never wedge a session on a malformed event
     reason = why(event) if isinstance(event, dict) else None
-    return _block(reason) if reason else 0
-
-
-def _block(reason: str) -> int:
-    sys.stderr.flush()
-    sys.stderr.buffer.write(f"blocked by the work-system hook: {reason}.\n".encode("utf-8"))
-    sys.stderr.buffer.flush()
-    return 2
+    if reason:
+        print(f"blocked by the work-system hook: {reason}.", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

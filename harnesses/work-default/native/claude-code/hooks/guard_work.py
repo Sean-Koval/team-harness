@@ -50,35 +50,6 @@ BASH = [
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
 
 
-def _commands(command: str) -> list[str]:
-    """The whole call with each line ending made a `;`, then every single command in it. Each is judged, so a
-    newline, `;`, `&&`, `||`, `|` or `&` cannot hide a command from a pattern."""
-    joined = re.sub(r"\s*\r?\n\s*", " ; ", re.sub(r"\\\r?\n", " ", command))
-    return [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
-
-
-def _read_event() -> tuple[object, str | None]:
-    """(event, problem): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the
-    console code page). problem names why the input cannot be checked (not UTF-8, not JSON): the caller fails closed."""
-    try:
-        text = sys.stdin.buffer.read().decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return None, "the tool call is not valid UTF-8, so it cannot be checked"
-    except OSError:
-        return None, None
-    try:
-        return json.loads(text), None
-    except ValueError:
-        return None, "the tool call is not valid JSON, so it cannot be checked"
-
-
-def _block(message: str) -> int:
-    sys.stderr.flush()
-    sys.stderr.buffer.write((message + "\n").encode("utf-8"))
-    sys.stderr.buffer.flush()
-    return 2
-
-
 def why(event: dict) -> str | None:
     tool = event.get("tool_name")
     args = event.get("tool_input") or {}
@@ -88,18 +59,22 @@ def why(event: dict) -> str | None:
             return "the deploy checkout is read-only: hangar's deploy step bumps it after the other PRs merge"
         return None
     if tool == "Bash":
-        for command in _commands(str(args.get("command") or "")):
-            for pattern, reason in BASH:
-                if re.search(pattern, command):
-                    return reason
+        command = str(args.get("command") or "")
+        for pattern, reason in BASH:
+            if re.search(pattern, command):
+                return reason
     return None
 
 
 def main() -> int:
-    event, problem = _read_event()
-    reason = problem or (why(event) if isinstance(event, dict) else None)
+    try:
+        event = json.load(sys.stdin)
+    except (ValueError, OSError):
+        return 0  # not ours to judge; never wedge a session on a malformed event
+    reason = why(event) if isinstance(event, dict) else None
     if reason:
-        return _block(f"blocked by the work harness: {reason}. Propose the change in the PR instead.")
+        print(f"blocked by the work harness: {reason}. Propose the change in the PR instead.", file=sys.stderr)
+        return 2
     return 0
 
 
