@@ -23,7 +23,7 @@
 # then run sync_shared.py. Naming a skill below is optional and only asserts that it ships to every harness; it is
 # not the complete list (sync_shared.shared_skills is).
 skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records,
-         knowledge-context, query-knowledge, whats-next, plan-to-tickets]   # every harness below
+         knowledge-context, query-knowledge, whats-next, plan-to-tickets, codify-lesson]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
 hook_command: python3 "$HOME/.claude/hooks/guard_work_system.py"
 # More hooks, each beside the one above; settings.json must register `command` on `event` (KAN-431).

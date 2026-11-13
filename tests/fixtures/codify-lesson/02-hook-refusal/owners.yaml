@@ -1,0 +1,95 @@
+# Who the harness PR asks to review (codify-lesson, section 4). Each case is a CODEOWNERS file (null: the repository
+# has none), the files the PR changes and the PR's author. `reviewer` is the login asked to review, which gives
+# harness-pr.md, or null when no one can be asked, which gives harness-pr-owner-not-asked.md (a draft labelled
+# needs-owner-review). The last entry that matches a file wins, as GitHub reads it. Logins are invented.
+format: codify-lesson-owners/v1
+cases:
+- id: one-person
+  codeowners: |
+    /shared/work-system/hooks/ @dana-hooks
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: dana-hooks
+- id: last-match-wins
+  codeowners: |
+    # everything, then the shared layer
+    * @lee-everything
+    /shared/work-system/ @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: kim-shared
+- id: earlier-specific-entry-loses
+  codeowners: |
+    /shared/work-system/hooks/ @dana-hooks
+    /shared/ @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: kim-shared
+- id: person-beside-a-team
+  codeowners: |
+    /shared/work-system/hooks/ @example-org/platform @dana-hooks
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: dana-hooks
+- id: same-entry-for-every-file
+  codeowners: |
+    /shared/work-system/ @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py, shared/work-system/skills/github-pr/SKILL.md]
+  author: agent-bot
+  reviewer: kim-shared
+- id: team-only
+  codeowners: |
+    /shared/work-system/hooks/ @example-org/platform
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: two-people
+  codeowners: |
+    /shared/work-system/hooks/ @dana-hooks @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: email-only
+  codeowners: |
+    /shared/work-system/hooks/ dana@example.com
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: files-give-different-entries
+  codeowners: |
+    /shared/work-system/hooks/ @dana-hooks
+    /shared/work-system/skills/ @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py, shared/work-system/skills/github-pr/SKILL.md]
+  author: agent-bot
+  reviewer: null
+- id: same-person-different-entries
+  codeowners: |
+    /shared/work-system/hooks/ @dana-hooks
+    /shared/work-system/skills/ @dana-hooks
+  changed: [shared/work-system/hooks/guard_work_system.py, shared/work-system/skills/github-pr/SKILL.md]
+  author: agent-bot
+  reviewer: null
+- id: last-match-has-no-owner
+  codeowners: |
+    * @lee-everything
+    /shared/work-system/hooks/
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: no-matching-entry
+  codeowners: |
+    /docs/ @dana-hooks
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: no-codeowners
+  codeowners: null
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: owner-is-author
+  codeowners: |
+    /shared/work-system/hooks/ @Pat-Owner
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: pat-owner
+  reviewer: null
