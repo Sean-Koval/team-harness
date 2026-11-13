@@ -213,14 +213,19 @@ def test_one_ai_dlc_pin_everywhere():
     want = f"ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@{ref}"
     bindings = yaml.safe_load((ROOT / "bindings/suite-default.yaml").read_text())
     assert want in bindings["dependencies"]["pip"]
-    env = yaml.safe_load((ROOT / "harnesses/suite-default/env.stable.yaml").read_text())
+    # the current lock's environment carries it; stable gets it only by promotion (KAN-473, KAN-477)
+    current = "env.candidate.yaml" if (ROOT / "harnesses/suite-default/env.candidate.yaml").is_file() \
+        else "env.stable.yaml"
+    env = yaml.safe_load((ROOT / "harnesses/suite-default" / current).read_text())
     assert want in env["dependencies"]["pip"]
 
 
 def test_work_default_does_not_install_ai_dlc_and_its_skills_say_so():
     # the work environments name no personal repository: a company installs ai-dlc from its own source
-    env = yaml.safe_load((ROOT / "harnesses/work-default/env.stable.yaml").read_text())
-    assert "ai-dlc" not in json.dumps(env.get("dependencies") or {})
+    for f in ("env.stable.yaml", "env.candidate.yaml"):
+        if (ROOT / "harnesses/work-default" / f).is_file():
+            env = yaml.safe_load((ROOT / "harnesses/work-default" / f).read_text())
+            assert "ai-dlc" not in json.dumps(env.get("dependencies") or {}), f
     for name in SKILLS:
         text = (ROOT / "harnesses/work-default/skills" / name / "SKILL.md").read_text()
         assert "This work harness does not install ai-dlc" in text and "**stop**" in text, name

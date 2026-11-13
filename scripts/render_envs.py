@@ -8,9 +8,9 @@ lock's `harness_digest`:
 
 - `env.stable.yaml` (environment `<name>`): the guide, skills, native files and MCP servers of the lock `stable`
   names in `channels.yaml`, read from its release copy (`releases/rN/`, scripts/promote.py) when that isn't the
-  current lock; no plugins. A session on the `stable` channel thaws that lock and runs the environment's hooks, so
-  they must be the release copy's: after a hook edit on main, a stable session keeps the promoted hooks until the next
-  promotion, and turn 1 reports no drift (KAN-477).
+  current lock, with the bindings of the commit that added that copy; no plugins. A session on the `stable` channel
+  thaws that lock and runs the environment's hooks, so they must be the release copy's: after a hook edit on main, a
+  stable session keeps the promoted hooks until the next promotion, and turn 1 reports no drift (KAN-477).
 - `env.candidate.yaml` (environment `<name>-candidate`): the current lock in full, plugins too (loaded from hangar's
   read-only plugin seed, hangar docs/harnesses.md#plugins), whenever `stable` isn't the current lock or the lock has
   plugins. Sessions on another channel, and flightdeck's environment-based candidate arm, run on it.
@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -128,6 +129,33 @@ def stable_dir(root: Path) -> Path:
     return rel
 
 
+def _git(repo: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _bindings_text(repo: Path, src: Path, root: Path, bindings_file: Path) -> str:
+    """The bindings a lock's environment uses. The current lock uses the current bindings/<name>.yaml. A release copy
+    uses the bindings as they were in the commit that added it, so a later binding change (a dependency, a secret)
+    reaches stable only by promotion, like its files do (KAN-473, KAN-477). A release copy that isn't committed yet
+    is being promoted now, from the current bindings."""
+    if src.resolve() != root.resolve():
+        top = (_git(repo, "rev-parse", "--show-toplevel") or "").strip()
+        if top:
+            rel = (src / "harness.lock").resolve().relative_to(Path(top).resolve()).as_posix()
+            commit = (_git(Path(top), "log", "--diff-filter=A", "--format=%H", "-1", "--", rel) or "").strip()
+            if commit:
+                b_rel = bindings_file.resolve().relative_to(Path(top).resolve()).as_posix()
+                text = _git(Path(top), "show", f"{commit}:{b_rel}")
+                if text is None:
+                    raise SystemExit(f"{bindings_file}: not in commit {commit[:12]}, which added {rel}")
+                return text
+    return bindings_file.read_text()
+
+
 def _environment(root: Path, src: Path, env_name: str, description: str, with_plugins: bool) -> dict[str, Any]:
     """The environment providing the lock in `src` (the harness directory `root` or a release copy under it). Paths
     are relative to `root`, the spec's directory, where hangar resolves them."""
@@ -136,7 +164,7 @@ def _environment(root: Path, src: Path, env_name: str, description: str, with_pl
     # the repository's bindings/, also from a release copy (harnesses/<name>/releases/rN/)
     repo = next((p for p in root.resolve().parents if (p / "bindings").is_dir()), root.parent.parent)
     bindings_file = repo / "bindings" / f"{name}.yaml"
-    bind = yaml.safe_load(bindings_file.read_text()) or {}
+    bind = yaml.safe_load(_bindings_text(repo, src, root, bindings_file)) or {}
     comps = lock["components"]
     home = HOME_DIRS[runtime]
     prefix = src.resolve().relative_to(root.resolve()).as_posix()

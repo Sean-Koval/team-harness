@@ -121,3 +121,49 @@ def test_stable_without_a_release_copy_is_refused(repo):
     shutil.rmtree(h / "releases")
     with pytest.raises(SystemExit, match="neither the current lock nor a release copy"):
         render_envs.render(h)
+
+
+def _git(repo: Path, *args: str) -> None:
+    import subprocess
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                    "-c", "commit.gpgsign=false", *args], capture_output=True, text=True, check=True)
+
+
+def test_a_binding_change_reaches_stable_only_by_promotion(repo):
+    """A dependency added to bindings/ after stable's release copy was committed goes to the candidate environment
+    only; env.stable.yaml keeps the bindings of the commit that added the copy, and check_registry's render check
+    fails on a stable environment that took the new one."""
+    root, h, _, rel = repo
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "release")
+    stable_before = (h / "env.stable.yaml").read_text()
+    # a new lock on main, so stable is the release copy and candidate the current lock
+    guide = h / "CLAUDE.md"
+    guide.write_text(guide.read_text() + "\nA line after the release.\n")
+    shutil.copy(guide, h / "AGENTS.md")
+    import subprocess
+    subprocess.run([sys.executable, str(ROOT / "scripts/relock.py"), str(h), "--write"], check=True,
+                   capture_output=True)
+    lock = hl.load(h)
+    chans = yaml.safe_load((root / "channels.yaml").read_text())
+    chans[NAME]["candidate"] = hl.harness_digest(lock)
+    (root / "channels.yaml").write_text(yaml.safe_dump(chans))
+    b = root / "bindings" / f"{NAME}.yaml"
+    data = yaml.safe_load(b.read_text())
+    data["dependencies"] = {"pip": ["example-tool==1.0"]}
+    b.write_text(yaml.safe_dump(data, sort_keys=False))
+    out = render_envs.render(h)
+    assert render_envs.stable_dir(h) == rel
+    # the same release, now read from releases/rN/: what the bindings give is what the release had
+    bound = lambda text: {k: yaml.safe_load(text).get(k) for k in ("mcp", "secrets", "dependencies")}  # noqa: E731
+    assert bound(out["env.stable.yaml"]) == bound(stable_before)
+    assert "dependencies" not in yaml.safe_load(out["env.stable.yaml"])
+    assert "example-tool==1.0" in out["env.candidate.yaml"]
+    # a stable environment rendered from the current bindings is drift: the render check reports it
+    leaked = yaml.safe_load(out["env.stable.yaml"])
+    leaked["dependencies"] = data["dependencies"]
+    (h / "env.stable.yaml").write_text(render_envs.HEADER.format(name=NAME) + yaml.safe_dump(leaked, sort_keys=False))
+    r = subprocess.run([sys.executable, str(ROOT / "scripts/render_envs.py"), str(h), "--check"],
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and "env.stable.yaml is out of date" in r.stderr
