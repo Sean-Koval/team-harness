@@ -87,8 +87,10 @@ def test_work_default_carries_no_personal_rules():
 def test_suite_default_decisions_carry_the_human_decision_label():
     """Sean's decisions view filters on `human-decision` (KAN-484): a Decision filed by the skill must carry it."""
     skill = (ROOT / "harnesses/suite-default/skills/decision-ticket/SKILL.md").read_text(encoding="utf-8")
-    labels = next(line for line in skill.splitlines() if line.startswith("| Labels |"))
-    assert "`human-decision`" in labels and "assign it to Sean" in labels
+    labels = next((line for line in skill.splitlines() if line.startswith("| Labels |")), "")
+    assert labels, "the decision-ticket skill has no Labels row"
+    for label in ("`decision`", "`human-decision`", "assign it to Sean"):
+        assert label in labels, label
 
 
 def test_merge_rules_differ_by_harness():
