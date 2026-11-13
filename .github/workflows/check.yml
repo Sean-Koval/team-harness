@@ -88,6 +88,8 @@ jobs:
           python -m venv "$env:RUNNER_TEMP\hangar"
           & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pip install --quiet "hangar @ git+https://github.com/Sean-Koval/hangar@$env:HANGAR_REF"
       - name: Build the generated files (shared-layer copies, locks, env files; KAN-481)
+        env:
+          PYTHONUTF8: "1"   # the scripts write with the default encoding, which is the code page on Windows
         run: '& "$env:RUNNER_TEMP\hangar\Scripts\python.exe" scripts/build_generated.py'
       - name: Hook tests
         run: >-
