@@ -713,3 +713,28 @@ def test_look_alike_execution_labels_are_normalised(hook, label):
     assert r.returncode == 2 and "exec:agent" in r.stderr
     edit = {"issueIdOrKey": "KAN-1", "fields": {"labels": [label.replace("agent", "pair")]}}
     assert run_hook(hook, {"tool_name": "mcp__jira__editJiraIssue", "tool_input": edit}).returncode == 2
+
+
+# Coordinator follow-ups on #35: parameter defaults, and GraphQL piped in on stdin.
+
+@pytest.mark.parametrize("command", ["gh ${X:-pr} merge 5", "gh ${X:=pr} merge 5", "X=pr; gh ${X:-issue} merge 5",
+                                     "git push origin ${B:-main}"])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_parameter_defaults_are_expanded(hook, command):
+    assert run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": command}}).returncode == 2
+
+
+@pytest.mark.parametrize("command", [
+    "echo '{\"query\": \"mutation { mergePullRequest(input: {}) { clientMutationId } }\"}' | gh api graphql --input -",
+    "printf 'mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }' | gh api graphql -F query=@-",
+    "cat <<'Q' | gh api graphql --input -\n{\"query\": \"mutation { addPullRequestReview(input: {event: APPROVE}) { clientMutationId } }\"}\nQ",
+    "echo '{\"query\": \"mutation { mergePullRequest(input: {}) { x } }\"}' | curl -sS --data-binary @- https://api.github.com/graphql",
+])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_graphql_on_stdin_is_judged(hook, command):
+    assert run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": command}}).returncode == 2
+
+
+def test_harmless_graphql_on_stdin_and_defaults_pass():
+    assert bash("echo '{\"query\": \"{ viewer { login } }\"}' | gh api graphql --input -") == 0
+    assert bash("gh ${X:-pr} view 5") == 0
