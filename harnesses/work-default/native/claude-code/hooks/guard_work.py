@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse hook for the work harness: shared systems stay read-only, and the deploy checkout stays untouched.
 
-Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash
-from PowerShell; both are judged alike. This exits 2 with the reason on stderr (Claude Code shows it to the
-agent and skips the call) for:
+Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash from
+PowerShell; both are judged alike. This exits 2 with the reason on stderr, and prints the same reason as a
+PreToolUse deny on stdout, which Claude Code reads alongside the exit 2 (it shows the reason to the agent and skips
+the call), for:
 
 - Terraform that changes real infrastructure or state (`apply`, `destroy`, `import`, state edits, an `init` that
   isn't `-backend=false`, and `plan`, which reads real state);
@@ -106,6 +107,20 @@ def _read_event() -> tuple[object, str | None]:
 
 
 def _block(message: str) -> int:
+    # Exit 2 with the reason on stderr is the verdict: Claude Code blocks the call and shows the agent the reason.
+    # PowerShell's -Command turns a native exit 2 into 1, so the installer's Windows hook commands end in
+    # `exit $LASTEXITCODE` to keep the 2. The same reason also goes to stdout as a PreToolUse deny, which Claude Code
+    # reads alongside exit 2. Where a shell turns the 2 into 1 anyway, valid JSON decides the call, except on Windows
+    # without Git Bash, where any code but 0 or 2 is a hook failure. If something else writes to stdout (a shell
+    # profile) the JSON is not read, and the non-zero exit still blocks.
+    deny = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": message}}
+    try:
+        sys.stdout.flush()
+        sys.stdout.buffer.write(json.dumps(deny, ensure_ascii=True).encode("ascii") + b"\n")
+        sys.stdout.buffer.flush()
+    except (OSError, ValueError):
+        pass  # the exit code below still blocks
     sys.stderr.flush()
     sys.stderr.buffer.write((message + "\n").encode("utf-8"))
     sys.stderr.buffer.flush()

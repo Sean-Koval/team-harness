@@ -808,3 +808,26 @@ def test_a_closed_stdin_fails_closed():
     """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
     r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
     assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
+
+
+BLOCKED_CALL = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git push --force origin é"}}).encode()
+
+
+@pytest.mark.parametrize("data", [BLOCKED_CALL, b"not json", b"\xff\xfe"])
+def test_a_block_also_denies_on_stdout_with_the_same_reason(data):
+    """A block exits 2 and also prints one PreToolUse deny, nothing else, with the words stderr carries (KAN-460):
+    Claude Code reads it alongside the exit 2, and where a shell turns the 2 into 1, valid JSON still decides."""
+    r = subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True)
+    assert r.returncode == 2
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert (out["hookEventName"], out["permissionDecision"]) == ("PreToolUse", "deny")
+    assert out["permissionDecisionReason"] == r.stderr.decode("utf-8").strip()
+    assert r.stdout.decode("ascii").strip().count("\n") == 0
+
+
+def test_an_allowed_call_prints_nothing():
+    """A deny is only printed on a block; an allowed call leaves stdout empty, so Claude Code's own flow decides."""
+    r = subprocess.run([sys.executable, str(HOOK)], capture_output=True,
+                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                         "tool_input": {"command": "git status"}}).encode())
+    assert (r.returncode, r.stdout) == (0, b"")
