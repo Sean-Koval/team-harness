@@ -200,6 +200,19 @@ def test_hook_ignores_injected_guidance_and_bad_input(tmp_path):
     assert r.returncode == 0
 
 
+def test_hook_reads_a_non_ascii_transcript_path_whatever_the_console_code_page(tmp_path):
+    """Windows (KAN-460): sys.stdin decodes with the console code page (cp1252 here), and a profile directory such as
+    C:\\Users\\Jörg then named no file, so the reminder never fired. The hook reads the event as UTF-8 bytes."""
+    home = tmp_path / "Jörg Ñúñez"
+    home.mkdir()
+    t = transcript(home, say("assistant", text("We decided to keep records in git.")))
+    event = json.dumps({"hook_event_name": "SessionEnd", "transcript_path": str(t)}, ensure_ascii=False)
+    r = subprocess.run([sys.executable, str(HOOK)], input=event.encode("utf-8"), capture_output=True, timeout=10,
+                       env={**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"})
+    assert r.returncode == 2, r.stderr
+    assert b"extract-records" in r.stderr
+
+
 def ai_dlc_ref() -> str:
     env = yaml.safe_load((ROOT / "environments/agent.yaml").read_text())["env"]
     return env["AI_DLC_REF"]

@@ -453,8 +453,9 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         matchers = " ".join(e.get("matcher", "") for e in entries)
         if not entries:
             problems.append(f"{h}: settings.json does not register {t['hook_command']!r} on PreToolUse")
-        elif "Bash" not in matchers or "mcp__" not in matchers:
-            problems.append(f"{h}: the work-system hook must match Bash and mcp__ tools (matcher: {matchers!r})")
+        elif any(tool not in matchers for tool in ("Bash", "PowerShell", "mcp__")):
+            problems.append(f"{h}: the work-system hook must match Bash, PowerShell and mcp__ tools "
+                            f"(matcher: {matchers!r})")
     return stale, problems
 
 

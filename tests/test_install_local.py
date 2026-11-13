@@ -18,6 +18,7 @@ import install_local as il  # noqa: E402
 
 WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
+TEAM = ROOT / "harnesses/team-default"
 
 
 @pytest.fixture(autouse=True)
@@ -665,7 +666,7 @@ def test_windows_profile_path_that_cannot_be_quoted_is_refused(tmp_path, monkeyp
     monkeypatch.setattr(il, "WINDOWS", True)
     home = tmp_path / bad
     assert user(WORK, home, "--apply") == 2
-    assert "can't be quoted for both PowerShell and cmd" in capsys.readouterr().err
+    assert "can't be quoted for both Git Bash and PowerShell" in capsys.readouterr().err
     assert not (home / ".claude").exists()
 
 
@@ -856,14 +857,135 @@ def test_apply_fails_loudly_when_a_hook_does_not_start(tmp_path, capsys, monkeyp
 
 @pytest.mark.skipif(os.name != "nt", reason="the native Windows shell")
 def test_posix_hook_command_on_windows_is_caught(tmp_path, monkeypatch, capsys):
-    """The teammate-guide dry run: main wrote `python3 "$CLAUDE_PROJECT_DIR"/...` on Windows, cmd can't run it, and
-    Claude Code went on with the guard off. Such a command now fails --apply and --check out loud."""
+    """The teammate-guide dry run: main wrote `python3 "$CLAUDE_PROJECT_DIR"/...` on Windows, and Claude Code went on
+    with the guard off. Without Git Bash, Claude Code runs hooks in PowerShell, where `$CLAUDE_PROJECT_DIR` is an empty
+    PowerShell variable, so the command can't find its hook. Such a command now fails --apply and --check out loud."""
     monkeypatch.setattr(il, "WINDOWS", False)
+    monkeypatch.setattr(il, "_git_bash", lambda: None)
     target = tmp_path / "svc"
     assert project(WORK, target, "--apply") == 1
     assert "hook did not run, so its guard is OFF" in capsys.readouterr().err
     assert project(WORK, target, "--check") == 1
     assert "hook did not run, so its guard is OFF" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
+@pytest.mark.parametrize("shell", ["git-bash", "powershell"])
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_windows_hook_commands_run_in_both_hook_shells(tmp_path, monkeypatch, capsys, scope, shell):
+    """The commands written for Windows pass the probe in Git Bash and, where Git Bash isn't installed, PowerShell:
+    the two shells Claude Code runs shell-form hooks with on Windows."""
+    if shell == "git-bash" and il._git_bash() is None:
+        pytest.skip("no Git Bash on this machine")
+    if shell == "powershell":
+        monkeypatch.setattr(il, "_git_bash", lambda: None)
+    monkeypatch.setattr(il, "WINDOWS", True)
+    if scope == "project":
+        assert project(WORK, tmp_path / "svc", "--apply") == 0, capsys.readouterr().err
+        assert project(WORK, tmp_path / "svc", "--check") == 0, capsys.readouterr().out
+    else:
+        home = tmp_path / "home" / ".claude"
+        assert user(WORK, home, "--apply") == 0, capsys.readouterr().err
+        assert user(WORK, home, "--check") == 0, capsys.readouterr().out
+
+
+def test_hook_shell_is_sh_off_windows(monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Windows picks Git Bash or PowerShell")
+    assert il.hook_shell("echo hi") == ["/bin/sh", "-c", "echo hi"]
+
+
+def test_git_bash_follows_claude_code_s_variable_then_looks_in_program_files(tmp_path, monkeypatch):
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    bash.parent.mkdir(parents=True)
+    bash.write_bytes(b"")
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(bash))
+    assert il._git_bash() == str(bash)
+    monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH")
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(il.shutil, "which", lambda name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert il._git_bash() == str(bash)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "elsewhere"))
+    assert il._git_bash() is None
+
+
+def test_a_git_bash_variable_naming_no_file_fails_the_probe_out_loud(tmp_path, monkeypatch, capsys):
+    """Claude Code reports a wrong CLAUDE_CODE_GIT_BASH_PATH instead of quietly using PowerShell, so the probe does too."""
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(tmp_path / "missing" / "bash.exe"))
+    with pytest.raises(FileNotFoundError, match="CLAUDE_CODE_GIT_BASH_PATH names no file"):
+        il._git_bash()
+    if os.name == "nt":
+        assert project(WORK, tmp_path / "svc", "--apply") == 1
+        assert "CLAUDE_CODE_GIT_BASH_PATH names no file" in capsys.readouterr().err
+
+
+GUARD_BLOCKS = [  # (harness, guard, a command it blocks, its reason)
+    (WORK, "guard_work.py", "kubectl delete pod web-1", b"kubectl may only read"),
+    (WORK, "guard_work_system.py", "git push origin main", b"blocked by the work-system hook"),
+    (SUITE, "guard_work_system.py", "git push --force origin KAN-1-x", b"blocked by the work-system hook"),
+    (TEAM, "guard_readonly.py", "kubectl delete pod web-1", b"kubectl may only read"),
+]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
+@pytest.mark.parametrize("shell", ["git-bash", "powershell"])
+@pytest.mark.parametrize("scope", ["user", "project"])
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("harness, guard, command, reason", GUARD_BLOCKS)
+def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypatch, shell, scope, tool, harness,
+                                                              guard, command, reason):
+    """The probe only proves a hook starts; this proves a block survives the shell, in both scopes, from a path with a
+    space and letters outside the console code page, for a Bash call and a PowerShell call. Git Bash passes exit 2 and
+    the reason through. PowerShell's -Command turns a native exit 2 into 1, which Claude Code also treats as a block
+    when Git Bash isn't installed (a PreToolUse exit other than 0 or 2 fails closed); the reason still reaches stderr."""
+    if shell == "git-bash" and il._git_bash() is None:
+        pytest.skip("no Git Bash on this machine")
+    if shell == "powershell":
+        monkeypatch.setattr(il, "_git_bash", lambda: None)
+    monkeypatch.setattr(il, "WINDOWS", True)
+    root = tmp_path / "Jörg Ñúñez"
+    shutil.copytree(harness / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
+    cmd = il._hook_command(f'python3 "$HOME/.claude/hooks/{guard}"', scope, harness, root / ".claude")
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}},
+                       ensure_ascii=False).encode("utf-8")
+    r = subprocess.run(il.hook_shell(cmd), input=event, capture_output=True, timeout=60, cwd=root,
+                       env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
+    assert reason in r.stderr, (cmd, r.stderr)
+    assert r.returncode == 2 if shell == "git-bash" else r.returncode != 0
+
+
+def test_windows_guard_that_cannot_see_powershell_fails_loudly(tmp_path, capsys, monkeypatch):
+    """On Windows without Git Bash, Claude Code's shell tool is PowerShell (KAN-482): a guard whose matcher names Bash
+    but not PowerShell would see no shell command there, so --apply says so instead of reporting a working setup."""
+    monkeypatch.setattr(il, "WINDOWS", True)
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "matcher": "Bash|mcp__.*"}}
+        if r["section"] == "hooks" and r["key"] == "PreToolUse" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 1
+    err = capsys.readouterr().err
+    assert "hook sees no PowerShell call, so its guard is OFF" in err and "install Git for Windows" in err
+    assert "--channel candidate" in err  # stable's frozen release still has Bash-only matchers until a promotion
+
+
+@pytest.mark.parametrize("matcher, bash, powershell", [
+    ("Bash", True, False), ("Bash|PowerShell|mcp__.*", True, True), ("(Bash|Edit)", True, False),
+    ("Ba.*", True, False), ("", True, True), ("*", True, True), ("mcp__.*", False, False), ("Bash|(", True, False),
+])
+def test_a_matcher_is_read_as_claude_code_reads_it(matcher, bash, powershell):
+    """A regex form like `(Bash|Edit)` must not slip past the check that a guard also sees PowerShell."""
+    assert (il._matches(matcher, "Bash"), il._matches(matcher, "PowerShell")) == (bash, powershell)
+
+
+def test_off_windows_a_bash_only_matcher_is_fine(tmp_path, monkeypatch):
+    monkeypatch.setattr(il, "WINDOWS", False)
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "matcher": "Bash|mcp__.*"}}
+        if r["section"] == "hooks" and r["key"] == "PreToolUse" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 0
 
 
 # --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------
