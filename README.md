@@ -111,7 +111,7 @@ The rules are enforced in layers, each catching what the one before can't:
 | Layer | Where | Holds for | What it does |
 | --- | --- | --- | --- |
 | Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work; a ruling is drafted for confirmation), `work-docs` (which doc goes where, the `Docs:` line), `github-pr` (who opens it, the contract, the merge rule), `extract-records`, the knowledge skills `knowledge-context` (the scope's indexes and binding records before a ticket, under a token ceiling), `query-knowledge` and `whats-next` (through ai-dlc's knowledge role only), and for work-default `release-approvals` |
-| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, any transition, destructive or unrecognised call on a server the profile binds as tracker or wiki (`mcp_bindings`), `exec:agent` on any tracker-role write, `gh pr merge --admin`, and any merge where the profile says never, also when hidden in `$(...)`, `bash -c`, `eval` or `gh api` |
+| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, any transition, destructive or unrecognised call on a server the profile binds as tracker or wiki (`mcp_bindings`), `exec:agent` on any tracker-role write, every wiki page write (only the render job publishes; a profile's `wiki_write_allow` may name site and space pairs), `gh pr merge --admin`, and any merge where the profile says never, also when hidden in `$(...)`, `bash -c`, `eval` or `gh api`. The hook is a convenience: give session credentials read-only Confluence scopes, so the wiki refuses a write the hook misses |
 | Session-end hook | `shared/work-system/hooks/knowledge_session_end.py` | Claude Code with the harness | reminds the user to run `extract-records` when the session stated decisions; blocks nothing |
 | PR check | [`actions/work-system-pr`](actions/work-system-pr/README.md) | **every** PR, from any surface or tool, Codex and humans included | title key, `Jira:` line, `Docs:` line, `Decision:` → ADR; with a scoped, read-only Jira token, the ticket is open, has an execution label and is not blocked by an open Decision |
 | Tracker automation | Jira, configured by hand | every ticket | statuses move on branch created, PR opened, PR merged and Decision answered (cabinet `docs/WORK-SYSTEM.md`) |
@@ -200,15 +200,17 @@ Variables are names only, listed in `environments/agent.env.example`: the inputs
 
 ```sh
 make agent-env          # build, start, clone the inputs, print the pins and `ai-dlc doctor`
-make agent-env-check    # two fresh instances print the same; nothing is mounted; off-list hosts are refused
+make agent-env-check    # two fresh instances print the same; nothing is mounted; off-list hosts and DNS are refused
 make agent-env-down
 ```
 
-`scripts/agent_env.py` does the local half with hangar's own code: hangar's renderer builds the image (with the agent
-CLI baked in, since there are no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. The
-container mounts nothing from the host and passes only the contract's names. It reaches the internet only through
-`scripts/egress_proxy.py`, a sidecar on an internal Docker network. The allowlist is GitHub, the package indexes,
-`api.atlassian.com` (tracker and wiki), the bound MCP servers and the model's hosts (`make agent-env-policy`).
+hangar runs the local half: the Makefile calls `hangar env local` at the hangar commit CI pins (KAN-472; hangar's
+`docs/environments/local-run.md`). hangar's renderer builds the image (with the agent CLI baked in, since there are
+no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. The container mounts nothing from the
+host and gets only the contract's names. It reaches the internet only through hangar's egress sidecar on an internal
+Docker network, and resolves no name itself: the sidecar refuses every DNS query. The allowlist is GitHub, the
+package indexes, `api.atlassian.com` (tracker and wiki), the bound MCP servers and the model's hosts
+(`make agent-env-policy`).
 
 ## Run it on a laptop
 
@@ -377,7 +379,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
 | `environments/` | Role environments for the four-repo convention, `work-multirepo` for change sets, and `agent.yaml` with its variable contract `agent.env.example` |
-| `scripts/agent_env.py`, `Makefile` | Start the agent environment locally (`make agent-env`); `scripts/egress_proxy.py` is its egress sidecar |
+| `Makefile` | Start the agent environment locally (`make agent-env`), with hangar's `hangar env local` |
 | `changesets/` | An example change-set profile |
 | `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks (on the role environments too), `work-multirepo` covering the roles, change-set profiles well formed |
 | `.github/workflows/check.yml` | This repository's CI |

@@ -150,6 +150,17 @@ def extract_cli(config: dict, case: dict, model: str, dest: Path) -> dict[str, A
 RUNNERS = {"claude-cli": extract_cli, "api": extract_api}
 
 
+def baseline_is_live(path: Path) -> bool:
+    """True once a live run recorded the fixtures; until then a stale recording only warns."""
+    return path.is_file() and json.loads(path.read_text()).get("live") is True
+
+
+def mark_live(path: Path) -> None:
+    data = json.loads(path.read_text()) if path.is_file() else {}
+    data["live"] = True
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def gates(summary: dict, config: dict, stale: list[str]) -> list[str]:
     """O3 gates. No baseline gate yet: the baseline is re-recorded from the first live run (README)."""
     t = config["thresholds"]
@@ -271,6 +282,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if args.record:
             shutil.rmtree(EVAL / "recorded", ignore_errors=True)
             shutil.copytree(recorded, EVAL / "recorded")
+            mark_live(EVAL / "baseline.json")
     else:
         recorded = EVAL / "recorded"
         meta = json.loads((recorded / "run.json").read_text())
@@ -305,7 +317,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     stale = []
     if skill.is_file() and sha256(skill) != meta.get("skill_sha256"):
         note = "the recording predates the current SKILL.md: rerun with --live --record"
-        stale.append(note) if args.require_fresh else print(f"warning: {note}", file=sys.stderr)
+        if args.require_fresh and baseline_is_live(EVAL / "baseline.json"):
+            stale.append(note)
+        else:  # no live recording yet: a hand-made recording is always behind, so only warn
+            print(f"warning: {note}", file=sys.stderr)
     if meta.get("model") != config["model"]:
         print(f"note: recorded with {meta.get('model')}; live runs use {config['model']}", file=sys.stderr)
     run_meta = {k: v for k, v in meta.items() if k not in ("tokens", "blind", "pending", "needs_human")}
