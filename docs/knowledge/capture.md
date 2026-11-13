@@ -9,11 +9,59 @@ proposes records from each one as a pull request. Nothing becomes a record until
 | --- | --- | --- |
 | Lines you mark with `>>` in your work notes | `work-copilot export` writes them as one Source per day | On main |
 | Rooms you picked in Work Copilot | Work Copilot's collector reads only allow-listed rooms; export writes them | Collector not yet qualified against the live chat server (KAN-462) |
-| Recorded meetings | A transcript provider lands the transcript (KAN-457); a nightly batch proposes records (KAN-458) | Not built. Until then, a person places a transcript by hand |
+| Recorded meetings | A transcript provider lands the transcript (KAN-457); the [nightly batch](#the-nightly-batch) proposes records (KAN-458) | On main. You schedule the batch yourself; it has no cloud runner yet (KAN-432) |
 
 Everything else stays out: unmarked note lines, rooms you did not pick, meetings nobody recorded, and direct
 messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days. The Source record and the records
 made from it stay.
+
+## The nightly batch
+
+One job pulls cheaply and extracts once a day, so token use stays predictable (decision KAN-420). Each run:
+
+1. pulls new transcripts (`ai-dlc knowledge pull-transcripts`) and, when Work Copilot is installed, exports picked
+   rooms and marked notes (`work-copilot export`), both since the last run;
+2. sets aside chat threads with fewer than 5 messages and no decision word (decided, agreed, going forward, we will).
+   Their Source records move from `inbox/` to `processed/` unchanged;
+3. runs `extract-records` once per remaining Source, one Claude Code session each. Each session opens one draft
+   records PR. Nothing merges.
+
+A Source whose session finished moves to `processed/` too, so `inbox/` holds only what is left. The run stops before
+it would pass the nightly token ceiling and lists the Sources it left. The next run starts with them.
+
+macOS:
+
+```sh
+python scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO" --dry-run   # what it would do; writes nothing
+python scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO"
+python scripts/capture_batch.py process-now <source id> --repo "$KNOWLEDGE_REPO"
+```
+
+Windows (untested):
+
+```powershell
+py -3 scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO --dry-run
+py -3 scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO
+py -3 scripts\capture_batch.py process-now <source id> --repo $env:KNOWLEDGE_REPO
+```
+
+`process-now` extracts one Source at once, including a thread the filter set aside. Schedule `run` nightly with cron,
+launchd or Task Scheduler, on a machine signed in to Claude Code, GitHub and ai-dlc's knowledge role.
+
+Each run appends a line to `capture/runs.jsonl` in the knowledge repository: Sources pulled, filtered, extracted and
+left, with tokens and cost. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
+makes no model call. Tune the filter and the ceiling in `knowledge.toml`:
+
+```toml
+[capture]
+token_ceiling = 1000000          # per run
+min_messages = 5
+decision_words = ["decided", "agreed", "going forward", "we will"]
+chat_providers = ["*chat*", "slack*", "teams*", "symphony*"]   # which Source providers are chat
+scope = "team"                   # work-copilot export --scope
+```
+
+The commands it runs and the tools a session may use are fixed in the script, not read from the repository.
 
 ## Mark note lines with `>>`
 
