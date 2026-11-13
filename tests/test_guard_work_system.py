@@ -422,6 +422,12 @@ FAKE = {"tracker": ["tickets"]}  # a tracker server that is not Atlassian's, wit
     ("mcp__tickets__frobnicate", {"key": "KAN-1"}),
     ("mcp__tickets__ticket_update", {"key": "KAN-1", "labels": ["exec:pair"]}),
     ("mcp__tickets__new_ticket_create", {"labels": ["exec:agent"]}),
+    # status changes through ordinary write verbs (R2 on #44)
+    ("mcp__tickets__set_status", {"key": "KAN-1", "status": "Done"}),
+    ("mcp__tickets__update_ticket", {"key": "KAN-1", "status": "Done"}),
+    ("mcp__tickets__update_ticket", {"key": "KAN-1", "fields": {"State": "closed"}}),
+    ("mcp__tickets__update_ticket", {"key": "KAN-1", "resolution": "Won't do"}),
+    ("mcp__tickets__get_and_update_issue", {"key": "KAN-1", "status": "Done"}),
 ])
 def test_bound_tracker_with_other_tool_names_is_guarded(tool, args):
     assert run_bound({"tool_name": tool, "tool_input": args}, FAKE).returncode == 2
@@ -513,6 +519,29 @@ SECOND_SERVER = [
     ("mcp__x__call_tool", {"tool": "deleteJiraIssue"}),
     ("mcp__x__run", {"name": "x", "inputs": {"site": {"CloudID": "acme.atlassian.net"}}}),
     ("mcp__x__run", {"name": "x", "cloudId": "9468cd0c-c7fe-48bc-9366-2a720a8dad15"}),
+    # any tool given an Atlassian site is Atlassian's, whatever it is called (R2 on #44)
+    ("mcp__corp__createIssue", {"cloudId": "acme.atlassian.net", "projectKey": "KAN", "labels": ["exec:agent"]}),
+    ("mcp__corp__transitionIssue", {"cloudId": "9468cd0c-c7fe-48bc-9366-2a720a8dad15", "issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__updatePage", {"cloudId": "acme.atlassian.net", "pageId": "7", "body": "x"}),
+    ("mcp__corp__addGraphContext", {"cloudId": "9468cd0c-c7fe-48bc-9366-2a720a8dad15", "frob": 1}),
+    # routers naming the operation under other keys, dotted or slashed, or nested
+    ("mcp__x__call_tool", {"tool_name": "transitionJiraIssue", "arguments": {"issueIdOrKey": "KAN-1"}}),
+    ("mcp__x__callTool", {"toolName": "transitionJiraIssue"}),
+    ("mcp__x__call_tool", {"server_name": "atlassian", "tool_name": "transitionIssue"}),
+    ("mcp__x__call_tool", {"name": "jira.transition_issue"}),
+    ("mcp__x__call_tool", {"name": "jira/transition_issue"}),
+    ("mcp__x__use_tool", {"tool": "jira_transition_issue"}),
+    ("mcp__rube__RUBE_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "JIRA_TRANSITION_ISSUE", "arguments": {}}]}),
+    ("mcp__rube__RUBE_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "JIRA_GET_ISSUE"},
+                                                      {"tool_slug": "JIRA_DELETE_ISSUE"}]}),
+    # every operation named is judged: a read in `name` does not hide a transition in `operation`
+    ("mcp__corp__executeWrite", {"name": "getJiraIssue", "operation": "transitionJiraIssue"}),
+    # a write that sets a status moves the ticket
+    ("mcp__corp__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"status": {"name": "Done"}}}),
+    # HTTP through an MCP fetch tool, as through curl
+    ("mcp__fetch__fetch", {"url": "https://acme.atlassian.net/rest/api/3/issue/KAN-1/transitions",
+                           "method": "POST", "body": "{}"}),
+    ("mcp__fetch__fetch", {"url": "https://acme.atlassian.net/rest/api/3/issue/KAN-1", "method": "DELETE"}),
 ]
 
 
@@ -536,6 +565,16 @@ def test_a_second_atlassian_server_under_another_name_is_guarded(hook, tool, arg
     ("mcp__ci__run_workflow", {"name": "sync-confluence-docs"}),
     ("mcp__hangar__run_job", {"name": "x", "cloud_id": "gcp-1"}),
     ("mcp__x__run", {"name": "x", "cloud_id": "gcp-1"}),
+    ("mcp__corp__getIssue", {"cloudId": "acme.atlassian.net", "issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__createIssue", {"cloudId": "acme.atlassian.net", "projectKey": "KAN", "labels": ["exec:pair"]}),
+    ("mcp__x__call_tool", {"tool_name": "getJiraIssue", "arguments": {"issueIdOrKey": "KAN-1"}}),
+    ("mcp__rube__RUBE_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "JIRA_GET_ISSUE", "arguments": {}}]}),
+    # a version's or a page's `name` in what the operation is given is data, not an operation name
+    ("mcp__corp__executeWrite", {"name": "createJiraVersion", "inputs": {"name": "Release 1.0", "project": "KAN"}}),
+    ("mcp__x__call_tool", {"tool_name": "github_list_issues"}),  # a router running something else's tool
+    ("mcp__fetch__fetch", {"url": "https://acme.atlassian.net/rest/api/3/issue/KAN-1"}),
+    ("mcp__fetch__fetch", {"url": "https://example.com/api", "method": "POST", "body": "{}"}),
+    ("mcp__ci__run_workflow", {"name": "nightly", "cloudId": "gcp-1"}),
 ])
 def test_a_second_atlassian_server_keeps_its_reads_and_ordinary_writes(tool, args):
     assert run({"tool_name": tool, "tool_input": args}).returncode == 0
@@ -590,6 +629,26 @@ def test_exec_agent_is_refused_on_any_tracker_role_create(tool):
 def test_execution_label_edits_are_refused_on_any_tracker_role_update(tool):
     r = run_bound({"tool_name": tool, "tool_input": {"key": "KAN-1", "labels": ["exec:human"]}}, FAKE)
     assert r.returncode == 2 and "execution label" in r.stderr
+
+
+@pytest.mark.parametrize("server", ["dlc", "plugin_ai_dlc", "team-ai-dlc"])
+def test_ai_dlc_under_another_server_name_is_guarded(server):
+    """ai-dlc's tracker tools are known by their names, and a plugin-prefixed ai-dlc server by its own (R2 on #44)."""
+    r = run({"tool_name": f"mcp__{server}__tracker_transition", "tool_input": {"reference": "KAN-1"}})
+    assert r.returncode == 2
+    r = run({"tool_name": f"mcp__{server}__tracker_create", "tool_input": {"title": "x", "labels": ["exec:agent"]}})
+    assert r.returncode == 2 and "exec:agent" in r.stderr
+    assert run({"tool_name": f"mcp__{server}__tracker_get", "tool_input": {"reference": "KAN-1"}}).returncode == 0
+
+
+@pytest.mark.parametrize("raw", ["{not json", '["tracker"]', '{"tracker": "tickets"}'])
+def test_bad_bindings_fail_closed(raw):
+    """A binding the hook cannot read refuses every MCP call, rather than leaving bound servers unguarded."""
+    env = {**os.environ, "WORK_SYSTEM_MCP_BINDINGS": raw}
+    event = {"tool_name": "mcp__tickets__set_status", "tool_input": {"key": "KAN-1"}}
+    r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event), capture_output=True, encoding="utf-8",
+                       env=env)
+    assert r.returncode == 2 and "mcp_bindings" in r.stderr
 
 
 def test_ai_dlc_knowledge_notes_may_mention_labels():
@@ -840,3 +899,17 @@ def test_graphql_on_stdin_is_judged(hook, command):
 def test_harmless_graphql_on_stdin_and_defaults_pass():
     assert bash("echo '{\"query\": \"{ viewer { login } }\"}' | gh api graphql --input -") == 0
     assert bash("gh ${X:-pr} view 5") == 0
+
+
+@pytest.mark.parametrize("name, value, ok", [
+    ("mcp_bindings", '{"tracker": ["atlassian"], "ai-dlc": ["ai-dlc"]}', True),
+    ("mcp_bindings", '{"tracker": "atlassian"}', False),
+    ("mcp_bindings", "{tracker: [atlassian]}", False),
+    ("wiki_write_allow", "[]", True),
+    ("wiki_write_allow", '[{"site": "x.atlassian.net"}]', False),
+])
+def test_sync_shared_refuses_bindings_the_hook_cannot_read(name, value, ok):
+    """The hook refuses every MCP call when its bindings don't parse, so sync_shared.py --check catches them first."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import sync_shared
+    assert (sync_shared._json_params("h", {name: value}) == []) is ok
