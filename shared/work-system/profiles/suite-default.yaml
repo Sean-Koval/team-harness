@@ -16,8 +16,8 @@ params:
     Create an issue with work type **Decision** in the work ticket's project, under the same epic, and fill its
     fields:
   decision_labels: >-
-    `exec:human`, the work ticket's `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it;
-    assign it to Sean
+    `human-decision` (the label Sean's decisions view filters on), `exec:human`, the work ticket's `repo:` label,
+    and `needs-sean` until the label cleanup (KAN-326) retires it; assign it to Sean
   # The guard hook's MCP roles: which servers this harness binds as the tracker and the wiki (names from
   # harness.lock binding.mcp; a test holds them equal), and the ai-dlc server. JSON.
   mcp_bindings: '{"tracker": ["atlassian"], "wiki": ["atlassian"], "ai-dlc": ["ai-dlc"]}'
