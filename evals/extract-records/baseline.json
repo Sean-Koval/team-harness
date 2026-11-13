@@ -1,0 +1,8 @@
+{
+  "skill_ref": "team-harness 97929d3 (KAN-435, PR #20)",
+  "extractor": "by hand: claude-opus-5-5 following SKILL.md, cases 01-07, after/ unread while extracting",
+  "precision": 1.0,
+  "recall": 1.0,
+  "edit_or_drop_rate": 0.0667,
+  "note": "An upper bound: the extractor had read cases.yaml (expected file names) first. Replace with a live run's blind numbers."
+}

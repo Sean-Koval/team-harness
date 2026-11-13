@@ -1,0 +1,40 @@
+# Cases for the extraction eval (KAN-464). Same format as the skill's own examples, which are included first.
+#
+# `include` pulls in every case of the skill's cases.yaml (KAN-435); their trees sit beside that file.
+# The cases below sit in cases/<id>/. `limits` caps how many records a run may produce, by type ("other" counts
+# every type except decision); `unchanged` lists existing records a run must neither edit nor re-propose.
+# Limits are hard failures. All names and URLs are invented.
+format: extract-records-cases/v1
+include: tests/fixtures/extract-records/cases.yaml
+limits:
+  02-decision-subrules: {decision: [1, 1], other: [0, 2]}
+  04-duplicate: {unchanged: [team/conventions/one-file-per-record.md]}
+  07-personal-scope: {decision: [1, 1], other: [0, 0]}
+cases:
+- id: 08-restated-rules
+  kind: decision record
+  tests: 'Blind-review regression (KAN-464): a decision doc that restates its own rules yields one decision and at most
+    two other records, not a convention per restated rule.'
+  source: inbox/records-in-git-decision.md
+  filed_as: team/sources/records-in-git-decision.md
+  expect:
+  - team/actions/render-job-service-account.md
+  - team/decisions/records-in-git-wiki-rendered.md
+  - team/sources/records-in-git-decision.md
+  limits: {decision: [1, 1], other: [0, 2]}
+  must_not:
+  - a convention for each restated rule
+- id: 09-restated-unrecorded
+  kind: chat
+  tests: 'A restated rule that no existing record holds is still extracted, within the cap; a restated rule an existing
+    record holds produces nothing.'
+  source: inbox/records-merge-thread.md
+  filed_as: team/sources/records-merge-thread.md
+  expect:
+  - team/conventions/raw-sources-expire-30-days.md
+  - team/decisions/reviewer-merges-records-pr.md
+  - team/sources/records-merge-thread.md
+  limits: {decision: [1, 1], other: [0, 2], unchanged: [team/conventions/one-file-per-record.md]}
+  must_not:
+  - a second one-file-per-record convention
+  - an edit to team/conventions/one-file-per-record.md

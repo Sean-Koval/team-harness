@@ -1,0 +1,55 @@
+# Extraction eval (KAN-464): measures the extract-records skill whenever the skill, the pinned model or the eval
+# changes. Fixture mode replays the recorded proposals: no API key, no network beyond installs. Live mode runs
+# nightly and on demand when the ANTHROPIC_API_KEY secret is set; it never commits, it uploads its result.
+name: extract-eval
+on:
+  pull_request:
+    paths:
+      - shared/work-system/skills/extract-records/**
+      - harnesses/*/skills/extract-records/**
+      - tests/fixtures/extract-records/**
+      - evals/extract-records/**
+      - scripts/extract_eval.py
+      - scripts/extract_grade.py
+      - .github/workflows/extract-eval.yml
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # ai-dlc's knowledge check (KAN-423, ai-dlc #257) until it merges; then pin a main commit
+  AI_DLC_REF: c60d9a1323c5e98bdfbb572c01d3ffdb41a6788d
+
+jobs:
+  eval:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install ai-dlc for knowledge check
+        run: pip install pyyaml "ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@${AI_DLC_REF}"
+      - name: Fixture mode
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ ! -f shared/work-system/skills/extract-records/SKILL.md ]; then
+            echo "::notice::extract-records (KAN-435) is not on this branch; nothing to measure"; exit 0
+          fi
+          python scripts/extract_eval.py --require-fresh --out eval-out
+      - name: Live mode
+        if: github.event_name != 'pull_request'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "::notice::no ANTHROPIC_API_KEY secret; live mode skipped"; exit 0; fi
+          python scripts/extract_eval.py --live --out eval-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extract-eval
+          path: eval-out
+          if-no-files-found: ignore

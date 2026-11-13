@@ -1,0 +1,22 @@
+---
+id: one-reviewer-per-records-pr
+type: decision
+scope: team
+status: accepted
+date: '2026-11-12'
+owner: lead-example
+sources:
+- {id: records-thread-2026-11-12, resource: team/sources/records-thread-2026-11-12.md, hash: "sha256:6db1dbf93f0a602ceb589ec0ed56f08d695fb872287ff7510afc86ee11940b6d"}
+links:
+- {type: derived_from, target: records-thread-2026-11-12}
+title: A records PR needs one reviewer
+description: Not two; keeps records review fast
+author: agent:claude-opus-5-5
+---
+# A records PR needs one reviewer
+
+> [09:14] lead-example: yes. Also decided: a records PR needs one reviewer, not two.
+
+## Decision
+
+A records PR needs one reviewer, not two.
