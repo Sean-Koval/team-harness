@@ -1,0 +1,98 @@
+# Example sources for the extract-records skill (KAN-435), reusable by its eval suite (KAN-464).
+#
+# Each case is a small knowledge repository: before/ is what the skill sees (the Source in inbox/, status raw, and
+# any records already there); after/ is the expected result. knowledge.toml's [check] roots name the scope folders;
+# inbox/ is outside them and expires. The processed Source is filed at `filed_as` inside the roots, and every
+# record derives from it. `expect` lists the files a run must write or change,
+# compared on type, title, status, scope and links; every other file in after/ must be left as in before/.
+# `must_not` names records a run must not produce. `scope_map`, when present, replaces the harness's map for the case.
+# All names and URLs are invented. `ai-dlc knowledge check <case>/after` exits 0 for every case.
+format: extract-records-cases/v1
+cases:
+- id: 01-meeting
+  kind: meeting
+  tests: 'Ticket fixture: a meeting with two decisions and one action with a named owner.'
+  source: inbox/release-sync-2026-11-10.md
+  filed_as: team/sources/release-sync-2026-11-10.md
+  expect:
+  - team/actions/write-release-checklist.md
+  - team/decisions/pin-harness-by-digest.md
+  - team/decisions/release-on-thursdays.md
+  - team/sources/release-sync-2026-11-10.md
+  must_not:
+  - a convention restating either decision
+- id: 02-decision-subrules
+  kind: decision record
+  tests: 'Granularity: configuration sub-points worded ''only''/''never'' stay in the decision body; one standing rule becomes
+    a convention that implements it.'
+  source: inbox/chat-capture-decision.md
+  filed_as: team/sources/chat-capture-decision.md
+  expect:
+  - team/conventions/captured-chat-expires-30-days.md
+  - team/decisions/chat-capture-picked-rooms.md
+  - team/sources/chat-capture-decision.md
+  must_not:
+  - a convention for picked rooms
+  - a convention for short threads never sent to a model
+- id: 03-superseded
+  kind: meeting
+  tests: 'Supersession: the new decision supersedes the old record by id; the old one is marked superseded with valid_to;
+    the dropped rule is retired; the rule that still stands is not extracted again.'
+  source: inbox/release-review-2026-11-12.md
+  filed_as: team/sources/release-review-2026-11-12.md
+  expect:
+  - team/conventions/friday-merge-freeze.md
+  - team/decisions/release-on-merge.md
+  - team/decisions/weekly-release-train.md
+  - team/sources/release-review-2026-11-12.md
+  must_not:
+  - a new convention for release notes in the PR
+  - an active Friday freeze
+- id: 04-duplicate
+  kind: chat
+  tests: 'Restated rules produce nothing: the existing convention is neither duplicated nor edited.'
+  source: inbox/records-thread-2026-11-12.md
+  filed_as: team/sources/records-thread-2026-11-12.md
+  expect:
+  - team/decisions/one-reviewer-per-records-pr.md
+  - team/sources/records-thread-2026-11-12.md
+  must_not:
+  - a second one-file-per-record convention
+  - an edit to conventions/one-file-per-record.md
+- id: 05-ownerless-action
+  kind: chat
+  tests: Owner-less owed work becomes an action with owner unknown and tag owner-unknown; the Source label carries over.
+  source: inbox/staging-cert-thread.md
+  filed_as: team/sources/staging-cert-thread.md
+  expect:
+  - team/actions/renew-staging-certificate.md
+  - team/questions/staging-certificates-managed-issuer.md
+  - team/sources/staging-cert-thread.md
+  must_not:
+  - dropping the renewal because it has no owner
+- id: 06-review-draft
+  kind: review draft
+  tests: 'Drafts: orderings and trims are not records; only questions, and the recommendation a question asks to decide.'
+  source: inbox/plan-review-draft.md
+  filed_as: team/sources/plan-review-draft.md
+  expect:
+  - team/decisions/one-transcript-provider-1-0.md
+  - team/questions/records-reviewer-when-away.md
+  - team/questions/which-transcript-provider.md
+  - team/sources/plan-review-draft.md
+  must_not:
+  - a decision for building the search index first
+  - a decision for moving the cleanup after 1.0
+- id: 07-personal-scope
+  kind: decision record
+  tests: 'Scope: the map makes a side project personal although the Source came from a team page; the date blanked by capture
+    comes from the comment.'
+  source: inbox/garden-planner-auth-page.md
+  filed_as: team/sources/garden-planner-auth-page.md
+  expect:
+  - personal/decisions/garden-planner-mirror-token.md
+  - team/sources/garden-planner-auth-page.md
+  must_not:
+  - scope team
+  - date 2026-11-12
+  scope_map: 'garden-planner is a personal side project: `personal`.'
