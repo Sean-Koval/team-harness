@@ -234,6 +234,11 @@ def markdown(result: dict) -> str:
             f"{', '.join(edits) or '-'} | {', '.join(c['extra']) or '-'} | {', '.join(c['missed']) or '-'} | "
             f"{'; '.join(problems) or '-'} |"
         )
+    if result["pending"]:
+        lines += ["", f"**Pending** (no recording yet, not graded): {', '.join(result['pending'])}"]
+    if result["needs_human"]:
+        lines += ["", "**Needs a human** (not graded; does the description give the why?):"]
+        lines += [f"- {n['case']} `{n['record']}`: {n['why']}" for n in result["needs_human"]]
     lines += ["", "**Result:** " + ("pass" if not result["failures"] else "fail")]
     lines += [f"- {f}" for f in result["failures"]]
     return "\n".join(lines) + "\n"
@@ -272,8 +277,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     results = []
     tokens_in = tokens_out = 0
     estimated = False
+    pending = set(meta.get("pending", []))
+    waiting = []
     for case in cases:
         proposal = recorded / case["id"]
+        if case["id"] in pending and not proposal.is_dir():
+            waiting.append(case["id"])  # its blind recording is not in yet; graded once it is
+            continue
+        if not proposal.is_dir():
+            raise FileNotFoundError(f"no recording for {case['id']} in {recorded}")
         result = grade.grade_case(case, case["root"], proposal)
         result["blind"] = bool(meta.get("blind", {}).get(case["id"]))
         usage = meta.get("tokens", {}).get(case["id"]) or estimate_tokens(config, case, proposal)
@@ -296,13 +308,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         stale.append(note) if args.require_fresh else print(f"warning: {note}", file=sys.stderr)
     if meta.get("model") != config["model"]:
         print(f"note: recorded with {meta.get('model')}; live runs use {config['model']}", file=sys.stderr)
-    run_meta = {k: v for k, v in meta.items() if k not in ("tokens", "blind")}
+    run_meta = {k: v for k, v in meta.items() if k not in ("tokens", "blind", "pending", "needs_human")}
     failures = gates(summary, config, stale)
     return {
         "mode": "live" if args.live else "fixture",
         "run": run_meta,
         "summary": summary,
         "cases": results,
+        "pending": waiting,
+        "needs_human": meta.get("needs_human", []),
         "failures": failures,
     }
 

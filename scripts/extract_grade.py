@@ -28,7 +28,6 @@ import yaml
 
 QUOTE_MIN = 0.6  # share of the shorter quote that must appear verbatim in the other
 TITLE_MIN = 0.6  # below this title similarity, a reviewer rewrites the title
-STATEMENT_MIN = 0.3  # below this word overlap, a reviewer rewrites the description
 FIELDS = ("title", "statement", "status", "scope", "owner", "date", "valid_to", "links", "quote")
 TICKET = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 Check = Callable[[Path], "list[str] | None"]
@@ -195,7 +194,7 @@ def compare(got: dict, want: dict, rename: dict[str, str], source_text: str) -> 
     edits = []
     if _ratio(got["head"].get("title"), want["head"].get("title")) < TITLE_MIN:
         edits.append("title")
-    if _statement(got, want) < STATEMENT_MIN:
+    if _bad_statement(got):
         edits.append("statement")
     for field in ("status", "scope", "owner", "date", "valid_to"):
         if str(got["head"].get(field) or "") != str(want["head"].get(field) or ""):
@@ -207,15 +206,13 @@ def compare(got: dict, want: dict, rename: dict[str, str], source_text: str) -> 
     return edits
 
 
-STOP = {"a", "an", "the", "of", "to", "in", "on", "for", "and", "or", "is", "it", "its", "by", "with", "as", "be"}
+def _bad_statement(rec: dict) -> bool:
+    """A description needs an edit when it is empty or copies the title.
 
-
-def _statement(got: dict, want: dict) -> float:
-    """Word overlap of the descriptions, stop words dropped; 1 when the expected record has none."""
-    a, b = ({w for w in _norm(r["head"].get("description")).split() if w not in STOP} for r in (got, want))
-    if not b:
-        return 1.0
-    return len(a & b) / min(len(a), len(b)) if a else 0.0
+    Whether it gives the why cannot be graded deterministically: a reviewer flags that in run.json's needs_human.
+    """
+    description = _norm(rec["head"].get("description"))
+    return not description or description == _norm(rec["head"].get("title"))
 
 
 def broken_links(produced: dict[str, dict], known: dict[str, dict]) -> list[str]:

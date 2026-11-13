@@ -345,3 +345,46 @@ def test_one_model_setting():
     config = yaml.safe_load((EVAL / "config.yaml").read_text())
     assert config["model"] == "claude-sonnet-5-5"
     assert "claude-sonnet-5-5" not in (ROOT / "scripts/extract_eval.py").read_text()
+
+
+@pytest.mark.parametrize(("description", "edited"), [("", True), ("Release on Thursdays", True), ("Any why", False)])
+def test_description_is_an_edit_only_when_empty_or_the_title(tmp_path, description, edited):
+    case, root, out = _meeting_case(tmp_path, "Release on Thursdays")
+    rel = out / "team/decisions/release-day.md"
+    rel.write_text(rel.read_text().replace("description: Moves releases off Tuesday", f"description: '{description}'"))
+    result = grade.grade_case(case, root, out, check=no_check)
+    assert ("statement" in result["matched"][0]["edits"]) is edited
+
+
+def _recorded(tmp_path: Path, monkeypatch, pending: list[str]) -> Path:
+    """A recorded/ copy whose run.json lists `pending`, with that case's recording removed."""
+    recorded = tmp_path / "recorded"
+    shutil.copytree(EVAL / "recorded", recorded)
+    meta = json.loads((recorded / "run.json").read_text())
+    meta["pending"] = pending
+    (recorded / "run.json").write_text(json.dumps(meta))
+    shutil.rmtree(recorded / "08-restated-rules")
+    eval_dir = tmp_path / "eval"
+    shutil.copytree(EVAL, eval_dir, ignore=shutil.ignore_patterns("recorded"))
+    shutil.copytree(recorded, eval_dir / "recorded")
+    monkeypatch.setattr(extract_eval, "EVAL", eval_dir)
+    return eval_dir
+
+
+def test_pending_case_is_reported_not_graded(tmp_path, monkeypatch):
+    if not (ROOT / "tests/fixtures/extract-records/cases.yaml").is_file():
+        pytest.skip("the skill's example cases (KAN-435) are not on this branch")
+    _recorded(
+        tmp_path, monkeypatch, ["08-restated-rules", "10-long-decision-record", "11-messy-meeting", "12-chat-thread"]
+    )
+    assert extract_eval.main(["--out", str(tmp_path / "out")]) in (0, 1)
+    result = json.loads((tmp_path / "out/result.json").read_text())
+    assert "08-restated-rules" in result["pending"]
+    assert "08-restated-rules" not in [c["id"] for c in result["cases"]]
+
+
+def test_missing_recording_not_marked_pending_fails(tmp_path, monkeypatch):
+    if not (ROOT / "tests/fixtures/extract-records/cases.yaml").is_file():
+        pytest.skip("the skill's example cases (KAN-435) are not on this branch")
+    _recorded(tmp_path, monkeypatch, ["10-long-decision-record", "11-messy-meeting", "12-chat-thread"])
+    assert extract_eval.main([]) == 2

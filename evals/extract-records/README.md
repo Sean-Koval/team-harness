@@ -8,7 +8,9 @@ Measures the `extract-records` skill (KAN-435) on fixed sources with expected re
   `run.json` says who made them and against which `SKILL.md`.
 - **Grader:** `scripts/extract_grade.py`, deterministic. It pairs records of one type on their verbatim source quote;
   the title only breaks ties. A pair whose title says another day, number or a negated verb is wrong. It counts
-  edits to title, description, status, scope, owner, date, `valid_to`, links and quote, and runs ai-dlc's
+  edits to title, status, scope, owner, date, `valid_to`, links and quote, and a description that is empty or
+  copies the title. Whether a description gives the why needs a person: `run.json`'s `needs_human` lists those.
+  Cases in `run.json`'s `pending` have no recording yet and are reported, not graded. It runs ai-dlc's
   `knowledge check` on the result.
 - **Gates** (`config.yaml`, from north-star outcome O3): recall at least 80%; under 25% of records need an edit or
   deletion; no limit, link or check failures; cost under $5 a run.
