@@ -110,11 +110,16 @@ The rules are enforced in layers, each catching what the one before can't:
 
 | Layer | Where | Holds for | What it does |
 | --- | --- | --- | --- |
-| Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work; a ruling is drafted for confirmation), `work-docs` (which doc goes where, the `Docs:` line), `github-pr` (who opens it, the contract, the merge rule), and for work-default `release-approvals` |
+| Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work; a ruling is drafted for confirmation), `work-docs` (which doc goes where, the `Docs:` line), `github-pr` (who opens it, the contract, the merge rule), `extract-records`, the knowledge skills `knowledge-context` (the scope's indexes and binding records before a ticket, under a token ceiling), `query-knowledge` and `whats-next` (through ai-dlc's knowledge role only), and for work-default `release-approvals` |
 | Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, any transition, destructive or unrecognised call on a server the profile binds as tracker or wiki (`mcp_bindings`), `exec:agent` on any tracker-role write, every wiki page write (only the render job publishes; a profile's `wiki_write_allow` may name site and space pairs), `gh pr merge --admin`, and any merge where the profile says never, also when hidden in `$(...)`, `bash -c`, `eval` or `gh api`. The hook is a convenience: give session credentials read-only Confluence scopes, so the wiki refuses a write the hook misses |
+| Session-end hook | `shared/work-system/hooks/knowledge_session_end.py` | Claude Code with the harness | reminds the user to run `extract-records` when the session stated decisions; blocks nothing |
 | PR check | [`actions/work-system-pr`](actions/work-system-pr/README.md) | **every** PR, from any surface or tool, Codex and humans included | title key, `Jira:` line, `Docs:` line, `Decision:` → ADR; with a scoped, read-only Jira token, the ticket is open, has an execution label and is not blocked by an open Decision |
 | Tracker automation | Jira, configured by hand | every ticket | statuses move on branch created, PR opened, PR merged and Decision answered (cabinet `docs/WORK-SYSTEM.md`) |
 | Behavior specs | [`flightdeck/specs/work-system.yaml`](flightdeck/specs/work-system.yaml) | hangar runs | measure what no hook can see and catch a layer that drifted |
+
+The layer also renders a knowledge block into each harness's `CLAUDE.md` (`guide/knowledge.md`: decisions go through
+records, cite record ids, never edit rendered wiki pages) and its `.env.example` (`env.example`: the names the session
+needs, `KNOWLEDGE_REPO` and `KNOWLEDGE_FORMAT_VERSION` among them, never values). Each lock binds `ai-dlc mcp serve`.
 
 The layer is edited once, in `shared/work-system/`, and rendered into each harness with `scripts/sync_shared.py`;
 CI fails when a copy differs or a placeholder is unfilled (`--check`). What differs between harnesses is a

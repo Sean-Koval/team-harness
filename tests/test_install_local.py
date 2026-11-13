@@ -652,7 +652,8 @@ def test_windows_user_scope_runs_hooks_with_py_and_a_quoted_profile_path(tmp_pat
     base = home / ".claude"
     cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
     profile = Path(os.path.abspath(base)).as_posix()
-    assert cmds == [f'py -3 "{profile}/hooks/guard_work.py"', f'py -3 "{profile}/hooks/guard_work_system.py"']
+    assert cmds == [f'py -3 "{profile}/hooks/guard_work.py"', f'py -3 "{profile}/hooks/guard_work_system.py"',
+                    f'py -3 "{profile}/hooks/knowledge_session_end.py"']
     assert not any("$HOME" in c or "python3" in c for c in hook_commands(base))
     assert user(WORK, home, "--check") == 0
     assert user(WORK, home, "--uninstall") == 0
@@ -677,7 +678,8 @@ def test_windows_project_scope_has_no_machine_path(tmp_path, monkeypatch):
     assert str(tmp_path) not in text and tmp_path.as_posix() not in text and "$" not in text
     cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
     assert cmds == [hook_command("guard_work.py", "project", base, True),
-                    hook_command("guard_work_system.py", "project", base, True)]
+                    hook_command("guard_work_system.py", "project", base, True),
+                    hook_command("knowledge_session_end.py", "project", base, True)]
 
 
 BLOCKED = {"tool_name": "Bash", "tool_input": {"command": "terraform apply -auto-approve"}}

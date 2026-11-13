@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: work-default
-revision: 11
+revision: 12
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -12,7 +12,7 @@ model:
   policy: balanced
 components:
 - id: guide:CLAUDE.md
-  digest: sha256:81e19b5dbf5559bd6d0bd2d0b21a4466432ff03cc763d5909aad3954c762cd86
+  digest: sha256:f5dc1439ecd05f5486fcb4bf60b4476e12f42df63bf1ab549fff24faf26006fc
   path: CLAUDE.md
 - id: skill:change-set
   digest: sha256:c5bf04538692f87401fefa0a8a974c538f349ec935fc2bc3a720b8f39eae2070
@@ -59,17 +59,43 @@ components:
   tree: sha256:0ad0e9302b5ea8c3059f6fdb25654b5d09b5e414db247949dee5068d315c8dc1
   path: skills/extract-records
   source: path:skills/extract-records
+- id: skill:knowledge-context
+  digest: sha256:589ab92bf1ba875a74034e2ed6ce6ccd64884678e5aa0b61fec17bfe188fbcd4
+  tree: sha256:bba938ea02a225b61dc2581d4b9ba66faa15ae812704a06a129205ff7e4f27b1
+  path: skills/knowledge-context
+  source: path:skills/knowledge-context
+- id: skill:query-knowledge
+  digest: sha256:a3b54b2f6b6c6c887c988b1845a942e780bd0acba3a638158f73fd56c7d801af
+  tree: sha256:665c1a455573092454be470364ec54e0e82a4a860e3c12676593c834b674a593
+  path: skills/query-knowledge
+  source: path:skills/query-knowledge
+- id: skill:whats-next
+  digest: sha256:1e2e94aedba1997638162442b2c8c25a5a491595d5c496c6246f9bcadb8b0a7f
+  tree: sha256:5fd8b70aef50221634da471e129889550b2db00ee4a4ec980daa0eba4b458ded
+  path: skills/whats-next
+  source: path:skills/whats-next
 - id: native:claude-code/hooks/guard_work.py
   digest: sha256:316b3f24ed2c8d5d3535efb7bbd387449ad364dedea998e5329d7e5437983122
   path: native/claude-code/hooks/guard_work.py
 - id: native:claude-code/hooks/guard_work_system.py
   digest: sha256:80de7c32767ca172c8316f77e0b7d835204cd9564d44bcb3beb28f3a6cea964d
   path: native/claude-code/hooks/guard_work_system.py
+- id: native:claude-code/hooks/knowledge_session_end.py
+  digest: sha256:e871a09b2e15808c1dfae085f98d3909f00c9f188c95ab125e7deff0e34a8729
+  path: native/claude-code/hooks/knowledge_session_end.py
 - id: native:claude-code/settings.json
-  digest: sha256:9068d00f3b58a4f78c92415c6ad2019e0da7f83b9fd7c62c73b1e5f58c349cb0
+  digest: sha256:bd719216bec9fee329ea079e6be18e789c1015f72d304cc1b1f0051c14a0c528
   path: native/claude-code/settings.json
 binding:
   mcp:
+  - name: ai-dlc
+    transport: stdio
+    command: ai-dlc
+    args:
+    - mcp
+    - serve
+    env_names:
+    - KNOWLEDGE_REPO
   - name: github
     transport: http
     endpoint: https://api.githubcopilot.com/mcp/
@@ -85,10 +111,13 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:3544f22d76da24068c14a66a0e7717fe8bbb51a8b2f69c0238ca5b9ad1152623
+    digest: sha256:fa3abc973ee96a059a4e8b2a16ea0cee5285b3e994dbc0f2cf93bd651944b3be
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:3544f22d76da24068c14a66a0e7717fe8bbb51a8b2f69c0238ca5b9ad1152623
+    digest: sha256:fa3abc973ee96a059a4e8b2a16ea0cee5285b3e994dbc0f2cf93bd651944b3be
+  - event: SessionEnd
+    source: environment:.claude/settings.json
+    digest: sha256:fa3abc973ee96a059a4e8b2a16ea0cee5285b3e994dbc0f2cf93bd651944b3be
 plugins:
   autoUpdate: false
 remote: []

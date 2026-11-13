@@ -12,6 +12,7 @@ env:
   # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
   HANGAR_REF: c54041c258b961d16e8234d973eb0f2f47befd46
   FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
+  AI_DLC_REF: 72327f45d698a255cc6959b68b107a88f6fa421d   # environments/agent.yaml's pin; the knowledge tests run against it
 
 jobs:
   check:
@@ -27,6 +28,14 @@ jobs:
         run: |
           pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" \
                       "flightdeck @ git+https://github.com/Sean-Koval/flightdeck@${FLIGHTDECK_REF}" pytest
+      # ai-dlc in its own venv (its mcp pin and hangar's disagree); only its CLI goes on PATH, for the env-only
+      # knowledge query test, which fails rather than skips when CI lacks it
+      - name: Install the ai-dlc CLI at the pinned ref
+        run: |
+          python -m venv "$RUNNER_TEMP/ai-dlc"
+          "$RUNNER_TEMP/ai-dlc/bin/pip" install --quiet "ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@${AI_DLC_REF}"
+          mkdir -p "$RUNNER_TEMP/bin" && ln -s "$RUNNER_TEMP/ai-dlc/bin/ai-dlc" "$RUNNER_TEMP/bin/ai-dlc"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: hangar harness check
         run: |
           for d in harnesses/*/; do hangar harness check "$d"; done

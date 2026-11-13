@@ -37,3 +37,11 @@ params:
     Source's own scope.
   approvals: >-
     None beyond the PR's own checks: a suite PR needs no separate approval tickets.
+  # The MCP credential names this harness binds, for its .env.example (env.example); names only.
+  session_env: |
+    GITHUB_MCP_AUTHORIZATION=        # binding github: "Bearer <token>"
+    ATLASSIAN_MCP_AUTHORIZATION=     # binding atlassian: the tracker and wiki server, one site
+  # Where the knowledge skills' preflight says ai-dlc comes from (bindings/suite-default.yaml installs it).
+  ai_dlc_install: >-
+    This harness's environment installs ai-dlc at the commit environments/agent.yaml pins; if it is missing, the
+    environment is out of date: say so.

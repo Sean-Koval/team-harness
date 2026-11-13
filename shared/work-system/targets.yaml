@@ -17,9 +17,17 @@
 # harnesses/<h>/skills/ that the layer or the org does not produce is deleted by sync_shared.py and fails --check.
 #
 # team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
-skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records]   # every harness below
+skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records,
+         knowledge-context, query-knowledge, whats-next]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
 hook_command: python3 "$HOME/.claude/hooks/guard_work_system.py"
+# More hooks, each beside the one above; settings.json must register `command` on `event` (KAN-431).
+session_hooks:
+- file: hooks/knowledge_session_end.py
+  event: SessionEnd
+  command: python3 "$HOME/.claude/hooks/knowledge_session_end.py"
+guide_fragment: guide/knowledge.md        # -> a marked block at the end of harnesses/<h>/CLAUDE.md
+env_example: env.example                  # -> harnesses/<h>/.env.example: the session's environment names
 harnesses:
   suite-default:
     profile: profiles/suite-default.yaml
