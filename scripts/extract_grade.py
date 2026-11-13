@@ -78,7 +78,7 @@ NEGATION = {"not", "never", "no", "dont", "don", "without", "nobody", "none"}
 
 def _quote_text(line: str) -> str:
     """A quote line without its timestamp, speaker or list marker; lower case, whitespace folded."""
-    return " ".join(SPEAKER.sub("", " ".join(line.split())).lower().split())
+    return " ".join(SPEAKER.sub("", _quote_core(line)).lower().split())
 
 
 def quote_overlap(a: dict, b: dict) -> float:
@@ -182,11 +182,21 @@ def _quotes(rec: dict) -> list[str]:
     return [line[1:].strip() for line in rec["body"].splitlines() if line.startswith(">") and line[1:].strip()]
 
 
+ATTRIBUTION = re.compile(r"""^["\u201c](?P<text>.*)["\u201d]\s*(\([^()]*\))?\s*$""")
+
+
+def _quote_core(line: str) -> str:
+    """The quoted words alone: no surrounding quote marks, no trailing (timestamp, speaker), whitespace folded."""
+    line = " ".join(line.split())
+    hit = ATTRIBUTION.match(line)
+    return hit.group("text").strip() if hit else line
+
+
 def _quoted_from(rec: dict, source_text: str) -> bool:
-    """Every quote line is verbatim from the Source (after whitespace folding); a record needs at least one."""
+    """Every quote line is verbatim from the Source (whitespace folded; quote marks and attribution set aside)."""
     quotes = _quotes(rec)
     folded = " ".join(source_text.split())
-    return bool(quotes) and all(" ".join(q.split()) in folded for q in quotes)
+    return bool(quotes) and all(_quote_core(q) in folded for q in quotes)
 
 
 def compare(got: dict, want: dict, rename: dict[str, str], source_text: str) -> list[str]:
@@ -283,6 +293,9 @@ def grade_case(case: dict, root: Path, proposal: Path, check: Check | None = kno
             shutil.copytree(root / "before", tmp, dirs_exist_ok=True)
             shutil.copytree(proposal, tmp, dirs_exist_ok=True) if proposal.is_dir() else None
             validity = check(Path(tmp))
+    for m in matched:  # a record knowledge check refuses needs an edit, whatever else matches
+        if any(line.startswith(f"{m['produced']}:") for line in validity or []):
+            m["edits"].append("check")
     return {
         "id": case["id"],
         "produced": len(produced),

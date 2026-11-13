@@ -388,3 +388,32 @@ def test_missing_recording_not_marked_pending_fails(tmp_path, monkeypatch):
         pytest.skip("the skill's example cases (KAN-435) are not on this branch")
     _recorded(tmp_path, monkeypatch, ["10-long-decision-record", "11-messy-meeting", "12-chat-thread"])
     assert extract_eval.main([]) == 2
+
+
+@pytest.mark.parametrize(
+    ("quote", "edited"),
+    [
+        ('"Decision one: we release on Thursdays from now on." (00:02:10, lead-example)', False),
+        ("“we release on Thursdays”", False),
+        ('"we release on Fridays from now on." (00:02:10, lead-example)', True),
+    ],
+)
+def test_quote_marks_and_attribution_are_not_part_of_the_quote(tmp_path, quote, edited):
+    case, root, out = _meeting_case(tmp_path, "Release on Thursdays")
+    rel = out / "team/decisions/release-day.md"
+    text = rel.read_text()
+    rel.write_text(text[: text.index("\n> ")] + f"\n> {quote}\n")
+    result = grade.grade_case(case, root, out, check=no_check)
+    edits = result["matched"][0]["edits"] if result["matched"] else ["quote"]
+    assert ("quote" in edits) is edited
+
+
+def test_a_record_knowledge_check_refuses_counts_as_an_edit(tmp_path):
+    case = own_cases()["08-restated-rules"]
+    rel = "team/actions/render-job-service-account.md"
+
+    def check(_tree):
+        return [f"{rel}: /stale_after: Input should have timezone info"]
+
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case), check=check)
+    assert next(m["edits"] for m in result["matched"] if m["produced"] == rel) == ["check"]
