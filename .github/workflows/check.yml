@@ -87,6 +87,8 @@ jobs:
       # built here too, not only the shared layer's copies (KAN-481). hangar goes in a venv of its own, used only to
       # build: the tests below still run without it, as before.
       - name: Build generated files (hangar in its own venv)
+        env:
+          PYTHONUTF8: "1"   # the build scripts read and write text without an encoding; Windows' default is cp1252
         run: |
           python -m venv "$env:RUNNER_TEMP\hangar"
           & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pip install --quiet "hangar @ git+https://github.com/Sean-Koval/hangar@$env:HANGAR_REF"
