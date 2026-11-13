@@ -24,13 +24,12 @@ Do this in your company's private fork, never in the public repository.
    the `review_request` room and template. Then set `placeholder: false`. `params` may set only `tracker` and the
    `kb_*` keys; the merge rule, the wall and the approval steps stay the harness profile's.
 4. In `shared/work-system/targets.yaml`, change the harness's line to `org: orgs/<your-org>`.
-5. Render and re-pin:
+5. Commit only your org files and that line. The copies, the lock and `candidate` are built on main after merge
+   (KAN-481). To test locally first:
 
    ```sh
-   python scripts/sync_shared.py
-   python scripts/relock.py harnesses/work-default --write
-   python scripts/render_envs.py harnesses/work-default
-   python scripts/sync_shared.py --check
+   python scripts/build_generated.py     # sync, relock, render, candidate
+   python scripts/build_generated.py --restore   # before you commit
    ```
 
 Org skills are copied verbatim, never rendered, so a company document may hold `{{ }}` as it likes. Each skill
