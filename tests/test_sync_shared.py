@@ -101,6 +101,28 @@ def test_merge_rules_differ_by_harness():
     assert not (ROOT / "harnesses/suite-default/skills/release-approvals").exists()
 
 
+def test_needs_owner_review_prs_stay_drafts_and_unmerged():
+    # codify-lesson leaves a PR a draft labelled needs-owner-review when its owner can't be asked to review it (KAN-470).
+    # Neither the ready step nor the merge rule may undo that (KAN-488).
+    def skill(harness):
+        text = (ROOT / f"harnesses/{harness}/skills/github-pr/SKILL.md").read_text(encoding="utf-8")
+        return " ".join(text.split())
+
+    for harness in ("suite-default", "work-default"):
+        text = skill(harness)
+        assert "unless it carries the label `needs-owner-review` or its body has an `Owner review:` line" in text, \
+            harness
+        assert "gh pr view <n> --json labels,body" in text, harness
+        assert "never mark it ready, remove the label, drop its `Owner review:` line or open a new PR for its branch" \
+            " yourself" in text, harness
+    assert "stays a draft until Sean has reviewed it" in skill("suite-default")
+    assert "stays a draft until the ticket's owner has reviewed it" in skill("work-default")
+    suite = skill("suite-default")
+    assert "A draft, a PR labelled `needs-owner-review` or one whose body has an `Owner review:` line counts as one" \
+        " somebody asked to review" in suite
+    assert "never merge such a PR or turn on auto-merge for it" in suite and "--json isDraft,labels,body" in suite
+
+
 def test_ticket_template_is_the_one_the_skill_ships():
     assert (ROOT / "templates/ticket.md").read_bytes() == \
         (ROOT / "shared/work-system/skills/jira-ticket/ticket-template.md").read_bytes()
