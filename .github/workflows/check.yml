@@ -81,8 +81,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install test tools
         run: python -m pip install pytest pyyaml
-      - name: Build the shared layer's copies (the rest needs hangar; the Linux job builds it, KAN-481)
-        run: python scripts/sync_shared.py
+      # The installer refuses a harness whose files don't match its lock, so a PR that edits a hook needs the locks
+      # built here too, not only the shared layer's copies (KAN-481). hangar goes in a venv of its own, used only to
+      # build: the tests below still run without it, as before.
+      - name: Build generated files (hangar in its own venv)
+        run: |
+          python -m venv "$env:RUNNER_TEMP\hangar"
+          & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pip install --quiet "hangar @ git+https://github.com/Sean-Koval/hangar@$env:HANGAR_REF"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" scripts/build_generated.py --note "built in CI"
+          exit $LASTEXITCODE
       - name: Hook tests
         run: >-
           python -m pytest -q -rs tests/test_guard_work_system.py tests/test_guard_work.py
