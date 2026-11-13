@@ -18,6 +18,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import capture_batch as cb
 
 FIXTURE = ROOT / "tests/fixtures/capture-inbox"
+DURATIONS = {"zoom-20261110-572815a920": 65.0, "zoom-20261111-eb4f4748bb": 90.0, "zoom-20261112-e2ac1c4775": 80.0}
+# A copy of ai-dlc's contracts/capture-run.schema.json (ai-dlc PR 275, commit 6e261603), which owns the format
+# (KAN-454). The tests hold the run log to it; refresh the copy when ai-dlc changes the format.
+RUN_SCHEMA = json.loads((ROOT / "tests/fixtures/capture-run.schema.json").read_text())
 TRANSCRIPTS = 3
 QUALIFYING = {"symphony-cf33296ef652aae7", "symphony-688120329cf2f5a7", "symphony-c0066eb00d7f01a3",
               "symphony-7ada32054c5266f6"}  # fmt: skip
@@ -52,6 +56,53 @@ def configure(repo: Path, **knobs: object) -> None:
     (repo / "knowledge.toml").write_text("\n".join(lines) + "\n")
 
 
+def conforms(value: object, schema: dict, where: str = "run") -> None:
+    """Enough of JSON Schema for the capture run format: types, required, no extra keys, enums, const, minimum."""
+    if "$ref" in schema:
+        schema = RUN_SCHEMA["$defs"][schema["$ref"].rsplit("/", 1)[-1]]
+    if "anyOf" in schema:
+        errors = []
+        for option in schema["anyOf"]:
+            try:
+                return conforms(value, option, where)
+            except AssertionError as exc:
+                errors.append(str(exc))
+        raise AssertionError(f"{where}: {value!r} matches no option ({errors})")
+    kinds = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None),
+             "integer": int, "number": (int, float)}  # fmt: skip
+    if "type" in schema:
+        assert isinstance(value, kinds[schema["type"]]), f"{where}: {value!r} is not {schema['type']}"
+        assert schema["type"] == "boolean" or not isinstance(value, bool), f"{where}: {value!r} is a boolean"
+    if "const" in schema:
+        assert value == schema["const"], f"{where}: {value!r} != {schema['const']!r}"
+    if "enum" in schema:
+        assert value in schema["enum"], f"{where}: {value!r} not in {schema['enum']}"
+    if "minimum" in schema:
+        assert value >= schema["minimum"], f"{where}: {value!r} < {schema['minimum']}"
+    if schema.get("minLength"):
+        assert len(value) >= schema["minLength"], f"{where}: empty"
+    if schema.get("format") == "date-time":
+        assert datetime.fromisoformat(value).tzinfo is not None, f"{where}: {value!r} has no offset"
+    if isinstance(value, dict):
+        props = schema.get("properties", {})
+        assert set(schema.get("required", [])) <= set(value), f"{where}: missing {set(schema['required']) - set(value)}"
+        if schema.get("additionalProperties") is False:
+            assert set(value) <= set(props), f"{where}: extra keys {set(value) - set(props)}"
+        for key, item in value.items():
+            conforms(item, props[key], f"{where}.{key}")
+    if isinstance(value, list):
+        for number, item in enumerate(value):
+            conforms(item, schema["items"], f"{where}[{number}]")
+
+
+def run_log(repo: Path) -> list[dict]:
+    """Every line of the run log, each checked against ai-dlc's capture run format."""
+    runs = [json.loads(line) for line in (repo / cb.LOG).read_text().splitlines()]
+    for run in runs:
+        conforms(run, RUN_SCHEMA)
+    return runs
+
+
 def inbox(repo: Path) -> set[str]:
     return {s["id"] for s in cb.find_sources(repo)}
 
@@ -77,8 +128,19 @@ def test_fixture_extracts_seven_and_filters_six(repo: Path) -> None:
         else:
             assert after[path] == data
     assert inbox(repo) == set()
-    runs = (repo / cb.LOG).read_text().splitlines()
-    assert len(runs) == 1 and json.loads(runs[0])["tokens"] == 7_000 and json.loads(runs[0])["cost_usd"] == 0.07
+    assert log["tokens"] == 7_000 and log["cost_usd"] == 0.07
+    [run] = run_log(repo)
+    assert run["run_id"] == log["run_id"] and run["ceiling_reached"] is False and run["schema_version"] == 1
+    outcomes = {e["id"]: e["outcome"] for e in run["sources"]}
+    assert sorted(outcomes.values()).count("extracted") == 7 and sorted(outcomes.values()).count("filtered") == 6
+    extracted = [e for e in run["sources"] if e["outcome"] == "extracted"]
+    assert sum(e["input_tokens"] + e["output_tokens"] for e in extracted) == 7_000
+    assert round(sum(e["cost_usd"] for e in extracted), 4) == 0.07
+    assert sorted(e["pull_request"] for e in extracted) == list(range(1, 8))
+    assert {e["kind"] for e in run["sources"]} == {"transcript", "chat"}
+    transcripts = [e for e in run["sources"] if e["kind"] == "transcript"]
+    assert {e["id"]: e["duration_seconds"] for e in transcripts} == DURATIONS, "first segment's time to the last's"
+    assert all("duration_seconds" not in e for e in run["sources"] if e["kind"] == "chat")
 
 
 def test_token_ceiling_leaves_the_rest_in_the_inbox(repo: Path) -> None:
@@ -88,8 +150,9 @@ def test_token_ceiling_leaves_the_rest_in_the_inbox(repo: Path) -> None:
     assert len(runner.calls) == 2 and len(log["extracted"]) == 2
     assert len(log["unprocessed"]) == 5 and set(log["unprocessed"]) == inbox(repo)
     assert "token ceiling 100000 reached" in log["stopped"] and "5 Source(s) left in the inbox" in log["stopped"]
-    logged = json.loads((repo / cb.LOG).read_text().splitlines()[-1])
-    assert logged["unprocessed"] == log["unprocessed"] and logged["stopped"] == log["stopped"]
+    logged = run_log(repo)[-1]
+    assert logged["ceiling_reached"] is True
+    assert sorted(e["id"] for e in logged["sources"] if e["outcome"] == "deferred") == sorted(log["unprocessed"])
     # The next night picks up exactly what was left.
     configure(repo)
     second = FakeRunner()
@@ -102,7 +165,8 @@ def test_second_run_with_nothing_new_makes_no_model_call(repo: Path) -> None:
     runner = FakeRunner()
     log = cb.run_batch(repo, runner=runner, pulls=False)
     assert runner.calls == [] and log["model_calls"] == 0 and log["extracted"] == []
-    assert len((repo / cb.LOG).read_text().splitlines()) == 2
+    first, second = run_log(repo)
+    assert second["sources"] == [] and first["run_id"] != second["run_id"]
 
 
 def test_a_source_seen_before_never_reaches_the_model_again(repo: Path) -> None:
@@ -140,6 +204,8 @@ def test_a_failed_session_stays_in_the_inbox_and_is_retried_then_set_aside(repo:
     log = cb.run_batch(repo, runner=FakeRunner(fail={broken}), pulls=False)
     assert [f["id"] for f in log["failed"]] == [broken] and "boom" in log["failed"][0]["error"]
     assert inbox(repo) == {broken}
+    assert [e for e in run_log(repo)[-1]["sources"] if e["outcome"] == "failed"] == [
+        {"id": broken, "kind": "transcript", "outcome": "failed", "duration_seconds": DURATIONS[broken]}]
     retry = FakeRunner(fail={broken})
     cb.run_batch(repo, runner=retry, pulls=False)
     assert retry.calls == [broken]
@@ -149,6 +215,8 @@ def test_a_failed_session_stays_in_the_inbox_and_is_retried_then_set_aside(repo:
     # process-now still takes it, and moves it once it is done.
     done = cb.process_now(repo, broken, runner=FakeRunner())
     assert done["extracted"][0]["path"].startswith("processed/") and inbox(repo) == set()
+    [entry] = run_log(repo)[-1]["sources"]
+    assert (entry["id"], entry["outcome"], entry["pull_request"]) == (broken, "extracted", 1)
 
 
 def test_process_now_takes_a_filtered_thread_and_refuses_a_repeat(repo: Path) -> None:
@@ -306,8 +374,9 @@ def test_other_providers_wait_for_process_now(repo: Path) -> None:
     log = cb.run_batch(repo, runner=runner, pulls=False)
     assert "symphony-747bcc21abd3eaa9" not in runner.calls and inbox(repo) == {"symphony-747bcc21abd3eaa9"}
     assert "not a captured kind" in log["skipped"][0]["reason"]
-    cb.process_now(repo, "symphony-747bcc21abd3eaa9", runner=runner)
+    done = cb.process_now(repo, "symphony-747bcc21abd3eaa9", runner=runner)
     assert inbox(repo) == set()
+    assert run_log(repo)[-1]["sources"] == [] and "no kind" in done["not_in_run_log"]
 
 
 def test_a_source_id_that_is_not_a_slug_never_reaches_a_prompt(repo: Path) -> None:
@@ -333,3 +402,23 @@ def test_fixture_and_processed_sources_pass_knowledge_check(repo: Path) -> None:
             cb.run_batch(repo, runner=FakeRunner(), pulls=False)
         run = subprocess.run(["ai-dlc", "knowledge", "check", str(root)], capture_output=True, text=True, check=False)
         assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_transcript_duration_from_segment_times(repo: Path) -> None:
+    source = {"payload": "inbox/transcripts/t.txt"}
+    payload = repo / source["payload"]
+    payload.write_text("# Late call\n\n[23:59:30] Ana: hi\n[00:10:30] Ben: bye\n")
+    assert cb.duration_seconds(repo, source) == 660.0, "a meeting that ran past midnight"
+    payload.write_text("# One line\n\n[09:00:00] Ana: hi\n")
+    assert cb.duration_seconds(repo, source) is None
+    assert cb.duration_seconds(repo, {"payload": "../outside.txt"}) is None
+
+
+def test_the_schema_check_rejects_what_ai_dlc_would(repo: Path) -> None:
+    good = {"run_id": "r", "started_at": "2026-11-13T02:00:00+00:00",
+            "sources": [{"id": "a", "kind": "note", "outcome": "deferred"}]}  # fmt: skip
+    conforms(good, RUN_SCHEMA)
+    for bad in ({**good, "tokens": 1}, {**good, "sources": [{"id": "a", "kind": "notes", "outcome": "deferred"}]},
+                {**good, "sources": [{"id": "a", "kind": "chat", "outcome": "extracted", "pull_request": 0}]}):
+        with pytest.raises(AssertionError):
+            conforms(bad, RUN_SCHEMA)

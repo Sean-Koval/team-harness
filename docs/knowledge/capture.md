@@ -56,9 +56,10 @@ Each session loads only that project's settings, never your user settings, and h
 knowledge repository, write only a throwaway copy of it, and run only `ai-dlc knowledge records` and
 `ai-dlc knowledge check`. `gh`, `git` and web tools are denied.
 
-Each run appends a line to `capture/runs.jsonl` in the knowledge repository's working tree: Sources pulled, filtered,
-extracted and left, with tokens and cost. The batch commits and pushes nothing; records reach the repository only
-through their PRs. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
+Each run appends a line to `capture/runs.jsonl` in the knowledge repository's working tree, in ai-dlc's capture run
+format (`contracts/capture-run.schema.json`). It lists each Source filtered, extracted, failed or left at the ceiling,
+with tokens, cost and its draft PR. A transcript also carries its length, so `ai-dlc knowledge stats` can give a cost
+per transcript hour. The batch commits and pushes nothing; records reach the repository only through their PRs. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
 makes no model call. Tune the filter and the ceiling in `knowledge.toml`:
 
 ```toml

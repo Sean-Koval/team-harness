@@ -22,7 +22,10 @@ Raw payloads stay where they are; they expire. The run stops before a Source tha
 ceiling and lists every Source it left in the inbox.
 
 The run log is `capture/runs.jsonl` and the state `capture/state.json`, both in the knowledge repository's working
-tree and neither a record. Nothing here commits or pushes. State keys a Source by its payload hash, so a Source seen
+tree and neither a record. Each line of the run log is one run in ai-dlc's capture run format
+(`contracts/capture-run.schema.json`, `CaptureRun`; KAN-454 keeps the format in ai-dlc), which `ai-dlc knowledge stats`
+reads: every Source the run filtered, extracted, failed or left at the ceiling, with its tokens, cost, draft PR and,
+for a transcript, the recording's length. The fuller summary, with pulls and skipped Sources, goes to stdout. Nothing here commits or pushes. State keys a Source by its payload hash, so a Source seen
 before never reaches the model again, even when a pull writes it to the inbox a second time.
 
 Knobs live in the repository's `knowledge.toml`, table `[capture]` (see `DEFAULTS`). They are data only: the
@@ -72,7 +75,10 @@ DEFAULTS: dict[str, Any] = {
 PULL_STEPS = ("ai-dlc", "work-copilot")
 # A message line: an optional [time], a speaker, a colon, then text ("[09:01:02] Ana: we ship Friday").
 MESSAGE = re.compile(r"^\s*(?:\[[^\]\n]{1,40}\]\s*)?[^\s:\[][^:\n]{0,79}:\s+\S")
-PR_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
+PR_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+)")
+# A transcript segment's time, "[HH:MM:SS]" at the start of a line (ai-dlc pull-transcripts).
+SEGMENT_TIME = re.compile(r"^\[(\d{1,2}):([0-5]\d):([0-5]\d)\]", re.MULTILINE)
+RUN_LOG_KINDS = {"transcript": "transcript", "chat": "chat", "notes": "note"}  # the capture run format's kinds
 MODEL_NAME = re.compile(r"^[A-Za-z0-9][\w.:-]{0,79}$")
 LOGIN = re.compile(r"^[A-Za-z0-9][\w.@-]{0,99}$")
 SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -354,9 +360,10 @@ def extract(repo: Path, source: dict, config: dict, runner: Runner, state: dict,
         entry["status"] = "failed"
         entry["reason"] = str(exc)[:300]
         return {"id": source["id"], "path": source["path"], "error": entry["reason"], "tokens": charge}
-    links = PR_LINK.findall(usage.get("result", ""))
-    tokens = int(usage.get("input", 0)) + int(usage.get("output", 0))
-    record = {"id": source["id"], "pr": links[-1] if links else None, "tokens": tokens, "cost_usd": cost(usage, config)}
+    links = list(PR_LINK.finditer(usage.get("result", "")))
+    input_tokens, output_tokens = int(usage.get("input", 0)), int(usage.get("output", 0))
+    record = {"id": source["id"], "pr": links[-1].group(0) if links else None, "tokens": input_tokens + output_tokens,
+              "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost(usage, config)}  # fmt: skip
     record["path"] = source["path"]
     if move:
         try:
@@ -366,6 +373,49 @@ def extract(repo: Path, source: dict, config: dict, runner: Runner, state: dict,
     entry.update(status="extracted", pr=record["pr"], path=record["path"])
     entry.pop("reason", None)
     return record
+
+
+# --- the run log ---------------------------------------------------------------------------------------------------
+
+
+def duration_seconds(repo: Path, source: dict) -> float | None:
+    """A transcript's length: its last segment's time less its first. None when it has fewer than two segments."""
+    payload = inside(repo, source["payload"]) if source["payload"] else None
+    if payload is None or not payload.is_file():
+        return None
+    times = [int(h) * 3600 + int(m) * 60 + int(s)
+             for h, m, s in SEGMENT_TIME.findall(payload.read_text(encoding="utf-8", errors="replace"))]  # fmt: skip
+    if len(times) < 2:
+        return None
+    span = times[-1] - times[0]
+    return float(span if span >= 0 else span + 86_400)  # a meeting that ran past midnight
+
+
+def run_entry(repo: Path, source: dict, what: str, outcome: str, record: dict | None = None) -> dict | None:
+    """One Source in ai-dlc's capture run format (`CaptureEntry`); None for a kind that format has no name for."""
+    if what not in RUN_LOG_KINDS:
+        return None
+    entry: dict[str, Any] = {"id": source["id"], "kind": RUN_LOG_KINDS[what], "outcome": outcome}
+    if record and outcome == "extracted":
+        entry["input_tokens"] = record.get("input_tokens", 0)
+        entry["output_tokens"] = record.get("output_tokens", 0)
+        entry["cost_usd"] = round(record["cost_usd"], 6) if record.get("cost_usd") is not None else 0
+        number = PR_LINK.fullmatch(record["pr"] or "")
+        entry["pull_request"] = int(number.group(1)) if number else None
+    if what == "transcript":
+        entry["duration_seconds"] = duration_seconds(repo, source)
+    return entry
+
+
+def capture_run(run_id: str, started: datetime, entries: list[dict], *, ceiling_reached: bool) -> dict:
+    """One line of the run log, in ai-dlc's capture run format (`CaptureRun`, schema version 1)."""
+    return {"schema_version": 1, "run_id": run_id, "started_at": started.isoformat(timespec="seconds"),
+            "finished_at": datetime.now(UTC).isoformat(timespec="seconds"), "ceiling_reached": ceiling_reached,
+            "sources": [entry for entry in entries if entry is not None]}  # fmt: skip
+
+
+def new_run_id(started: datetime) -> str:
+    return f"{started:%Y%m%dT%H%M%SZ}-{os.urandom(3).hex()}"
 
 
 # --- the run ------------------------------------------------------------------------------------------------------
@@ -422,7 +472,9 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
     started = (now or datetime.now(UTC)).astimezone(UTC)
     since = windows(state, config, started)
     before = {s["path"] for s in find_sources(repo)}
-    log: dict[str, Any] = {"started": started.isoformat(timespec="seconds"), "since": since, "dry_run": dry_run}
+    log: dict[str, Any] = {"run_id": new_run_id(started), "started": started.isoformat(timespec="seconds"),
+                           "since": since, "dry_run": dry_run}  # fmt: skip
+    entries: list[dict | None] = []
     log["pulls"] = pull(repo, config, since, dry_run) if pulls else []
     if not dry_run:  # a pull that failed or was skipped keeps its window: the next run pulls from the same point
         for result in log["pulls"]:
@@ -463,6 +515,7 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
                 continue
             if not qualifies(payload.read_text(encoding="utf-8", errors="replace"), config):
                 log["filtered"].append(source["id"])
+                entries.append(run_entry(repo, source, what, "filtered"))
                 if not dry_run:
                     try:
                         moved = move_to_processed(repo, source["path"])
@@ -472,17 +525,18 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
                     state["sources"][source["key"]] = {"id": source["id"], "status": "filtered", "path": moved,
                                                        "at": log["started"], "attempts": 0}  # fmt: skip
                 continue
-        queue.append(source)
+        queue.append((source, what))
 
     used, ceiling = 0, config["token_ceiling"]
-    for number, source in enumerate(queue):
+    for number, (source, what) in enumerate(queue):
         need = estimate(repo, source, config)
         if need > ceiling:
             skip(source, f"estimated at {need} tokens, over the ceiling of {ceiling} alone; use process-now")
             continue
         if used + need > ceiling:
-            left = [s["id"] for s in queue[number:] if estimate(repo, s, config) <= ceiling]
-            log["unprocessed"] = left
+            left = [(s, w) for s, w in queue[number:] if estimate(repo, s, config) <= ceiling]
+            log["unprocessed"] = [s["id"] for s, _ in left]
+            entries += [run_entry(repo, s, w, "deferred") for s, w in left]
             log["stopped"] = (f"token ceiling {ceiling} reached ({used} used, next Source estimated at {need}); "
                               f"{len(left)} Source(s) left in the inbox")  # fmt: skip
             break
@@ -491,7 +545,9 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
             used += need
             continue
         record = extract(repo, source, config, runner, state, charge=need)
-        (log["failed"] if "error" in record else log["extracted"]).append(record)
+        failed = "error" in record
+        (log["failed"] if failed else log["extracted"]).append(record)
+        entries.append(run_entry(repo, source, what, "failed" if failed else "extracted", record))
         used += record["tokens"]
         write_json(repo / STATE, state)  # a crash later in the night keeps what is done
     log["tokens"] = used
@@ -500,7 +556,7 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
     log["model_calls"] = 0 if dry_run else len(log["extracted"]) + len(log["failed"])
     if not dry_run:
         write_json(repo / STATE, state)
-        append_log(repo, log)
+        append_log(repo, capture_run(log["run_id"], started, entries, ceiling_reached="stopped" in log))
     return log
 
 
@@ -518,14 +574,17 @@ def process_now(repo: Path, source_id: str, *, force: bool = False, runner: Runn
     source = matches[0]
     if state["sources"].get(source["key"], {}).get("status") == "extracted" and not force:
         raise Refused(f"{source_id} was already extracted ({state['sources'][source['key']].get('pr')}); add --force")
-    started = datetime.now(UTC).isoformat(timespec="seconds")
+    started = datetime.now(UTC)
     record = extract(repo, source, config, runner, state, move=source["path"].startswith("inbox/"))
     failed = "error" in record
-    log = {"started": started, "process_now": source_id, "extracted": [] if failed else [record],
+    entry = run_entry(repo, source, kind(source, config), "failed" if failed else "extracted", record)
+    log = {"run_id": new_run_id(started), "started": started.isoformat(timespec="seconds"), "process_now": source_id, "extracted": [] if failed else [record],
            "failed": [record] if failed else [], "model_calls": 1, "tokens": record.get("tokens", 0),
            "cost_usd": record.get("cost_usd")}  # fmt: skip
+    if entry is None:
+        log["not_in_run_log"] = "the capture run format has no kind for this Source's provider"
     write_json(repo / STATE, state)
-    append_log(repo, log)
+    append_log(repo, capture_run(log["run_id"], started, [entry], ceiling_reached=False))
     return log
 
 
