@@ -2,6 +2,7 @@
 name: knowledge-howto
 description: Use when a teammate asks how to use the knowledge system itself ("how do I get my first record", "how do I say a decision so it's captured", "how do I opt a meeting out", "how do I review a records PR", "how do I find why we decided X"). Answers from the teammate guide, names the page and section, and never invents a step. Read-only.
 allowed-tools: Read, Grep, Glob
+disallowed-tools: Bash, PowerShell, Edit, MultiEdit, Write, NotebookEdit
 ---
 
 # How do I… (the knowledge system)

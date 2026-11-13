@@ -67,4 +67,8 @@ def test_skill_is_read_only_and_names_no_ticket():
     assert "Never run, propose, approve or merge anything" in text
     front = text.split("---")[1]
     assert "never invents a step" in front
-    assert re.search(r"^allowed-tools: Read, Grep, Glob$", front, re.M), "the skill must be read-only by its tools"
+    assert re.search(r"^allowed-tools: Read, Grep, Glob$", front, re.M)
+    # allowed-tools only pre-approves; disallowed-tools is what removes the shell and edit tools while the skill runs
+    removed = re.search(r"^disallowed-tools: (.+)$", front, re.M)
+    assert removed, "the skill must remove the shell and edit tools"
+    assert {"Bash", "PowerShell", "Edit", "MultiEdit", "Write", "NotebookEdit"} <= {t.strip() for t in removed[1].split(",")}

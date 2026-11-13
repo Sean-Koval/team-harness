@@ -65,8 +65,8 @@ components:
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: skill:knowledge-howto
-  digest: sha256:9460f690b59deb6ae708ed4215aec610363c0631fc3cd626e0cc7818b2e0359d
-  tree: sha256:d79cf0fb75fc0098d1957224360cdf726e2a69c34e082e70813fc3a8a4f45131
+  digest: sha256:86a7a1b5476371f2d6972c17fcb94e194454d656af660876570bc071ba8e2905
+  tree: sha256:b1642220e873b393a7103eca2a3e4b55997ea4a96e58d3f3093eea39fdea7d19
   path: skills/knowledge-howto
   source: path:skills/knowledge-howto
 - id: native:claude-code/hooks/guard_work_system.py

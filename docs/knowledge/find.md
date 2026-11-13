@@ -55,7 +55,7 @@ two distinctive words. `get` takes a numbered id or the slug the record had as a
 
 `ai-dlc knowledge why <id>` prints the decision and the chain of what it replaced and what replaced it, and any
 decision that retracts it. Each step comes with its reason and its quotes. It also lists linked conventions,
-lessons and tickets. For each Source, it says whether the raw payload is still present or expired.
+lessons and tickets. For each Source, it says whether the raw payload is still present or already deleted.
 
 ```sh
 ai-dlc knowledge why DEC-0012
