@@ -358,12 +358,12 @@ def _hook_command(cmd: str, scope: str, src: Path, base: Path | None) -> str:
         return cmd  # an echo and the like: no path, no interpreter
     name = m.group(1)
     if scope == "project":
-        # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for PowerShell, cmd and Git Bash alike
+        # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for Git Bash and PowerShell alike
         return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
                 f"'.claude','hooks','{name}'),run_name='__main__')\"")
     path = Path(os.path.abspath(base or Path.home() / ".claude")).joinpath("hooks", name).as_posix()
     if any(c in path for c in '"$%`'):
-        raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both PowerShell and cmd; '
+        raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both Git Bash and PowerShell; '
                       "install with --home pointing elsewhere, or use --scope project")
     return f'py -3 "{path}"'
 
@@ -857,7 +857,9 @@ def _git_bash() -> str | None:
     beside git.exe, then in Program Files). Never C:\\Windows\\System32\\bash.exe, which is WSL."""
     named = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
     if named:
-        return named if Path(named).is_file() else None
+        if not Path(named).is_file():
+            raise FileNotFoundError(f"CLAUDE_CODE_GIT_BASH_PATH names no file: {named}")
+        return named
     candidates = []
     git = shutil.which("git")
     if git:

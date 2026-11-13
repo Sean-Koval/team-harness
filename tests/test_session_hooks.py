@@ -11,9 +11,8 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
-
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -54,6 +53,8 @@ def test_session_hook_runs_in_sh(harness, command, tmp_path):
 @pytest.mark.parametrize("scope", ["user", "project"])
 @pytest.mark.parametrize("harness, command", list(_commands()))
 def test_session_hook_runs_in_windows_hook_shells(harness, command, scope, shell, tmp_path, monkeypatch):
+    if scope == "project" and command.startswith("echo "):
+        pytest.skip("an echo reminder is the same in both scopes")
     if shell == "git-bash" and il._git_bash() is None:
         pytest.skip("no Git Bash on this machine")
     if shell == "powershell":

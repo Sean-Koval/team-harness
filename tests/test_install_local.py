@@ -665,7 +665,7 @@ def test_windows_profile_path_that_cannot_be_quoted_is_refused(tmp_path, monkeyp
     monkeypatch.setattr(il, "WINDOWS", True)
     home = tmp_path / bad
     assert user(WORK, home, "--apply") == 2
-    assert "can't be quoted for both PowerShell and cmd" in capsys.readouterr().err
+    assert "can't be quoted for both Git Bash and PowerShell" in capsys.readouterr().err
     assert not (home / ".claude").exists()
 
 
@@ -894,22 +894,52 @@ def test_hook_shell_is_sh_off_windows(monkeypatch):
     assert il.hook_shell("echo hi") == ["/bin/sh", "-c", "echo hi"]
 
 
-def test_git_bash_honours_claude_code_s_variable_and_never_picks_wsl(tmp_path, monkeypatch):
+def test_git_bash_follows_claude_code_s_variable_then_looks_in_program_files(tmp_path, monkeypatch):
     bash = tmp_path / "Git" / "bin" / "bash.exe"
     bash.parent.mkdir(parents=True)
     bash.write_bytes(b"")
     monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(bash))
     assert il._git_bash() == str(bash)
-    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(tmp_path / "missing.exe"))
-    assert il._git_bash() is None
     monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH")
     for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(il.shutil, "which", lambda name: None)
     monkeypatch.setenv("ProgramFiles", str(tmp_path))
     assert il._git_bash() == str(bash)
-    monkeypatch.setenv("ProgramFiles", str(tmp_path / "System32"))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "elsewhere"))
     assert il._git_bash() is None
+
+
+def test_a_git_bash_variable_naming_no_file_fails_the_probe_out_loud(tmp_path, monkeypatch, capsys):
+    """Claude Code reports a wrong CLAUDE_CODE_GIT_BASH_PATH instead of quietly using PowerShell, so the probe does too."""
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(tmp_path / "missing" / "bash.exe"))
+    with pytest.raises(FileNotFoundError, match="CLAUDE_CODE_GIT_BASH_PATH names no file"):
+        il._git_bash()
+    if os.name == "nt":
+        assert project(WORK, tmp_path / "svc", "--apply") == 1
+        assert "CLAUDE_CODE_GIT_BASH_PATH names no file" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
+@pytest.mark.parametrize("shell", ["git-bash", "powershell"])
+def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypatch, shell):
+    """The probe only proves a hook starts; this proves a block survives the shell: Git Bash passes exit 2 and the
+    reason through. PowerShell's -Command turns a native exit 2 into 1, which Claude Code also treats as a block when
+    Git Bash isn't installed (a PreToolUse exit other than 0 or 2 fails closed), and the reason still reaches stderr."""
+    if shell == "git-bash" and il._git_bash() is None:
+        pytest.skip("no Git Bash on this machine")
+    if shell == "powershell":
+        monkeypatch.setattr(il, "_git_bash", lambda: None)
+    monkeypatch.setattr(il, "WINDOWS", True)
+    root = tmp_path / "Jörg"
+    shutil.copytree(WORK / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
+    cmd = il._hook_command('python3 "$HOME/.claude/hooks/guard_work.py"', "project", WORK, root / ".claude")
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                        "tool_input": {"command": "kubectl delete pod web-1"}}).encode()
+    r = subprocess.run(il.hook_shell(cmd), input=event, capture_output=True, timeout=60, cwd=root,
+                       env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
+    assert b"kubectl may only read" in r.stderr, r.stderr
+    assert r.returncode == 2 if shell == "git-bash" else r.returncode != 0
 
 
 # --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------

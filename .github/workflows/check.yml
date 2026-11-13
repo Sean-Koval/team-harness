@@ -73,6 +73,7 @@ jobs:
         run: >-
           python -m pytest -q -rs tests/test_guard_work_system.py tests/test_guard_work.py
           tests/test_guard_readonly.py tests/test_sync_shared.py tests/test_session_hooks.py
-          tests/test_knowledge_skills.py -k "hook"
+      - name: SessionEnd hook tests
+        run: python -m pytest -q -rs tests/test_knowledge_skills.py -k hook
       - name: Installer tests
         run: python -m pytest -q -rs tests/test_install_local.py
