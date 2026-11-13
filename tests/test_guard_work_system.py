@@ -836,6 +836,25 @@ def test_a_closed_stdin_fails_closed():
     'icm -ScriptBlock {[CmdletBinding()]param($n) gh pr merge 5}',
     "iex(\n'gh pr merge 5')",
     "Invoke-Expression @('gh pr merge 5')",
+    # the PR 54 review: a nested or quoted parenthesis in param(...), and code a parenthesis runs
+    "icm { param([ValidateScript({ $_ -gt (1) })]$n) gh pr merge 1 }",
+    "icm { param($a=(1+(2))) gh pr merge 1 }",
+    "icm { param($a = '(') gh pr merge 1 }",
+    'icm { param($a = ")") gh pr merge 1 }',
+    "icm { param($a = (gh pr merge 1)) }",
+    "icm { param([ValidateScript({ gh pr merge 1 })]$a) }",
+    "$x = (gh pr merge 1)",
+    "Write-Output (gh pr merge 1)",
+    "Write-Output $(gh pr merge 1)",
+    # the fix round's review: code a double-quoted `$(...)` runs, and a quote inside a comment
+    '"$(Write-Output (gh pr merge 1))"',
+    '"$(% {gh pr merge 1})"',
+    'Write-Host "$(1 | % { gh pr merge 1 })"',
+    "# it's\ngh pr merge 1 # '",
+    "# it's\nicm { gh pr merge 1 } # '",
+    "<# it's #>gh pr merge 1<# ' #>",
+    "<# x #> gh pr merge 1",
+    "gh <# x #> pr merge 1",
 ])
 def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
     """KAN-491, the PR 40 post-merge review: iex('...'), -Command, an Invoke-Command or icm script block, and a
@@ -847,19 +866,124 @@ def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
 @pytest.mark.parametrize("command", [
     "iex('git status')", 'Invoke-Command { git log -1 }', 'icm {Get-ChildItem}', "'git status' | iex",
     "git commit -m 'icm { gh pr merge 5 } is now blocked'", 'Get-ChildItem | Where-Object { $_.Length -gt 0 }',
-    '$c = "x"; Write-Output ${c}',
+    '$c = "x"; Write-Output ${c}', "Get-Item (Join-Path a b)", 'git commit -m "fix (thing)"',
+    "icm { param([ValidateRange(1, 5)][int]$n = (1 + 2)) git status }",
+    'Write-Output "price: $(1+2) (approx)"', "git status # it's fine", '$x = "#not a comment"; git status',
+    'gh pr create --title "KAN-1: x" --body-file (Join-Path . body.md)',
 ])
 def test_harmless_iex_and_invoke_command_still_pass(command):
     assert _tool("PowerShell", command).returncode == 0, command
 
 
 def test_a_long_powershell_call_is_judged_in_linear_time():
-    """The unwrapping is one pass: thousands of `icm` or `iex(` words cannot hold the hook past its timeout, which
-    would let the call through."""
+    """The unwrapping is one pass: thousands of `icm` or `iex(` words cannot hold the hook past its timeout (10 s),
+    which would let the call through. Whatever the machine, judging stops at the 5 s deadline and blocks."""
     import time
-    for filler in ("icm ", "iex('", "{param($n) } ", "{param((", "| iex "):
+    for filler in ("icm ", "iex('", "{param($n) } ", "{param((", "| iex ", "(", "$(", "param("):
         start = time.monotonic()
         r = _tool("PowerShell", "Write-Output " + filler * 30000 + "; iex('gh pr merge 1')")
-        assert time.monotonic() - start < 10, filler
-        if filler != "{param((":  # unbalanced: PowerShell refuses to parse it, so nothing runs
-            assert r.returncode == 2, (filler, r.stderr)
+        assert time.monotonic() - start < load_hook().DEADLINE + 2, filler
+        assert r.returncode == 2, (filler, r.stderr)
+
+
+@pytest.mark.parametrize("command", ["# it's\ngh pr merge 1 # '", "x=1 # it's\ngh pr merge 1 # '"])
+def test_a_quote_in_a_bash_comment_hides_nothing(command):
+    assert bash(command) == 2, command
+
+
+def test_a_hash_inside_a_word_is_not_a_comment():
+    assert bash("echo a#b; git status") == 0
+    assert bash("echo a#b; gh pr merge 1") == 2
+
+
+def test_code_scanned_for_hidden_commands_is_judged_in_linear_time(tmp_path):
+    """The fix round's review: the scan's URL and API-path patterns restarted at every `http://` or `pulls/`, so 84 KB
+    of them held the hook for 12 s, past its timeout."""
+    import time
+    (tmp_path / "p.py").write_text("pulls/" * 50000, encoding="utf-8")
+    for command in ['python3 -c "#' + "http://" * 12000 + '"; gh pr merge 1', "python3 p.py; gh pr merge 1",
+                    'python3 -c "#' + "pulls/" * 30000 + '/merge"',
+                    'curl -d "' + "addPullRequestReview" * 40000 + '" https://example.com; gh pr merge 1',
+                    "echo '" + "a" * 1_000_000 + "'; gh pr merge 1"]:
+        start = time.monotonic()
+        r = run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)})
+        assert time.monotonic() - start < load_hook().DEADLINE, command[:40]
+        assert r.returncode == 2, (command[:40], r.stderr)
+
+
+def test_the_word_splitter_reads_as_shlex_does():
+    """_posix_words replaces shlex, which builds a word a character at a time: quadratic on a long word."""
+    import random
+    import shlex
+    mod = load_hook()
+
+    def ref(text, escape):
+        lex = shlex.shlex(text, posix=True)
+        lex.whitespace_split, lex.commenters = True, ""
+        if not escape:
+            lex.escape = ""
+        try:
+            return list(lex)
+        except ValueError:
+            return "error"
+
+    def ours(text, escape):
+        try:
+            return mod._posix_words(text, escape)
+        except ValueError:
+            return "error"
+
+    rng = random.Random(491)
+    for _ in range(20000):
+        text = "".join(rng.choice(["a", "b", " ", "\t", "\n", "'", '"', "\\", "$", "#"])
+                       for _ in range(rng.randint(0, 12)))
+        for escape in (True, False):
+            assert ours(text, escape) == ref(text, escape), (text, escape)
+
+
+def test_a_cached_script_verdict_follows_the_call_state(tmp_path):
+    """The fix round's review: a script's verdict depends on the variables, the directory and the reading it is
+    judged in, so the cache keys on them."""
+    (tmp_path / "s.sh").write_text("gh pr $A 1\n", encoding="utf-8")
+    (tmp_path / "s2.sh").write_text("./x.sh\n", encoding="utf-8")
+    for d, body in (("d1", "echo ok\n"), ("d2", "gh pr merge 1\n")):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "x.sh").write_text(body, encoding="utf-8")
+        (tmp_path / d / "x.sh").chmod(0o755)
+    for tool, command in (("Bash", "bash ./s.sh; export A=merge; bash ./s.sh"),
+                          ("Bash", "cd d1; bash ../s2.sh; cd ../d2; bash ../s2.sh"),
+                          ("PowerShell", 'Set-Content w.sh "gh pr m`erge 1"; bash ./w.sh')):
+        r = run({"tool_name": tool, "tool_input": {"command": command}, "cwd": str(tmp_path)})
+        assert r.returncode == 2, (command, r.stderr)
+
+
+def _big_script(path: Path) -> Path:
+    line = "echo hello world; ls -la /tmp | grep x\n"
+    path.write_text(line * (300_000 // len(line)), encoding="utf-8")
+    return path
+
+
+def test_a_script_run_many_times_is_judged_once(tmp_path, monkeypatch):
+    """The PR 54 review: six runs of one large script took 13 s to judge, past the hook's timeout."""
+    _big_script(tmp_path / "s.sh")
+    mod = load_hook()
+    judged = []
+    verdict = mod._script_verdict
+    monkeypatch.setattr(mod, "_script_verdict", lambda *a: judged.append(a[0]) or verdict(*a))
+    event = {"tool_name": "Bash", "cwd": str(tmp_path),
+             "tool_input": {"command": "bash ./s.sh; " * 6 + "gh pr merge 1"}}
+    assert mod.why(event).startswith("agents never merge")
+    assert judged == ["./s.sh"]
+
+
+def test_a_call_that_takes_too_long_to_judge_is_blocked(tmp_path, monkeypatch):
+    """Past the deadline the hook blocks rather than let its timeout kill it, which would let the call through."""
+    for k in range(3):
+        _big_script(tmp_path / f"s{k}.sh")
+    mod = load_hook()
+    monkeypatch.setattr(mod, "DEADLINE", 0.01)
+    event = {"tool_name": "Bash", "cwd": str(tmp_path),
+             "tool_input": {"command": "bash ./s0.sh; bash ./s1.sh; bash ./s2.sh"}}
+    assert "longer than 0.01 s to judge" in mod.why(event)
+    monkeypatch.setattr(mod, "DEADLINE", 60.0)
+    assert mod.why(event) is None
