@@ -105,7 +105,9 @@ SESSION_DENY = ["Bash(ai-dlc knowledge records get:*)", "Bash(ai-dlc knowledge r
                 "Bash(ai-dlc knowledge records propose:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)",
                 "Bash(wget:*)", "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Skill"]  # fmt: skip
 SUPERSEDE_FIELDS = {"status", "valid_to"}  # what extract-records may change in an existing record
-MENTION = re.compile(r"(?<![\w`])@(?=[A-Za-z0-9])")  # an @name in a PR body notifies that person
+# An @name in a PR body notifies that person. Every one is defused, inside backticks too: an unclosed backtick is no
+# code span, and telling the two apart is not worth the risk.
+MENTION = re.compile(r"(?<![\w.+-])@(?=[A-Za-z0-9])")
 SESSION_MODE = "dontAsk"
 SKILL = ".claude/skills/extract-records/SKILL.md"  # in the project; the batch hands its text to the session
 # Left out of the copy at any depth, compared without case: .Claude/ and claude.md are .claude/ and CLAUDE.md on the
@@ -120,7 +122,7 @@ PROMPT = (
     "`ai-dlc knowledge records get`, `search` and `captured` are not available: use Grep and Read on the copy "
     "instead (the Source's hash is in its `sources` entry; Grep the copy for it to see whether it was captured).\n"
     "Write the records and the processed Source into the copy at their repository paths (step 7.1, the copy is "
-    "made), run `ai-dlc knowledge check {scratch}` until it exits 0, and write the PR body to {body}. "
+    "made), run exactly `{check}` until it exits 0, and write the PR body to {body}. "
     "Do not propose: when you finish, the batch proposes the records you wrote as one draft PR. "
     "If nothing should be proposed, write no record and say why.\n"
     "Read the record templates with `ai-dlc knowledge records template <type>`.\n"
@@ -312,10 +314,20 @@ def rule_path(path: Path) -> str:
     return "//" + text.lstrip("/")
 
 
+def check_command(scratch: Path) -> str:
+    """The one `check` command the session may run, as the prompt gives it and the allow rule matches it.
+
+    A path with a space (a Windows user folder, say) is double-quoted, which bash and PowerShell both read as one
+    argument; the prompt and the rule then carry the same quoted text.
+    """
+    where = str(scratch)
+    return f'ai-dlc knowledge check "{where}"' if any(c.isspace() for c in where) else f"ai-dlc knowledge check {where}"
+
+
 def session_settings(scratch: Path) -> dict:
     """The session's only permission rules, given with --settings (the one settings source --restricted keeps)."""
     where = rule_path(scratch)
-    check = [f"Bash(ai-dlc knowledge check {scratch})", f"Bash(ai-dlc knowledge check {scratch} --json)"]
+    check = [f"Bash({check_command(scratch)})", f"Bash({check_command(scratch)} --json)"]
     return {"permissions": {"defaultMode": SESSION_MODE, "deny": SESSION_DENY,
                             "allow": [f"Read({where}/**)", f"Write({where}/**)", f"Edit({where}/**)", *check,
                                       SESSION_TEMPLATE]}}  # fmt: skip
@@ -440,7 +452,7 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
         settings, system = scratch.parent / "settings.json", scratch.parent / "extract-records.md"
         settings.write_text(json.dumps(session_settings(scratch), indent=2), encoding="utf-8")
         system.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
-        prompt = PROMPT.format(path=scratch / source["path"], id=source["id"], scratch=scratch,
+        prompt = PROMPT.format(path=scratch / source["path"], id=source["id"], scratch=scratch, check=check_command(scratch),
                                body=scratch / PR_BODY)  # fmt: skip
         run = subprocess.run(session_command(exe, settings, system, config), input=prompt, capture_output=True,
                              text=True, encoding="utf-8", errors="replace", cwd=scratch,

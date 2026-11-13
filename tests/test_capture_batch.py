@@ -671,3 +671,22 @@ def test_usage_nobody_reported_is_logged_as_unknown(repo: Path) -> None:
     (entry,) = run_log(repo)[-1]["sources"]
     assert (entry["input_tokens"], entry["output_tokens"], entry["cost_usd"]) == (None, None, None), "unknown, not 0"
     assert entry["pull_request"] == 4
+
+
+def test_the_check_rule_matches_the_prompt_even_with_a_space_in_the_path(tmp_path: Path) -> None:
+    plain, spaced = tmp_path / "capture-x" / "copy", tmp_path / "First Last" / "copy"
+    assert cb.check_command(plain) == f"ai-dlc knowledge check {plain}"
+    assert cb.check_command(spaced) == f'ai-dlc knowledge check "{spaced}"', "one argument in bash and PowerShell"
+    allow = cb.session_settings(spaced)["permissions"]["allow"]
+    assert f'Bash(ai-dlc knowledge check "{spaced}")' in allow and f'Bash(ai-dlc knowledge check "{spaced}" --json)' in allow
+    prompt = cb.PROMPT.format(path="p", id="i", scratch=spaced, check=cb.check_command(spaced), body="b")
+    assert f'`ai-dlc knowledge check "{spaced}"`' in prompt, "the prompt gives the exact command the rule allows"
+
+
+def test_every_mention_in_the_pr_body_is_defused(tmp_path: Path) -> None:
+    repo, scratch = tmp_path / "repo", tmp_path / "copy"
+    repo.mkdir()
+    (scratch / ".capture").mkdir(parents=True)
+    (scratch / cb.PR_BODY).write_text("odd `@alice, `@bob` and ``@carol``; (@dave) @eve\nmail a.b@c.com x+y@d.org")
+    body = cb.pr_body(repo, scratch, []).read_text()
+    assert "@" not in body.replace("a.b@c.com", "").replace("x+y@d.org", ""), body
