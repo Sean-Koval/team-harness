@@ -93,3 +93,15 @@ cases:
   changed: [shared/work-system/hooks/guard_work_system.py]
   author: pat-owner
   reviewer: null
+- id: star-takes-only-direct-children
+  codeowners: |
+    /shared/work-system/* @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: null
+- id: double-star-matches-at-the-root
+  codeowners: |
+    **/shared/ @kim-shared
+  changed: [shared/work-system/hooks/guard_work_system.py]
+  author: agent-bot
+  reviewer: kim-shared
