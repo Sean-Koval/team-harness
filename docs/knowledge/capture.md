@@ -45,7 +45,7 @@ Windows (untested):
 ```powershell
 py -3 $HOME\src\team-harness\scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO --dry-run
 py -3 $HOME\src\team-harness\scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO
-py -3 $HOME\src\team-harness\scripts\capture_batch.py process-now <source id> --repo $env:KNOWLEDGE_REPO
+py -3 $HOME\src\team-harness\scripts\capture_batch.py process-now '<source id>' --repo $env:KNOWLEDGE_REPO
 ```
 
 Your project is the ai-dlc project that configures the knowledge and transcripts roles, with the harness installed
