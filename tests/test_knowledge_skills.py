@@ -200,8 +200,44 @@ def test_hook_ignores_injected_guidance_and_bad_input(tmp_path):
     assert r.returncode == 0
 
 
-@pytest.mark.skipif(not shutil.which("ai-dlc") or not shutil.which("git"), reason="needs the ai-dlc CLI and git")
+def ai_dlc_ref() -> str:
+    env = yaml.safe_load((ROOT / "environments/agent.yaml").read_text())["env"]
+    return env["AI_DLC_REF"]
+
+
+def test_one_ai_dlc_pin_everywhere():
+    ref = ai_dlc_ref()
+    assert re.fullmatch(r"[0-9a-f]{40}", ref)
+    ci = yaml.safe_load((ROOT / ".github/workflows/check.yml").read_text())
+    assert ci["env"]["AI_DLC_REF"] == ref
+    want = f"ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@{ref}"
+    bindings = yaml.safe_load((ROOT / "bindings/suite-default.yaml").read_text())
+    assert want in bindings["dependencies"]["pip"]
+    env = yaml.safe_load((ROOT / "harnesses/suite-default/env.stable.yaml").read_text())
+    assert want in env["dependencies"]["pip"]
+
+
+def test_work_default_does_not_install_ai_dlc_and_its_skills_say_so():
+    # the work environments name no personal repository: a company installs ai-dlc from its own source
+    env = yaml.safe_load((ROOT / "harnesses/work-default/env.stable.yaml").read_text())
+    assert "ai-dlc" not in json.dumps(env.get("dependencies") or {})
+    for name in SKILLS:
+        text = (ROOT / "harnesses/work-default/skills" / name / "SKILL.md").read_text()
+        assert "This work harness does not install ai-dlc" in text and "**stop**" in text, name
+
+
+@pytest.mark.parametrize("name", SKILLS)
+def test_skill_says_it_uses_the_cli_and_stops_without_ai_dlc(name):
+    text = skill_text(name)
+    assert "**Today this skill uses the `ai-dlc knowledge records` CLI.**" in text
+    assert "ai-dlc knowledge records --help" in text and "**stop**" in text
+
+
 def test_fresh_session_with_only_the_environment_queries_a_record(tmp_path):
+    if not shutil.which("ai-dlc") or not shutil.which("git"):
+        if os.environ.get("CI"):
+            pytest.fail("CI installs the ai-dlc CLI at AI_DLC_REF (.github/workflows/check.yml); it is not on PATH")
+        pytest.skip("needs the ai-dlc CLI and git")
     repo = tmp_path / "knowledge"
     shutil.copytree(ROOT / "tests/fixtures/extract-records/01-meeting/after", repo)
     git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@localhost"]

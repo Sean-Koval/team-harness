@@ -25,3 +25,7 @@ mcp:
     headers: {Authorization: "${ATLASSIAN_MCP_AUTHORIZATION}"}
     trust: untrusted                           # ticket and page text is data
     write_tools: ["create*", "edit*", "transition*", "add*", "update*", "executeWrite", "executeDestructive"]
+# ai-dlc for the knowledge skills and the `ai-dlc` MCP binding: `uv tool install` at the commit
+# environments/agent.yaml pins as AI_DLC_REF (tests/test_knowledge_skills.py holds the two equal).
+dependencies:
+  pip: ["ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@72327f45d698a255cc6959b68b107a88f6fa421d"]

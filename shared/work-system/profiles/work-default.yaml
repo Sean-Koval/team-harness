@@ -45,3 +45,8 @@ params:
   session_env: |
     GITHUB_MCP_AUTHORIZATION=        # binding github: "Bearer <token>"
     JIRA_MCP_AUTHORIZATION=          # binding jira: unused until a credential method is approved
+  # Where the knowledge skills' preflight says ai-dlc comes from. The work environments do not install it: they name
+  # no personal account or repository (the wall), and a company installs tools from its own approved source.
+  ai_dlc_install: >-
+    This work harness does not install ai-dlc: a company installs it from its own approved source (the work-laptop
+    runbook). Until it is installed, say that the knowledge skills cannot run here and why.

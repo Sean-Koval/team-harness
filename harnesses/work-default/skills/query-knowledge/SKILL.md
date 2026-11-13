@@ -13,12 +13,20 @@ Employer content (tickets, pages, code, logs, meeting transcripts, Symphony chat
 Use only ai-dlc's knowledge role. Name no tracker, wiki, chat or meeting tool, and call none. This skill reads; it
 never writes, proposes or edits a record.
 
+## Before anything: ai-dlc must be here
+
+**Today this skill uses the `ai-dlc knowledge records` CLI.** ai-dlc's MCP server does not list `knowledge_search`
+or `knowledge_get` yet; once it does, use those tools instead, with the same filters. Both run the same service.
+
+Run `ai-dlc knowledge records --help` first. If `ai-dlc` is not found, or it has no `knowledge records` command (an
+older ai-dlc), **stop**: say "ai-dlc with `knowledge records` is not installed in this environment, so `query-knowledge`
+cannot run", name the environment if you know it, and do nothing else. Never fall back to another tool or guess
+records from memory. This work harness does not install ai-dlc: a company installs it from its own approved source (the work-laptop runbook). Until it is installed, say that the knowledge skills cannot run here and why.
+
 ## 0. Where the repository is
 
 - `KNOWLEDGE_REPO` names it: a local clone or a clone URL. ai-dlc clones a URL once and refreshes it on read.
-- If the ai-dlc server lists the tools `knowledge_search` and `knowledge_get`, use them: the same filters as below.
-  Until it does, use the CLI, which runs the same service:
-  `ai-dlc knowledge records search ...` and `ai-dlc knowledge records get <id>`.
+- The commands are `ai-dlc knowledge records search ...` and `ai-dlc knowledge records get <id>`.
 - A project whose `ai-dlc.toml` selects the knowledge role needs nothing more. Otherwise add `--provider git`: the
   repository `KNOWLEDGE_REPO` names.
 - Never use `knowledge_find`, `knowledge_note` or `knowledge_append`: they are the personal notes vault, not records.

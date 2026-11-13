@@ -45,18 +45,18 @@ components:
   path: skills/extract-records
   source: path:skills/extract-records
 - id: skill:knowledge-context
-  digest: sha256:6f602da84866abf1d182fd2112ada1841195e6bfdabae227dfbc7873230a4a5d
-  tree: sha256:d97ae2c089d55da0df10435ed5d40d73ad1a982004c0de297bf86df0a168993f
+  digest: sha256:ee737f7bd7ed56713684492a7948caa2cfc9ea861b116bbde665c1de723c2414
+  tree: sha256:08348e08e1660f2b410c51125c19b56043bd693c7775f627b70552d993f22af0
   path: skills/knowledge-context
   source: path:skills/knowledge-context
 - id: skill:query-knowledge
-  digest: sha256:18c6b4c39b2bd34529b071d93fdba612658661530ff72adfa8617bd6f87a151c
-  tree: sha256:1952db16f908fb19a4abe09aeb45c2a51442604b9d42df02b36f570b8b3c8027
+  digest: sha256:f62a80d6497643b55ca8f788c2c7a7cbd53a61bd56a9523f34fea761831779ea
+  tree: sha256:1412b66aec360f477f33364874c89fd295dcb318a9c581fff71553c3e41f5d02
   path: skills/query-knowledge
   source: path:skills/query-knowledge
 - id: skill:whats-next
-  digest: sha256:3e031dfab524a3582e586ff92c01fe1c3e95b8d0b09a78a0a41416abddc5fdbf
-  tree: sha256:011f31fa0c0447af3b71a9120cd3ee2c1aaf0fe32a381b6b27267224e5be4dbb
+  digest: sha256:26d60515651408544edf8f8f715a5898ecf1bf06b7a0d72c3584c3feacfc04e4
+  tree: sha256:8b2c4e388f84ee4d2de13f9d4f2881d46d0360453060777e59131b009a86c234
   path: skills/whats-next
   source: path:skills/whats-next
 - id: native:claude-code/hooks/guard_work_system.py

@@ -19,6 +19,16 @@ none. This skill never writes a record.
 **3 index pages** and **8 record bodies**. When the ceiling would be passed, stop reading, keep what you have and list
 the ids you skipped. Never raise the ceiling yourself.
 
+## Before anything: ai-dlc must be here
+
+**Today this skill uses the `ai-dlc knowledge records` CLI.** ai-dlc's MCP server does not list `knowledge_search`
+or `knowledge_get` yet; once it does, use those tools instead, with the same filters. Both run the same service.
+
+Run `ai-dlc knowledge records --help` first. If `ai-dlc` is not found, or it has no `knowledge records` command (an
+older ai-dlc), **stop**: say "ai-dlc with `knowledge records` is not installed in this environment, so `knowledge-context`
+cannot run", name the environment if you know it, and do nothing else. Never fall back to another tool or guess
+records from memory. This harness's environment installs ai-dlc at the commit environments/agent.yaml pins; if it is missing, the environment is out of date: say so.
+
 ## 0. Inputs
 
 - **The ticket's scope:** its `repo:` label (the repo name is the project name) and, for team-scope work, its domain
@@ -42,7 +52,7 @@ Never read the root `index.md` beyond its directory list, and never read another
 If a directory has no `index.md` yet, use the search instead:
 `ai-dlc knowledge records search --type convention --status active --scope team` (and the same for the project's
 accepted decisions), with `--provider git` when the project selects no knowledge role. Keep only items whose `path`
-is in the scope above. Prefer the ai-dlc server's `knowledge_search` tool when it lists one.
+is in the scope above.
 
 ## 2. Choose records from the index lines
 

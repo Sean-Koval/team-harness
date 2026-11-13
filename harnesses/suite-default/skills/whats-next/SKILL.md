@@ -13,12 +13,22 @@ This harness is for personal projects only. Content from an employer (its ticket
 Use only ai-dlc's knowledge role. Name no tracker, wiki, chat or meeting tool, and call none. Never file a ticket,
 propose a record, assign an owner or change a status from this skill.
 
+## Before anything: ai-dlc must be here
+
+**Today this skill uses the `ai-dlc knowledge records` CLI.** ai-dlc's MCP server does not list `knowledge_search`
+or `knowledge_get` yet; once it does, use those tools instead, with the same filters. Both run the same service.
+
+Run `ai-dlc knowledge records --help` first. If `ai-dlc` is not found, or it has no `knowledge records` command (an
+older ai-dlc), **stop**: say "ai-dlc with `knowledge records` is not installed in this environment, so `whats-next`
+cannot run", name the environment if you know it, and do nothing else. Never fall back to another tool or guess
+records from memory. This harness's environment installs ai-dlc at the commit environments/agent.yaml pins; if it is missing, the environment is out of date: say so.
+
 ## 0. Inputs
 
 - **The project:** one name, the directory under `projects/` in the knowledge repository (the repo name, such as
   `hangar`). If you were not given exactly one, ask which project in one line and stop.
-- `KNOWLEDGE_REPO` names the repository. Run the searches below as `query-knowledge` does: the ai-dlc server's
-  `knowledge_search` tool when it lists one, else `ai-dlc knowledge records search`, with `--provider git` when the
+- `KNOWLEDGE_REPO` names the repository. Run the searches below as `query-knowledge` does:
+  `ai-dlc knowledge records search`, with `--provider git` when the
   project selects no knowledge role.
 
 ## 1. Three searches
