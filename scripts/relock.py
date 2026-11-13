@@ -75,8 +75,8 @@ def coverage_problems(root: Path, lock: dict[str, Any]) -> list[str]:
         return []
     if any(str(h.get("source", "")).startswith("environment:") for h in lock["binding"].get("hooks") or []):
         return []
-    return [f"{root}: native/{runtime}/ has files but no settings.json with hooks, so harness_digest would not "
-            "cover them"]
+    return [(f"{root}: native/{runtime}/ has files but no settings.json with hooks, so harness_digest would not "
+             "cover them")]
 
 
 def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
