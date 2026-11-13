@@ -463,14 +463,23 @@ def test_unbound_atlassian_like_servers_are_still_guarded(tool):
     assert run({"tool_name": tool, "tool_input": {}}).returncode == 2
 
 
+def _servers(h: str) -> list[dict]:
+    """A work-system harness's MCP servers as its lock pins them once built: from bindings/<h>.yaml, which declares
+    them (relock.py builds the lock from it, KAN-459), so the check holds before the lock is rebuilt after merge and
+    without hangar (the Windows job). test_relock_bindings.py holds the built lock to the same list."""
+    import yaml
+    servers = yaml.safe_load((ROOT / "bindings" / f"{h}.yaml").read_text())["mcp"]
+    assert all("transport" in s for s in servers.values()), (h, "bindings declare every server's transport")
+    return [{"name": n, **{k: s[k] for k in ("transport", "endpoint") if k in s}} for n, s in sorted(servers.items())]
+
+
 def test_profiles_bind_roles_to_the_servers_their_locks_pin():
     import yaml
     targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text())
     for h, entry in targets["harnesses"].items():
         params = yaml.safe_load((ROOT / "shared/work-system" / entry["profile"]).read_text())["params"]
         bindings = json.loads(params["mcp_bindings"])
-        lock = yaml.safe_load((ROOT / "harnesses" / h / "harness.lock").read_text())
-        pinned = {m["name"] for m in lock["binding"]["mcp"]}
+        pinned = {m["name"] for m in _servers(h)}
         for role in ("tracker", "wiki"):
             assert bindings[role] and set(bindings[role]) <= pinned, (h, role, bindings[role], pinned)
 
@@ -488,10 +497,8 @@ def test_every_work_system_harness_names_the_atlassian_server_the_same():
     targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text())
     names = set()
     for h, entry in targets["harnesses"].items():
-        lock = yaml.safe_load((ROOT / "harnesses" / h / "harness.lock").read_text())
-        atl = {m["name"] for m in lock["binding"]["mcp"] if "atlassian.com" in str(m.get("endpoint") or "")}
-        pinned = [m["name"] for m in lock["binding"]["mcp"]]
-        assert pinned == sorted(pinned), (h, "a session lists its servers by name, so the lock pins them so")
+        servers = _servers(h)
+        atl = {m["name"] for m in servers if "atlassian.com" in str(m.get("endpoint") or "")}
         params = yaml.safe_load((ROOT / "shared/work-system" / entry["profile"]).read_text())["params"]
         assert set(json.loads(params["mcp_bindings"])["tracker"]) == atl, h
         names |= atl
