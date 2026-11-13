@@ -12,9 +12,9 @@ agent and skips the call) for:
 - any edit under /workspace/deploy, the trigger-deployment checkout hangar's deploy step owns.
 
 Each command is also judged as it runs once PowerShell's and Windows' spellings are taken off (a quoted or
-`& 'terraform'` program name, `terraform.exe`, backtick escapes, a variable the call sets). A call it cannot read
-(not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is blocked. Everything else is
-allowed with exit 0. It reads only the tool call, runs nothing and writes nothing.
+`& 'terraform'` program name, `Terraform.EXE`, backtick escapes, a variable the call sets), in any letter case. A
+call it cannot read (not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is
+blocked. Everything else is allowed with exit 0. It reads only the tool call, runs nothing and writes nothing.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def why(event: dict) -> str | None:
     if tool in SHELL_TOOLS:
         for command in _commands(str(args.get("command") or "")):
             for pattern, reason in BASH:
-                if re.search(pattern, command):
+                if re.search(pattern, command, re.IGNORECASE):  # Windows finds Kubectl.EXE as kubectl
                     return reason
     return None
 

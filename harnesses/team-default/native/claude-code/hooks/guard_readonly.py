@@ -5,9 +5,9 @@ Claude Code passes the tool call as JSON on stdin. For a Bash call (or a PowerSh
 on Windows without Git Bash), this blocks commands that would change a
 cluster or print a credential, by exiting 2 with the reason on stderr (Claude Code shows it to the agent and skips
 the call). Each command is also judged as it runs once PowerShell's and Windows' spellings are taken off (a quoted
-or `& 'kubectl'` program name, `kubectl.exe`, backtick escapes, a variable the call sets). A call it cannot read
-(not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is blocked. Everything else
-is allowed with exit 0. It reads only the command text, runs nothing and writes nothing.
+or `& 'kubectl'` program name, `Kubectl.EXE`, backtick escapes, a variable the call sets), in any letter case. A
+call it cannot read (not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is
+blocked. Everything else is allowed with exit 0. It reads only the command text, runs nothing and writes nothing.
 
 The MCP servers are read-only on their own (`--read-only`, viewer roles); this covers the shell, where an
 environment may also have `kubectl`, `helm` or `gcloud`.
@@ -110,7 +110,7 @@ def _main() -> int:
         return 0
     for command in _commands(str((event.get("tool_input") or {}).get("command") or "")):
         for pattern, why in BLOCKED:
-            if re.search(pattern, command):
+            if re.search(pattern, command, re.IGNORECASE):  # Windows finds Kubectl.EXE as kubectl
                 return _block(f"blocked by the team harness: {why}. Diagnose read-only and propose the change in a PR.")
     return 0
 

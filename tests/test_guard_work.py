@@ -164,3 +164,18 @@ def test_a_closed_stdin_fails_closed():
     """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
     r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
     assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", [
+    'Terraform apply',
+    'TERRAFORM.EXE apply -auto-approve',
+    "& 'Terraform' destroy",
+    'Kubectl delete pod x',
+    'KUBECTL.exe delete pod x',
+    'Helm uninstall web',
+])
+def test_program_names_in_any_case_are_blocked(tool, command):
+    """KAN-491: Windows, and macOS's default file system, find Terraform.EXE as terraform."""
+    r = _tool(tool, command)
+    assert r.returncode == 2, (command, r.stderr)

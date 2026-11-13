@@ -40,8 +40,10 @@ decide it are not in the call. Not covered: shell aliases and functions defined 
 outside it, code fetched or built at run time (`bash -c "$(curl ...)"`, base64 decoding, IFS tricks, string
 concatenation in a script), and commands build tools read from their own files (`make`, `npm run`, `just`); the PR
 check and branch protection still apply. A PowerShell call is also read as PowerShell runs it: `iex` and
-`Invoke-Expression` are judged as `eval`, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a
-backtick before a character or a line end is that character or a continuation, and `$c = 'x'` sets c as `c=x` does.
+`Invoke-Expression` (also `iex('...')` and `-Command`) are judged as `eval`, an `Invoke-Command` or `icm` script block
+as the commands in it, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a backtick before a
+character or a line end is that character or a continuation, and `$c = 'x'` sets c as `c=x` does. Not covered there:
+a program name built at run time (`& ('g'+'h')`), splatting (`gh @a`) and `[scriptblock]::Create`.
 Input that is not UTF-8, not JSON or not an object, a shell call without command text, a closed stdin and any error
 in the hook itself are blocked (fail closed). Everything else is allowed with exit 0.
 The only commands it runs are `git symbolic-ref --short HEAD`, to learn the branch, and `git config --get
@@ -438,7 +440,17 @@ def _powershell(command: str) -> str:
             continue
         out.append(c)
         i += 1
-    return "".join(out)
+    text = "".join(out)
+    # iex('gh pr merge 5') and Invoke-Expression -Command '...': the code iex runs, as `iex '...'` reads it
+    text = PS_IEX_CALL.sub(lambda m: f"{m.group(1)} {m.group(2)}", text)
+    text = PS_IEX_COMMAND.sub(r"\1 ", text)
+    # Invoke-Command {gh pr merge 5} and icm -ScriptBlock { ... }: the block runs here, as `& { ... }` does
+    return PS_INVOKE_COMMAND.sub(lambda m: "& {" + m.group(1) + "}", text)
+
+
+PS_IEX_CALL = re.compile(r"(?i)\b(iex|invoke-expression)\s*\(\s*('[^']*'|\"[^\"]*\")\s*\)")
+PS_IEX_COMMAND = re.compile(r"(?i)\b(iex|invoke-expression)\s+-command(?::\s*|(?=\s))")
+PS_INVOKE_COMMAND = re.compile(r"(?i)\b(?:invoke-command|icm)\b[^{;|&\n]*\{([^{}]*)\}")
 
 
 # Claude Code's shell tools: Bash, and on Windows PowerShell (where Git Bash isn't installed). Both carry the command

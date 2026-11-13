@@ -808,3 +808,25 @@ def test_a_closed_stdin_fails_closed():
     """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
     r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
     assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
+
+
+@pytest.mark.parametrize("command", [
+    "iex('gh pr merge 12')",
+    'Invoke-Expression("gh pr merge 12")',
+    "Invoke-Expression -Command 'gh pr merge 12'",
+    "iex -Command:'gh pr merge 12'",
+    'Invoke-Command {gh pr merge 12}',
+    'icm -ScriptBlock { gh pr merge 12 }',
+    'Invoke-Command -ComputerName build -ScriptBlock { git push origin HEAD:main }',
+    'GH.EXE pr merge 12',
+])
+def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
+    """KAN-491, the PR 40 post-merge review: iex('...'), -Command, an Invoke-Command or icm script block, and a
+    program name in another letter case all run the plain command."""
+    r = _tool("PowerShell", command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("command", ["iex('git status')", 'Invoke-Command { git log -1 }', 'icm {Get-ChildItem}'])
+def test_harmless_iex_and_invoke_command_still_pass(command):
+    assert _tool("PowerShell", command).returncode == 0, command
