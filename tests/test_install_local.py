@@ -1,6 +1,7 @@
 """scripts/install_local.py: a harness on a laptop, in user and project scope, pinned and never clobbering."""
 
 import base64
+import codecs
 import json
 import os
 import re
@@ -739,16 +740,66 @@ def test_uninstall_leaves_settings_byte_identical(tmp_path, windows):
     assert sorted(p.name for p in base.iterdir()) == ["settings.json"]
 
 
-def test_uninstall_restores_a_persons_own_empty_sections(tmp_path):
+OWN_EMPTY = b'{\n  "model": "my-own",\n  "hooks": {},\n  "permissions": {"deny": []}\n}\n'
+OWN_EMPTY_WINDOWS = codecs.BOM_UTF8 + OWN_EMPTY.replace(b"\n", b"\r\n")
+
+
+@pytest.mark.parametrize("own", [OWN_EMPTY, OWN_EMPTY_WINDOWS], ids=["lf", "crlf-bom"])
+def test_uninstall_restores_a_persons_own_empty_sections(tmp_path, windows, own):
     """KAN-433: an empty "hooks": {} or "deny": [] of the person's own is not lost on the way back."""
     base = tmp_path / ".claude"
     base.mkdir()
-    own = b'{\n  "model": "my-own",\n  "hooks": {},\n  "permissions": {"deny": []}\n}\n'
     (base / "settings.json").write_bytes(own)
     assert user(WORK, tmp_path, "--apply") == 0
     assert user(WORK, tmp_path, "--uninstall") == 0
     assert (base / "settings.json").read_bytes() == own
 
+
+@pytest.mark.parametrize("own", [OWN_EMPTY, OWN_EMPTY_WINDOWS], ids=["lf", "crlf-bom"])
+def test_uninstall_after_an_edit_keeps_own_empty_sections_and_line_endings(tmp_path, windows, own):
+    """KAN-433: settings edited since the install are rewritten, but the person's empty sections stay, and so do
+    the file's CRLF and byte-order mark."""
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_bytes(own)
+    assert user(WORK, tmp_path, "--apply") == 0
+    raw = (base / "settings.json").read_bytes()
+    assert raw.startswith(codecs.BOM_UTF8) == own.startswith(codecs.BOM_UTF8)  # the install kept them too
+    assert (b"\r\n" in raw) == (b"\r\n" in own)
+    s = json.loads(raw.decode("utf-8-sig"))
+    s["env"] = {"NEW": "1"}
+    edited = (json.dumps(s, indent=2) + "\n").encode()  # an editor that keeps the file's own style
+    if b"\r\n" in raw:
+        edited = edited.replace(b"\n", b"\r\n")
+    if raw.startswith(codecs.BOM_UTF8):
+        edited = codecs.BOM_UTF8 + edited
+    (base / "settings.json").write_bytes(edited)
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    after = (base / "settings.json").read_bytes()
+    assert json.loads(after.decode("utf-8-sig")) == {**json.loads(own.decode("utf-8-sig")), "env": {"NEW": "1"}}
+    assert after.startswith(codecs.BOM_UTF8) == own.startswith(codecs.BOM_UTF8)
+    if own is OWN_EMPTY_WINDOWS:
+        assert b"\n" not in after.replace(b"\r\n", b"")
+    else:
+        assert b"\r" not in after
+
+
+
+def test_an_upgrade_that_drops_every_entry_keeps_own_empty_sections(tmp_path, windows):
+    """KAN-433: a revision that no longer ships any hook or deny rule leaves the person's own empty sections."""
+    h = copy_harness(tmp_path)
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_bytes(OWN_EMPTY)
+    assert user(h, tmp_path, "--apply") == 0
+    sfile = h / "native/claude-code/settings.json"
+    s = json.loads(sfile.read_text())
+    s.pop("hooks", None)
+    s.setdefault("permissions", {})["deny"] = []
+    sfile.write_text(json.dumps(s, indent=2))
+    repin(h, revision=3)
+    assert user(h, tmp_path, "--apply") == 0
+    assert json.loads((base / "settings.json").read_bytes()) == json.loads(OWN_EMPTY)
 
 def test_project_uninstall_leaves_settings_byte_identical_across_an_upgrade(tmp_path, windows):
     h = copy_harness(tmp_path)

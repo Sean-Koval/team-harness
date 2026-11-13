@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import codecs
 import copy
 import hashlib
 import json
@@ -380,16 +381,29 @@ def _has(s: dict[str, Any], e: tuple[str, str, Any]) -> bool:
     return e[2] in ((s.get(e[0]) or {}).get(e[1]) or [])
 
 
-def _remove(s: dict[str, Any], e: tuple[str, str, Any]) -> bool:
+def _remove(s: dict[str, Any], e: tuple[str, str, Any], keep: frozenset[tuple[str, ...]] = frozenset()) -> bool:
+    """Take entry `e` out of `s`. A container left empty goes too, unless `keep` names it: the person had it before
+    the install (their own `"hooks": {}` stays theirs, KAN-433)."""
     lst = (s.get(e[0]) or {}).get(e[1])
     if not isinstance(lst, list) or e[2] not in lst:
         return False
     lst.remove(e[2])
-    if not lst:  # it held only ours: leave no empty container behind
+    if not lst and (e[0], e[1]) not in keep:  # it held only ours: leave no empty container behind
         del s[e[0]][e[1]]
-        if not s[e[0]]:
+        if not s[e[0]] and (e[0],) not in keep:
             del s[e[0]]
     return True
+
+
+def _containers(s: Any) -> frozenset[tuple[str, ...]]:
+    """The sections and keys `_remove` can empty that exist in `s`: ("hooks",), ("hooks", "PreToolUse"), ..."""
+    out: set[tuple[str, ...]] = set()
+    if isinstance(s, dict):
+        for sec in ("hooks", "permissions"):
+            if isinstance(s.get(sec), dict):
+                out.add((sec,))
+                out.update((sec, k) for k in s[sec])
+    return frozenset(out)
 
 
 def _add(s: dict[str, Any], e: tuple[str, str, Any]) -> None:
@@ -590,8 +604,9 @@ def _plan_settings(base: Path, name: str, part: dict[str, Any], old: dict[str, A
     s = copy.deepcopy(cur_s or {})
     ours = [_unrecord(r) for r in sp.old_records]
     new = _entries(part)
+    keep = _kept(_original({"original": sp.original}))
     for e in ours:
-        if e not in new and _remove(s, e):
+        if e not in new and _remove(s, e, keep):
             sp.lines.append(f"- {_describe(e)}")
     for e in new:
         if e in ours and _has(s, e):
@@ -691,8 +706,12 @@ def _prune(base: Path, rel: str) -> None:
         d = d.parent
 
 
-def _settings_bytes(s: dict[str, Any]) -> bytes:
-    return (json.dumps(s, indent=2, ensure_ascii=False) + "\n").encode()
+def _settings_bytes(s: dict[str, Any], like: bytes = b"") -> bytes:
+    """`s` as JSON. With `like`, the file's own line ending and byte-order mark (a Windows editor's CRLF and BOM)."""
+    out = (json.dumps(s, indent=2, ensure_ascii=False) + "\n").encode()
+    if b"\r\n" in like:
+        out = out.replace(b"\n", b"\r\n")
+    return (codecs.BOM_UTF8 + out) if like.startswith(codecs.BOM_UTF8) else out
 
 
 def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") -> None:
@@ -743,7 +762,8 @@ def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") ->
             _write_manifest(p.base, manifest(pending, {**p.old_files, **digests}))
         for n, sp in p.sfiles.items():
             if sp.settings is not None:
-                _write(p.base / n, _settings_bytes(sp.settings))
+                f = p.base / n
+                _write(f, _settings_bytes(sp.settings, like=f.read_bytes() if f.is_file() else b""))
     data = manifest(final, digests)
     cur = read_manifest(p.base)
     if cur is None or _strip_source(cur) != _strip_source(data):
@@ -921,19 +941,28 @@ def _uninstall_settings(base: Path, name: str, block: dict[str, Any], removed: l
     if cur is None or not block:
         return
     s = copy.deepcopy(cur)
+    original = _original(block)
+    keep = _kept(original)
     for r in block.get("entries") or []:
-        if _remove(s, _unrecord(r)):
+        if _remove(s, _unrecord(r), keep):
             removed.append(f"{name}: {_describe(_unrecord(r))}")
         else:
             left.append(f"{name}: {_describe(_unrecord(r))}: changed or already gone")
-    original = _original(block)
     if not s and block.get("created"):
         (base / name).unlink()
     elif original is not None and _same_settings(original, s):
         if (base / name).read_bytes() != original:
             _write(base / name, original)  # the person's own bytes: indentation, key order, BOM, CRLF
     elif s != cur:
-        _write(base / name, _settings_bytes(s))
+        _write(base / name, _settings_bytes(s, like=(base / name).read_bytes()))  # edited since: keep CRLF and BOM
+
+
+def _kept(original: bytes | None) -> frozenset[tuple[str, ...]]:
+    """The containers the person had before the install, which taking our entries out never removes."""
+    try:
+        return _containers(_parse_settings(original)) if original is not None else frozenset()
+    except ValueError:
+        return frozenset()
 
 
 def _original(block: dict[str, Any]) -> bytes | None:
