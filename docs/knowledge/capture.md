@@ -24,12 +24,13 @@ One job pulls cheaply and extracts once a day, so token use stays predictable (d
    late still arrives;
 2. sets aside chat threads with fewer than 5 messages and no decision word (decided, agreed, going forward, we will).
    Their Source records move from `inbox/` to `processed/` unchanged;
-3. runs `extract-records` once per remaining Source, one Claude Code session each. Each session opens one draft
-   records PR. Nothing merges.
+3. runs `extract-records` once per remaining Source, one Claude Code session each, on a throwaway copy of the
+   repository. The batch then proposes what the session wrote as one draft records PR. Nothing merges.
 
 A Source whose session finished moves to `processed/` too, so `inbox/` holds only what is left. The run stops before
 it would pass the nightly token ceiling and lists the Sources it left. The next run starts with them. A Source of any
-other kind, such as a ticket export, waits in the inbox for `process-now`.
+other kind, such as a ticket export, waits in the inbox for `process-now`. So does a Source whose session wrote no
+records: the run lists it under `no_pr`, and later runs skip it until a person looks.
 
 Run these from your project, with this harness cloned where the [quickstart](quickstart.md) put it. macOS:
 
@@ -52,9 +53,10 @@ at project scope; pass `--project <dir>` to run from elsewhere. `process-now` ex
 a thread the filter set aside. Schedule `run` nightly with cron, launchd or Task Scheduler, on a machine signed in to Claude Code and
 GitHub.
 
-Each session loads only that project's settings, never your user settings, and has no MCP servers. It may read the
-knowledge repository, write only a throwaway copy of it, and run only `ai-dlc knowledge records` and
-`ai-dlc knowledge check`. `gh`, `git` and web tools are denied.
+Each session loads only that project's settings, never your user settings, and has no MCP servers. Its permission
+mode is fixed, so the project's settings cannot widen it. It sees only a copy of the knowledge repository, without
+its `.claude/` folder, `CLAUDE.md` or symlinks, and may read records and run `ai-dlc knowledge check`. It cannot
+propose, push, or use `gh`, `git` or web tools. One run holds the lock at a time; a run that was killed releases it.
 
 Each run appends a line to `capture/runs.jsonl` in the knowledge repository's working tree, in ai-dlc's capture run
 format (`contracts/capture-run.schema.json`). It lists each Source filtered, extracted, failed or left at the ceiling,
