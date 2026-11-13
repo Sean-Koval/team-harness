@@ -76,6 +76,8 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # as the Linux job: the build resolves channels through each harness.lock's history
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
