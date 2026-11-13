@@ -123,7 +123,7 @@ def restore(root: Path) -> list[str]:
             continue
         head = {i: x for i, x in enumerate(_git(root, "show", f"HEAD:{rel}").splitlines(keepends=True))
                 if pat.match(x)}
-        now = f.read_text().splitlines(keepends=True)
+        now = f.read_text(encoding="utf-8").splitlines(keepends=True)
         idx = [i for i, x in enumerate(now) if pat.match(x)]
         if len(idx) != len(head):
             raise SystemExit(f"{rel}: can't match its generated lines to HEAD's; restore it by hand")
@@ -131,7 +131,7 @@ def restore(root: Path) -> list[str]:
         for i, x in zip(idx, head.values()):
             new[i] = x
         if new != now:
-            f.write_text("".join(new))
+            f.write_text("".join(new), encoding="utf-8", newline="\n")
             done.append(rel)
     return done
 
@@ -139,7 +139,7 @@ def restore(root: Path) -> list[str]:
 def old_comment(channels_file: Path, name: str, channel: str) -> str:
     """The comment on `name.channel`'s line in channels.yaml, or ""."""
     inside = False
-    for line in channels_file.read_text().splitlines():
+    for line in channels_file.read_text(encoding="utf-8").splitlines():
         if re.match(r"^\S", line):
             inside = line.split(":", 1)[0].strip() == name
         elif inside and re.match(rf"^\s+{re.escape(channel)}:", line):
@@ -153,7 +153,7 @@ def repin_agent_env(root: Path, name: str, digest: str, revision: int) -> None:
     f = root / "environments" / "agent.yaml"
     if not f.is_file():
         return
-    text = f.read_text()
+    text = f.read_text(encoding="utf-8")
     m = re.search(r"^\s*AGENT_ENV_HARNESS:\s*\"?([\w.-]+)\"?\s*$", text, re.MULTILINE)
     if not m or m.group(1) != name:
         return
@@ -161,7 +161,7 @@ def repin_agent_env(root: Path, name: str, digest: str, revision: int) -> None:
                      lambda g: f'{g.group(1)}"{digest}"  # r{revision}', text, count=1, flags=re.MULTILINE)
     if n != 1:
         raise SystemExit(f"{f}: no AGENT_ENV_HARNESS_DIGEST line to move")
-    f.write_text(new)
+    f.write_text(new, encoding="utf-8", newline="\n")
 
 
 def build(root: Path, note: str) -> list[str]:
@@ -177,11 +177,11 @@ def build(root: Path, note: str) -> list[str]:
         lock, _ = relock.relock(d)
         digest = hl.harness_digest(lock)
         if digest != before:
-            (d / hl.LOCK_FILE).write_text(hl.dump(lock))
+            (d / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
         want = render_envs.render(d)
         for f in ("env.stable.yaml", "env.candidate.yaml"):
-            if f in want and (not (d / f).is_file() or (d / f).read_text() != want[f]):
-                (d / f).write_text(want[f])
+            if f in want and (not (d / f).is_file() or (d / f).read_text(encoding="utf-8") != want[f]):
+                (d / f).write_text(want[f], encoding="utf-8", newline="\n")
             elif f not in want and (d / f).is_file():
                 (d / f).unlink()
         if digest != before:
