@@ -10,7 +10,7 @@
 # Credentials and inputs are names only; agent.env.example is the contract, the same names locally and in hangar's
 # secret store. Inputs come from git and the tracker: TICKET_KEY, CODE_REPO, KNOWLEDGE_REPO.
 name: agent
-extends: suite-default
+extends: suite-default-candidate  # the current lock; suite-default serves stable's release copy
 description: suite-default + ai-dlc pinned, for one ticket's run; the same image on a laptop and in hangar
 model: claude-opus-5-5
 tools:
