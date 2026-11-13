@@ -352,7 +352,7 @@ def fake_cli(seen: dict, *, record: bool = True, propose_rc: int = 0):
                 (scratch / "team/decisions").mkdir(parents=True, exist_ok=True)
                 (scratch / "team/decisions/runbooks-in-repo.md").write_text("---\nid: x\n---\n")
                 (scratch / ".capture").mkdir(exist_ok=True)
-                (scratch / ".capture/pr-body.md").write_text("records")
+                (scratch / ".capture/pr-body.md").write_text("records for @alice and @org/team, not a@b.com")
                 (scratch / "inbox/scribble.md").write_text("not a record")
             reply = {"result": "Done. PR: https://github.com/attacker/elsewhere/pull/1", "is_error": False,
                      "total_cost_usd": 0.5,
@@ -361,6 +361,8 @@ def fake_cli(seen: dict, *, record: bool = True, propose_rc: int = 0):
         seen["propose"] = command
         seen["propose_cwd"] = kwargs.get("cwd")
         seen["proposed_text"] = Path(command[4]).read_text()
+        if "--body-file" in command:
+            seen["body"] = Path(command[command.index("--body-file") + 1]).read_text()
         out = json.dumps({"status": "proposed", "pull_request": "https://github.com/example/knowledge/pull/9"})
         return subprocess.CompletedProcess(command, propose_rc, out if not propose_rc else "", "refused")
 
@@ -406,9 +408,17 @@ def test_claude_runner_runs_one_locked_down_headless_session(repo: Path, tmp_pat
     assert seen["settings"] == {"permissions": {
         "defaultMode": "dontAsk",
         "allow": [f"Read({where}/**)", f"Write({where}/**)", f"Edit({where}/**)",
-                  "Bash(ai-dlc knowledge check:*)", "Bash(ai-dlc knowledge records template:*)"],
-        "deny": ["Bash(ai-dlc knowledge records:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)", "Bash(wget:*)",
-                 "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Skill"]}}  # fmt: skip
+                  f"Bash(ai-dlc knowledge check {scratch})", f"Bash(ai-dlc knowledge check {scratch} --json)",
+                  "Bash(ai-dlc knowledge records template:*)"],
+        "deny": ["Bash(ai-dlc knowledge records get:*)", "Bash(ai-dlc knowledge records search:*)",
+                 "Bash(ai-dlc knowledge records changed:*)", "Bash(ai-dlc knowledge records captured:*)",
+                 "Bash(ai-dlc knowledge records propose:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)",
+                 "Bash(wget:*)", "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Skill"]}}  # fmt: skip
+    allow, deny = seen["settings"]["permissions"]["allow"], seen["settings"]["permissions"]["deny"]
+    assert not [d for d in deny if "records template".startswith(d.removeprefix("Bash(").removesuffix(":*)"))], \
+        "deny wins over allow, so no deny rule may cover the template command the prompt uses"
+    assert not [a for a in allow if a.startswith("Bash(ai-dlc knowledge check") and ":*" in a], "check only on the copy"
+    assert f"ai-dlc knowledge check {scratch}`" in seen["input"], "the prompt's check command is the allowed one"
     assert seen["system"] == "# Extract records from one Source\n", "the project's skill, as text"
     assert seen["encoding"] == "utf-8" and "shell" not in seen
     had = seen["scratch_had"]
@@ -426,6 +436,7 @@ def test_claude_runner_runs_one_locked_down_headless_session(repo: Path, tmp_pat
     assert propose[propose.index("--branch") + 1].startswith(f"records-{source['id']}-")
     assert propose[propose.index("--title") + 1] == f"records: {source['id']}" and "--body-file" in propose
     assert seen["proposed_text"].startswith("---")
+    assert seen["body"] == "records for \uff20alice and \uff20org/team, not a@b.com", "an @mention notifies nobody"
 
 
 def test_claude_runner_needs_the_project_skill(repo: Path, tmp_path: Path, monkeypatch) -> None:
@@ -616,11 +627,47 @@ def test_the_smoke_script_runs_the_batchs_own_session() -> None:
     assert smoke == batch[:at] + ["stream-json", "--verbose"] + batch[at + 1 :], "only the output format differs"
     init = {"type": "system", "subtype": "init", "tools": ["Read", "Bash"], "slash_commands": []}
     read = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a", "content": "MARK"}]}}
-    held = capture_smoke.verdict([init, read], marker="MARK", secret="SECRET")
+    template = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ai-dlc knowledge records template --list"}}]}}
+    listed = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": "decision"}]}}
+    held = capture_smoke.verdict([init, read, template, listed], marker="MARK", secret="SECRET")
     assert all(ok for _, ok in held)
     call = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "s", "name": "Skill"}]}}
     ran = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "s", "content": "x"}]}}
     leak = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b", "content": "SECRET"}]}}
     wide = {**init, "tools": ["Skill"], "slash_commands": ["probe"]}
-    assert [ok for _, ok in capture_smoke.verdict([wide, call, ran, leak], marker="MARK", secret="SECRET")] == [
-        False, False, False, False]
+    denied = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t", "content": "denied", "is_error": True}]}}
+    assert [ok for _, ok in capture_smoke.verdict([wide, call, ran, leak, template, denied], marker="MARK",
+                                                  secret="SECRET")] == [False] * 5  # fmt: skip
+
+
+def test_the_pr_body_lists_changes_to_existing_records_beyond_a_supersede(tmp_path: Path) -> None:
+    repo, scratch = tmp_path / "repo", tmp_path / "copy"
+    old = "---\nid: d1\nstatus: accepted\ntitle: Runbooks\n---\nRunbooks live in the repo.\n"
+    for root in (repo, scratch):
+        (root / "team").mkdir(parents=True)
+        for name in ("superseded.md", "rewritten.md", "retitled.md"):
+            (root / "team" / name).write_text(old)
+    (scratch / "team/superseded.md").write_text(old.replace("status: accepted", "status: superseded\nvalid_to: 2026-11-13"))
+    (scratch / "team/rewritten.md").write_text(old.replace("live in the repo", "live in the wiki"))
+    (scratch / "team/retitled.md").write_text(old.replace("status: accepted\ntitle: Runbooks", "status: superseded\ntitle: X"))
+    (scratch / "team/new.md").write_text(old)
+    files = ["team/new.md", "team/retitled.md", "team/rewritten.md", "team/superseded.md"]
+    assert cb.changed_records(repo, scratch, files) == ["- `team/retitled.md`: title", "- `team/rewritten.md`: body"]
+    body = cb.pr_body(repo, scratch, files)
+    assert body is not None and body.read_text().startswith("## Existing records changed beyond a supersede")
+    body.unlink()
+    assert cb.pr_body(repo, scratch, ["team/new.md", "team/superseded.md"]) is None, "a supersede alone adds nothing"
+
+
+def test_usage_nobody_reported_is_logged_as_unknown(repo: Path) -> None:
+    def runner(source: dict, repo: Path, config: dict) -> dict:
+        return {"result": "https://github.com/example/knowledge/pull/4", "input": None, "output": None,
+                "cost_usd": None}  # fmt: skip
+
+    source = cb.find_sources(repo)[0]["id"]
+    cb.process_now(repo, source, runner=runner)
+    (entry,) = run_log(repo)[-1]["sources"]
+    assert (entry["input_tokens"], entry["output_tokens"], entry["cost_usd"]) == (None, None, None), "unknown, not 0"
+    assert entry["pull_request"] == 4
