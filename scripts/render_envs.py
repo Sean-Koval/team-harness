@@ -116,9 +116,9 @@ def stable_dir(root: Path) -> Path:
 
     import promote  # needs hangar too; imported here so native_files needs neither
 
-    lock = yaml.safe_load((root / "harness.lock").read_text())
+    lock = yaml.safe_load((root / "harness.lock").read_text(encoding="utf-8"))
     channels = next((p / "channels.yaml" for p in root.resolve().parents if (p / "channels.yaml").is_file()), None)
-    chans = ((yaml.safe_load(channels.read_text()) or {}).get(lock["name"]) or {}) if channels else {}
+    chans = ((yaml.safe_load(channels.read_text(encoding="utf-8")) or {}).get(lock["name"]) or {}) if channels else {}
     digest = chans.get("stable")
     if not digest or hl.harness_digest(hl.load(root)) == digest:
         return root
@@ -153,13 +153,13 @@ def _bindings_text(repo: Path, src: Path, root: Path, bindings_file: Path) -> st
                 if text is None:
                     raise SystemExit(f"{bindings_file}: not in commit {commit[:12]}, which added {rel}")
                 return text
-    return bindings_file.read_text()
+    return bindings_file.read_text(encoding="utf-8")
 
 
 def _environment(root: Path, src: Path, env_name: str, description: str, with_plugins: bool) -> dict[str, Any]:
     """The environment providing the lock in `src` (the harness directory `root` or a release copy under it). Paths
     are relative to `root`, the spec's directory, where hangar resolves them."""
-    lock = yaml.safe_load((src / "harness.lock").read_text())
+    lock = yaml.safe_load((src / "harness.lock").read_text(encoding="utf-8"))
     name, runtime = lock["name"], lock["runtime"]["harness"]
     # the repository's bindings/, also from a release copy (harnesses/<name>/releases/rN/)
     repo = next((p for p in root.resolve().parents if (p / "bindings").is_dir()), root.parent.parent)
@@ -200,7 +200,7 @@ def _environment(root: Path, src: Path, env_name: str, description: str, with_pl
         "harnesses": [runtime],
         "model": lock["model"]["id"],
         "skills": [{"path": at(c["path"])} for c in comps if c["id"].startswith("skill:") and c.get("path")],
-        "agent_config": {"instructions": _text((src / guide["path"]).read_text()) if guide else None,
+        "agent_config": {"instructions": _text((src / guide["path"]).read_text(encoding="utf-8")) if guide else None,
                          "files": files},
         "mcp": mcp,
         "secrets": bind.get("secrets") or {},
@@ -216,12 +216,12 @@ def _environment(root: Path, src: Path, env_name: str, description: str, with_pl
 
 
 def render(root: Path) -> dict[str, str]:
-    lock = yaml.safe_load((root / "harness.lock").read_text())
+    lock = yaml.safe_load((root / "harness.lock").read_text(encoding="utf-8"))
     name = lock["name"]
     src = stable_dir(root)
     where = f"harnesses/{name}/{src.relative_to(root).as_posix()}/harness.lock" if src != root else \
         f"harnesses/{name}/harness.lock"
-    rev = yaml.safe_load((src / "harness.lock").read_text())["revision"]
+    rev = yaml.safe_load((src / "harness.lock").read_text(encoding="utf-8"))["revision"]
     stable = _environment(root, src, name, f"Provides the files of harness {name}@stable, r{rev} ({where}), for thaw "
                           "and experiments", with_plugins=False)
     dump = lambda d: HEADER.format(name=name) + yaml.safe_dump(d, sort_keys=False, width=120, allow_unicode=True)
@@ -241,14 +241,15 @@ def main() -> int:
     a = ap.parse_args()
     want = render(a.harness)
     stale = [f for f in ("env.stable.yaml", "env.candidate.yaml")
-             if (a.harness / f).exists() != (f in want) or (f in want and (a.harness / f).read_text() != want[f])]
+             if (a.harness / f).exists() != (f in want)
+             or (f in want and (a.harness / f).read_text(encoding="utf-8") != want[f])]
     if a.check:
         for f in stale:
             print(f"{a.harness / f} is out of date: run scripts/render_envs.py {a.harness}", file=sys.stderr)
         return 1 if stale else 0
     for f in stale:
         if f in want:
-            (a.harness / f).write_text(want[f])
+            (a.harness / f).write_text(want[f], encoding="utf-8", newline="\n")
         else:
             (a.harness / f).unlink()
         print(f"wrote {a.harness / f}", file=sys.stderr)
