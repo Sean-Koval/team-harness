@@ -428,6 +428,51 @@ def test_a_record_knowledge_check_refuses_counts_as_an_edit(tmp_path):
     assert next(m["edits"] for m in result["matched"] if m["produced"] == rel) == ["check"]
 
 
+EVIDENCE = "  quote: 'Decided: the reviewer merges a records PR, never its author.'\n  speaker: lead-example\n"
+AT = "  at: '2026-11-12T10:00:00+00:00'\n"
+
+
+@pytest.mark.parametrize(
+    "change, edited",
+    [
+        ({}, False),
+        ({EVIDENCE + AT: ""}, True),  # the quote only in the body, as before KAN-485
+        ({"merges a records PR, never": "merges every records PR, never"}, True),  # not the Source's words
+        ({"speaker: lead-example": "speaker: dev-example"}, True),  # someone else said it
+        ({AT: ""}, True),  # nowhere to find it
+        ({AT: "  permalink: https://chat.example.invalid/m/1000\n"}, False),  # a permalink serves as well as `at`
+        (  # another line of the Source, with its own speaker, is evidence too
+            {
+                "Decided: the reviewer merges a records PR, never its author.": "And as before, one file per record?",
+                "speaker: lead-example": "speaker: dev-example",
+            },
+            False,
+        ),
+    ],
+)
+def test_evidence_must_be_the_sources_own_words_and_speaker(tmp_path, change, edited):
+    """KAN-485: a record from an expiring Source keeps its quote, speaker and `at` or permalink in `sources`."""
+    case = own_cases()["09-restated-unrecorded"]
+    rel = "team/decisions/reviewer-merges-records-pr.md"
+    text = (case["root"] / "after" / rel).read_text()
+    assert EVIDENCE + AT in text
+    for old, new in change.items():
+        text = text.replace(old, new, 1)
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case, {rel: text}), check=no_check)
+    edits = next(m["edits"] for m in result["matched"] if m["produced"] == rel)
+    assert edits == (["evidence"] if edited else [])
+    assert grade.record_severity(edits) == ("substantive" if edited else None)
+
+
+def test_evidence_is_graded_only_where_the_expected_record_keeps_it(tmp_path):
+    """A record from a Source that does not expire carries no evidence, and none is asked of it."""
+    case = own_cases()["08-restated-rules"]
+    for rel in case["expect"]:
+        assert "quote:" not in (case["root"] / "after" / rel).read_text(), rel
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case), check=no_check)
+    assert all(not m["edits"] for m in result["matched"])
+
+
 def test_changed_scope_is_substantive_and_reworded_title_cosmetic(tmp_path):
     """KAN-474 acceptance: a changed scope makes the record wrong; a reworded title only costs wording."""
     case = own_cases()["08-restated-rules"]

@@ -18,6 +18,8 @@ SKILL = ROOT / "shared/work-system/skills/extract-records/SKILL.md"
 CASES = ROOT / "tests/fixtures/extract-records"
 MANIFEST = yaml.safe_load((CASES / "cases.yaml").read_text())["cases"]
 # Vendor tools and products the skill must not name: it calls ai-dlc roles only.
+# Source kinds whose payload expires (ai-dlc KAN-466): a record citing one keeps its evidence in `sources`.
+EXPIRING = {"transcript", "chat", "meeting", "thread"}
 VENDORS = re.compile(r"jira|confluence|atlassian|mcp__|github|\bgh\b|zoom|google meet|symphony|slack|notion", re.I)
 
 
@@ -55,7 +57,8 @@ def test_skill_keeps_the_trial_1_rules():
     for rule in ("untrusted data", "owner: unknown", "Never write to the wiki", "never merges",
                  "never `team` by default", "Never a copy of the title", "never a ticket key",
                  "quotable sentence", "Restated rules produce nothing", "would a reviewer delete this?",
-                 "Ceilings per Source", "Default: fold it into the decision record"):
+                 "Ceilings per Source", "Default: fold it into the decision record",
+                 "**Evidence in that entry.**", "`speaker`: who said it", "The quote stays in the body too"):
         assert rule in text, rule
 
 
@@ -87,6 +90,13 @@ def test_case_is_consistent(case):
         if path not in old:
             assert {"type": "derived_from", "target": source["id"]} in record["links"], path
             assert any(e.get("id") == source["id"] and e.get("hash") for e in record["sources"]), path
+            if EXPIRING & {source.get("provider"), *source.get("tags", [])}:
+                said = " ".join((before / case["source"]).read_text().split("---\n", 2)[2].split())
+                assert any(
+                    e.get("id") == source["id"] and e.get("quote") and " ".join(e["quote"].split()) in said
+                    and e.get("speaker") and (e.get("at") or e.get("permalink"))
+                    for e in record["sources"]
+                ), f"{path}: an expiring Source's evidence (quote, speaker, at) belongs in its sources entry"
 
 
 @pytest.mark.parametrize("case", MANIFEST, ids=[c["id"] for c in MANIFEST])
