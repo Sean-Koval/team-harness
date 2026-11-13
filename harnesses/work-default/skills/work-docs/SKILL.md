@@ -10,8 +10,10 @@ hand.
 
 Employer content (tickets, pages, code, logs, meeting transcripts, Symphony chat) stays on the company's systems and in tools the company approved on the work machine. Never write it to any other Atlassian site, to Notion, to a personal notes vault, or to any personal sync or backup, and never tag it for a personal system. If the knowledge-base site or space this harness names still reads COMPANY-SITE or COMPANY-SPACE, the company overlay was not applied: write no page, and say so in the PR.
 
-**Knowledge base for this harness:** the Confluence site `COMPANY-SITE.atlassian.net`, space `COMPANY-SPACE`. Write pages there and
-nowhere else. Never pick a site or space that is not named here, even when the Atlassian server can reach others.
+**Knowledge base for this harness:** the Confluence site `COMPANY-SITE.atlassian.net`, space `COMPANY-SPACE`. A session does not
+write pages: it proposes knowledge records (skill `extract-records`, `ai-dlc knowledge records propose`), and the
+render job publishes them to that space once their PR merges. The session hook refuses page writes, unless the
+profile's `wiki_write_allow` names the site and space. Never pick a site or space that is not named here.
 
 | What | Home | Not here |
 | --- | --- | --- |
@@ -25,8 +27,8 @@ nowhere else. Never pick a site or space that is not named here, even when the A
 | A project's goal, milestone, health | The project's epic in Jira (the lane): its Roadmap section and `health:` label | Confluence pages, Notion |
 | Ticket status, links, PRs | Jira and GitHub | Any page |
 
-Use the Atlassian MCP server's Confluence tools for pages. Search before you create: update the page that already
-covers the subject instead of starting a second one.
+Read pages with the wiki server's read tools. Search before you propose: amend the record that already covers the
+subject instead of starting a second one. The Confluence rows above are where the render job publishes.
 
 ## In the same pull request
 
@@ -38,7 +40,7 @@ a follow-up. When the PR implements a Decision that binds code, add the ADR and 
 Every PR body has a `Docs:` line, and the PR check fails without it. Use one of these forms:
 
 - `Docs: docs/decisions/0007-retry-queue.md` (the files you changed, comma-separated)
-- `Docs: <Confluence page URL>` (a page you created or updated)
+- `Docs: <records PR or page URL>` (the knowledge records you proposed, or the page the render job published)
 - `Docs: none needed - <why>` (for example `none needed - internal refactor, no behaviour change`)
 
 `none needed` without a reason is not accepted.

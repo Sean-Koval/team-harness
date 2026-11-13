@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 5
+revision: 6
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -30,8 +30,8 @@ components:
   path: skills/jira-ticket
   source: path:skills/jira-ticket
 - id: skill:work-docs
-  digest: sha256:eb4676e460f60611fbc8c0eb1a465e31b0f208ed1a2dd518634c5d62840add2e
-  tree: sha256:1ffa456d6e35a121c3fc3278ab38ac1f7f0e02873f1e1aac25f32fc8b30782e2
+  digest: sha256:9aada2ac81c3048ab0cafecdf0f4566e7550e26f6e9fca735c050b5e27d45919
+  tree: sha256:e165729965ca071c76eb74e5b097b080b5d9687d698cd9068535981e4256d43a
   path: skills/work-docs
   source: path:skills/work-docs
 - id: skill:work-start
@@ -45,7 +45,7 @@ components:
   path: skills/extract-records
   source: path:skills/extract-records
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:a82f352b5df7cb148a172bbb0ae42c385c420ff1a9a872b3c6c2182256ba0eb9
+  digest: sha256:3581acd2a449dc6d3aedd3828b551c42217f6d950dfda37d7283e6d6c528fc35
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:1ff6ae47b07545c4d147d3aa349a451694a6f3ca1a35ab8402db17c28a58fb84

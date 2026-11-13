@@ -137,7 +137,6 @@ def test_destructive_blocked(tool):
     ("mcp__jira__createJiraIssue", {"projectKey": "KAN", "issueType": "Decision", "summary": "Which?"}),
     ("mcp__jira__addOrEditJiraIssueComment", {"issueIdOrKey": "KAN-1", "commentBody": "Started."}),
     ("mcp__atlassian__executeWrite", {"name": "createJiraIssueLink", "inputs": {}}),
-    ("mcp__atlassian__createConfluenceContent", {"title": "Note"}),
     ("Edit", {"file_path": "/workspace/code/app.py"}),
 ])
 def test_ordinary_tracker_work_allowed(tool, args):
@@ -494,3 +493,61 @@ def test_execution_label_edits_are_refused_on_any_tracker_role_update(tool):
 def test_ai_dlc_knowledge_notes_may_mention_labels():
     event = {"tool_name": "mcp__ai-dlc__knowledge_note", "tool_input": {"body": "Sean files it exec:agent later."}}
     assert run(event).returncode == 0
+
+
+# The wiki wall (KAN-438): sessions propose records; only the render job writes the wiki.
+
+WIKI_WRITES = [
+    ("mcp__atlassian__createConfluencePage", {"cloudId": "x.atlassian.net", "spaceId": "SD", "title": "Note"}),
+    ("mcp__atlassian__createConfluenceContent", {"title": "Note"}),
+    ("mcp__atlassian__updateConfluencePage", {"cloudId": "x.atlassian.net", "pageId": "7", "body": "x"}),
+    ("mcp__atlassian__createConfluenceFooterComment", {"pageId": "7", "body": "x"}),
+    ("mcp__atlassian__executeWrite", {"name": "createConfluencePage", "inputs": {"spaceId": "SD"}}),
+    ("mcp__jira__createPage", {"spaceKey": "SD"}),
+]
+
+
+@pytest.mark.parametrize("tool, args", WIKI_WRITES)
+@pytest.mark.parametrize("hook", [HOOK, SUITE_HOOK, WORK_HOOK])
+def test_wiki_writes_are_refused_by_default(hook, tool, args):
+    r = run_hook(hook, {"tool_name": tool, "tool_input": args})
+    assert r.returncode == 2 and "render job" in r.stderr
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__atlassian__getConfluencePage", {"pageId": "7"}),
+    ("mcp__atlassian__searchConfluenceUsingCql", {"cql": "space = SD"}),
+    ("mcp__atlassian__createJiraIssue", {"projectKey": "KAN", "summary": "x"}),
+])
+def test_wiki_reads_and_tracker_writes_pass(tool, args):
+    assert run({"tool_name": tool, "tool_input": args}).returncode == 0
+
+
+def test_a_wiki_only_server_with_other_tool_names_is_walled():
+    for tool in ("mcp__docs__new_document", "mcp__docs__frobnicate"):
+        assert run_bound({"tool_name": tool, "tool_input": {}}, {"wiki": ["docs"]}).returncode == 2
+    assert run_bound({"tool_name": "mcp__docs__get_document", "tool_input": {}}, {"wiki": ["docs"]}).returncode == 0
+
+
+@pytest.fixture
+def allowing_hook(tmp_path):
+    allow = json.dumps([{"site": "kb.example.net", "space": "NOTES"}])
+    hook = tmp_path / "guard_work_system.py"
+    hook.write_text(HOOK.read_text(encoding="utf-8").replace("{{wiki_write_allow}}", allow), encoding="utf-8")
+    return hook
+
+
+@pytest.mark.parametrize("args, code", [
+    ({"cloudId": "kb.example.net", "spaceKey": "NOTES", "title": "x"}, 0),                         # allowed pair
+    ({"cloudId": "https://KB.example.net/wiki", "spaceId": "notes", "title": "x"}, 0),             # same, other form
+    ({"name": "createConfluencePage", "cloudId": "kb.example.net", "inputs": {"spaceKey": "NOTES"}}, 0),
+    ({"cloudId": "kb.example.net", "spaceKey": "OTHER", "title": "x"}, 2),                         # wrong space
+    ({"cloudId": "elsewhere.example.net", "spaceKey": "NOTES", "title": "x"}, 2),                  # wrong site
+    ({"cloudId": "kb.example.net", "pageId": "7", "title": "x"}, 2),                               # no space named
+])
+def test_wiki_write_allowlist(allowing_hook, args, code):
+    tool = "mcp__atlassian__executeWrite" if "name" in args else "mcp__atlassian__createConfluencePage"
+    r = run_hook(allowing_hook, {"tool_name": tool, "tool_input": args})
+    assert r.returncode == code, r.stderr
+    if code:
+        assert "render job" in r.stderr
