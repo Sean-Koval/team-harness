@@ -957,6 +957,18 @@ def test_a_cached_script_verdict_follows_the_call_state(tmp_path):
         assert r.returncode == 2, (command, r.stderr)
 
 
+def test_a_command_over_one_megabyte_is_blocked_unread():
+    """PR 54's re-review: the deadline is checked between commands, so an 8 MB call overshot it by 1.3 s."""
+    import time
+    mod = load_hook()
+    long_call = "echo " + "a" * mod.MAX_COMMAND
+    start = time.monotonic()
+    r = _tool("PowerShell", long_call)
+    assert time.monotonic() - start < 2 and r.returncode == 2 and b"too long to judge" in r.stderr, r.stderr
+    assert "too long to judge" in mod.why({"tool_name": "Bash", "tool_input": {"command": long_call}})
+    assert mod.why({"tool_name": "Bash", "tool_input": {"command": "echo " + "a" * (mod.MAX_COMMAND - 5)}}) is None
+
+
 def _big_script(path: Path) -> Path:
     line = "echo hello world; ls -la /tmp | grep x\n"
     path.write_text(line * (300_000 // len(line)), encoding="utf-8")

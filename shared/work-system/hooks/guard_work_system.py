@@ -472,6 +472,9 @@ def why(event: dict) -> str | None:
     command = event["tool_input"].get("command") if isinstance(event.get("tool_input"), dict) else None
     if not isinstance(command, str):
         return "the shell call carries no command text, so it cannot be checked"
+    if len(command) > MAX_COMMAND:
+        return (f"the command is longer than {MAX_COMMAND >> 20} MB, too long to judge before the hook's timeout: "
+                "put the code in a script file and run that")
     cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
     _CALL.update(deadline=time.monotonic() + DEADLINE, scripts={})
     try:
@@ -491,6 +494,9 @@ def why(event: dict) -> str | None:
 # A hook that runs past its timeout (10 s in settings.json) is killed, and Claude Code then runs the call. So judging
 # stops at this deadline, well inside the timeout, and the call is blocked instead.
 DEADLINE = 5.0
+# The deadline is checked between commands, not inside a pass over the whole text, so a very long call could still
+# overshoot it on a slow machine: a command this long is blocked unread.
+MAX_COMMAND = 1 << 20  # characters
 _CALL: dict = {"deadline": None, "scripts": {}}  # this call's deadline, and each script file's verdict once judged
 
 
