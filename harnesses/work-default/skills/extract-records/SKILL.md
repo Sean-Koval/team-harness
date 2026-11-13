@@ -113,7 +113,8 @@ Start from the type's template. Header:
 - `sources`: `{id: <Source id>, resource: <Source path>, hash: <Source hash>}`, plus any other resource the record
   rests on. Every record extracted from the Source carries this entry.
 - `links`: `derived_from: <Source id>`. It **must** target a Source record, never a ticket, URL or another record
-  type. Add `belongs_to` the project or ticket, `implements` (conventions), `supersedes` (decisions).
+  type. **Every record whose `scope` is not `team` gets `belongs_to: <project>`**, the project it is about, even in
+  `personal` scope. Add `implements` (conventions) and `supersedes` (decisions) where they apply.
 - `title`: the claim in a few words. `description`: one line that adds what the title does not (the why or the
   effect). Never a copy of the title.
 - `label`: carry the Source's `label` (internal or confidential) onto every record. `stale_after`: an action's due

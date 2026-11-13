@@ -40,8 +40,8 @@ components:
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:extract-records
-  digest: sha256:185f065cd413e95ec2ba5a4cbabf1d4944a38bb7a3214bd47cfed9864b2ea151
-  tree: sha256:f8721f7e2624d4ed6761b830ff9ebaa0127c7f02adb3a95221a922bf6be10728
+  digest: sha256:56f22c1658592243cd28cd674de37ecc2bb1f04ed1147fcf777ff2726e49bd7b
+  tree: sha256:1eb79df6c8d3ae48ea0f93888ac5ff9384063a3aa10839936584a368491aae27
   path: skills/extract-records
   source: path:skills/extract-records
 - id: native:claude-code/hooks/guard_work_system.py
