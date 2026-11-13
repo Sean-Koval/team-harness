@@ -49,9 +49,9 @@ cases:
   lesson: LES-0021
   outcome: convention
   status: draft
-  supersedes: CONV-0009
-  tests: 'A lesson that tightens an existing active rule gives a convention that supersedes it. No accepted decision
-    covers the new limit, so the superseding convention is a draft too, and the old one stays active and unchanged
-    until it is: superseding is no way around the accepted-decision rule.'
+  replaces: CONV-0009
+  tests: 'A lesson that tightens an existing active rule gives a convention to replace it. No accepted decision covers
+    the new limit, so the new convention is a draft, with no supersedes link yet (the index would already hide the
+    old rule), and the old one stays active and unchanged: replacing is no way around the accepted-decision rule.'
   writes: [team/conventions/pr-description-under-25-lines.md]
   governing_decision: null

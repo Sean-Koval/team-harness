@@ -93,7 +93,7 @@ def test_skill_keeps_its_rules():
         "decision-ticket", "never file it yourself", "With no ticket, open nothing", "only when it has no `label`",
         "would relax the guard hook", "else `draft`", "**accepted** decision", "only shares the subject does not count",
         "Request review from {{owner}}", "## Follow-up", "only once it is `active`",
-        "status rule holds here too", "only when the new one is `active`", "for a superseding convention too",
+        "status rule holds here too", "carries no `supersedes` link", "for a superseding convention too",
         "`needs-owner-review`", "Owner review: {{owner}} must", "Never mark it ready yourself", "`CODEOWNERS`",
         "only for (a) and only when the lesson has no `label`",
     ):  # fmt: skip
@@ -147,20 +147,26 @@ def test_convention_cites_the_lesson_and_is_no_wider(case):
         assert implements == [] and case["governing_decision"] is None, "a draft links no decision it doesn't have"
     assert all(link["type"] != "derived_from" for link in head["links"])
     superseded = [link["target"] for link in head["links"] if link["type"] == "supersedes"]
-    assert superseded == ([case["supersedes"]] if case.get("supersedes") else [])
+    replaces = case.get("replaces") if case["status"] == "active" else None
+    assert superseded == ([replaces] if replaces else []), "only an active convention supersedes"
     assert re.findall(r"^## (.+)$", body, flags=re.M) == ["Rule", "Why", "Examples"]
     assert case["lesson"] in body.split("## Why", 1)[1], "Why cites the lesson"
     assert head["owner"] == lesson["owner"] and head["author"].startswith("agent:")
 
 
-SUPERSEDING = [c for c in CONVENTIONS if c.get("supersedes")]
+SUPERSEDING = [c for c in CONVENTIONS if c.get("replaces")]
 
 
 @pytest.mark.parametrize("case", SUPERSEDING, ids=[c["id"] for c in SUPERSEDING])
 def test_superseding_convention_follows_the_same_status_rule(case):
-    """Superseding is no way around the accepted-decision rule: a draft leaves the old rule active and unchanged."""
+    """Replacing is no way around the accepted-decision rule. A draft leaves the old rule active and unchanged, and
+    nothing supersedes it yet: the index derives superseded_by from any supersedes link, and sessions skip such a rule."""
     before, after = records(CASES / case["id"] / "before"), records(CASES / case["id"] / "after")
-    old_path = next(p for p, (h, _) in before.items() if case["supersedes"] in names(h))
+    old_path = next(p for p, (h, _) in before.items() if case["replaces"] in names(h))
+    old_names = names(before[old_path][0])
+    pointing = [h["id"] for h, _ in after.values() for link in h["links"]
+                if link["type"] == "supersedes" and link["target"] in old_names]  # fmt: skip
+    assert pointing == ([] if case["status"] == "draft" else [Path(case["writes"][0]).stem])
     assert before[old_path][0]["status"] == "active"
     retired = after[old_path][0]["status"] == "retired"
     assert retired == (case["status"] == "active"), "the old rule retires only when the new one is active"

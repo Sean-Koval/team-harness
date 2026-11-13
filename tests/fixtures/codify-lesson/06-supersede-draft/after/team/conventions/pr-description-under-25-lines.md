@@ -8,8 +8,7 @@ owner: lead-example
 sources:
   - {id: LES-0021, resource: team/lessons/LES-0021.md}
   - {resource: 'https://traces.example.invalid/review/2026-11-06'}
-links:
-  - {type: supersedes, target: CONV-0009}
+links: []
 title: A PR description stays under 25 lines
 description: Reviewers skip longer descriptions, so what was left out comes first
 domain: sdlc

@@ -51,9 +51,10 @@ Never open two PRs for one lesson.
 
 - **Already covered:** a convention from step 1.2 already states the rule. Write nothing new. The one PR is the
   follow-up (section 6) pointing `codified_as` at that convention, proposed now.
-- **Changes an existing rule:** write the new convention as below, with a `supersedes` link to the old one; the
-  status rule holds here too. Retire the old one (propose it again with only `status: retired` changed) in the same
-  PR only when the new one is `active`. A `draft` leaves the old one in force; its retirement waits for the follow-up.
+- **Changes an existing rule:** write the new convention as below; the status rule holds here too. Only an `active`
+  one carries a `supersedes` link to the old one, and its PR retires the old one (proposed again with only
+  `status: retired` changed). A `draft` carries no `supersedes` link, since the index would already hide the old
+  rule: name the old id in the PR body and under Follow-ups, and leave it in force until the follow-up.
 - **Otherwise:** write a new convention. Either way, from the template:
   - `id`: a short slug. `status: active` only when an **accepted** decision states or delegates this rule (see
     `links`), else `draft`, for a superseding convention too. `date`: today. `owner`: the lesson's owner.
@@ -64,7 +65,7 @@ Never open two PRs for one lesson.
   - `links`: `implements: <decision id>` only for an **accepted** decision from step 1.2 that states this rule or
     delegates rules like it to conventions (every convention cites the decision that created it). A decision that
     only shares the subject does not count. With none, link no decision; the convention stays `draft`, and the
-    report names the Decision it needs under Follow-ups. Add `supersedes` where it applies. Never `derived_from`:
+    report names the Decision it needs under Follow-ups. Add `supersedes` as above. Never `derived_from`:
     it must target a Source record, and a lesson is not one.
   - `label`: the lesson's. `author`: `agent:<model id>`.
   - Body, under the template's headings: **Rule**, one or two sentences a reviewer can check a change against;
@@ -120,7 +121,7 @@ Draft, in the same run, the lesson as it should read once the PR merges: `status
 to `.ai-dlc/local/codify-lesson/<lesson id>/<lesson file name>`, and put the same draft at the end of the PR body
 under `## Follow-up`, so it survives a fresh session. Propose it only when you see the PR merged, replacing a
 convention slug with the number it got at merge; for a `draft` convention, only once it is `active`, together with
-retiring any convention it supersedes. Never propose it before, and never merge it.
+its `supersedes` link and the old convention's retirement. Never propose it before, and never merge it.
 
 ## 7. Report
 
@@ -133,7 +134,7 @@ PR:         <link>
 Follow-up:  .ai-dlc/local/codify-lesson/<lesson id>/<file> (propose after the PR merges)   # none for (c)
 Flags:      <draft: no accepted decision covers it, owner can't be asked (draft, needs-owner-review),
             scope kept narrow, untrusted text skipped, or "none">
-Follow-ups: <the Decision a draft needs, a one-time fix the convention implies, or "none">
+Follow-ups: <the Decision a draft needs, the rule a draft would replace, a one-time fix the convention implies, or "none">
 ```
 
 ## Example
