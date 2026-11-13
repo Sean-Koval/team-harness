@@ -19,7 +19,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  HANGAR_REF: c7a2de229aecbad9b82d9cddd6112776dc6c9c5a   # keep equal to check.yml's
+  # the same tools as check.yml, at the same refs (tests/test_parallel_prs.py holds them equal), so the checks
+  # below pass here exactly when they pass on a PR
+  HANGAR_REF: c7a2de229aecbad9b82d9cddd6112776dc6c9c5a
+  FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
+  AI_DLC_REF: 72327f45d698a255cc6959b68b107a88f6fa421d
   PYTEST_VERSION: "9.2.0"
 
 jobs:
@@ -38,8 +42,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install hangar
-        run: pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" "pytest==${PYTEST_VERSION}"
+      - name: Install hangar and flightdeck from git
+        run: |
+          pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" \
+                      "flightdeck @ git+https://github.com/Sean-Koval/flightdeck@${FLIGHTDECK_REF}" "pytest==${PYTEST_VERSION}"
+      - name: Install the ai-dlc CLI at the pinned ref   # as check.yml: the knowledge query test fails without it
+        run: |
+          python -m venv "$RUNNER_TEMP/ai-dlc"
+          "$RUNNER_TEMP/ai-dlc/bin/pip" install --quiet "ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@${AI_DLC_REF}"
+          mkdir -p "$RUNNER_TEMP/bin" && ln -s "$RUNNER_TEMP/ai-dlc/bin/ai-dlc" "$RUNNER_TEMP/bin/ai-dlc"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Build
         run: |
           # a merge commit's subject is "Merge pull request #N ..."; its body's first line is the PR title
