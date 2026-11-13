@@ -17,7 +17,7 @@
 # harnesses/<h>/skills/ that the layer or the org does not produce is deleted by sync_shared.py and fails --check.
 #
 # team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
-skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records]   # every harness below
+skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records, plan-to-tickets]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py
 hook_command: python3 "$HOME/.claude/hooks/guard_work_system.py"
 harnesses:
