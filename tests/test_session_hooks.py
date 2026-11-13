@@ -90,3 +90,12 @@ def test_session_reminders_need_no_escaping(harness, command):
     text = command[len("echo "):]
     assert text.startswith("'") and text.endswith("'"), command
     assert "'" not in text[1:-1] and '"' not in text[1:-1], command
+
+
+def test_every_shell_guard_also_matches_powershell():
+    """Claude Code's shell tool is PowerShell on Windows without Git Bash (KAN-482), so a PreToolUse matcher that
+    names Bash names PowerShell too, or the guard never sees those commands."""
+    for settings in sorted(ROOT.glob("harnesses/*/native/claude-code/settings.json")):
+        for group in json.loads(settings.read_text(encoding="utf-8")).get("hooks", {}).get("PreToolUse", []):
+            tools = (group.get("matcher") or "").split("|")
+            assert "Bash" not in tools or "PowerShell" in tools, (settings, group.get("matcher"))

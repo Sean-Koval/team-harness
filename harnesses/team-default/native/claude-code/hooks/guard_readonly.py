@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """PreToolUse hook: keep production read-only from the agent's shell.
 
-Claude Code passes the tool call as JSON on stdin. For a Bash call, this blocks commands that would change a
+Claude Code passes the tool call as JSON on stdin. For a Bash call (or a PowerShell call, Claude Code's shell tool
+on Windows without Git Bash), this blocks commands that would change a
 cluster or print a credential, by exiting 2 with the reason on stderr (Claude Code shows it to the agent and skips
 the call). Everything else is allowed with exit 0. It reads only the command text, runs nothing and writes nothing.
 
@@ -14,6 +15,8 @@ from __future__ import annotations
 import json
 import re
 import sys
+
+SHELL_TOOLS = {"Bash", "PowerShell"}  # PowerShell: Claude Code's shell tool on Windows without Git Bash
 
 BLOCKED = [
     (r"\bkubectl\b(?:\s+-\S+(?:\s+\S+)?)*\s+(apply|create|replace|patch|edit|delete|scale|autoscale|annotate|label|"
@@ -46,7 +49,7 @@ def _read_event() -> tuple[object, str | None]:
     except UnicodeDecodeError:
         return None, "the tool call is not valid UTF-8, so it cannot be checked"
     except OSError:
-        return None, None
+        return None, "the tool call could not be read, so it cannot be checked"
     try:
         return json.loads(text), None
     except ValueError:
@@ -64,7 +67,7 @@ def main() -> int:
     event, problem = _read_event()
     if problem:
         return _block(f"blocked by the team harness: {problem}. Diagnose read-only and propose the change in a PR.")
-    if not isinstance(event, dict) or event.get("tool_name") != "Bash":
+    if not isinstance(event, dict) or event.get("tool_name") not in SHELL_TOOLS:
         return 0
     for command in _commands(str((event.get("tool_input") or {}).get("command") or "")):
         for pattern, why in BLOCKED:

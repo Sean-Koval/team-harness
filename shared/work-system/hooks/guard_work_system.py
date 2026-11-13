@@ -401,10 +401,14 @@ def why(event: dict) -> str | None:
         args = event.get("tool_input") or {}
         words = ["--title", str(args.get("title") or ""), "--body", str(args.get("body") or "")]
         return _pr_create(words, None)
-    if tool != "Bash":
+    if tool not in SHELL_TOOLS:
         return None
     return _judge(str(args.get("command") or ""), _Ctx(event.get("cwd"), str(args.get("command") or "")), 0)
 
+
+# Claude Code's shell tools: Bash, and on Windows PowerShell (where Git Bash isn't installed). Both carry the command
+# in tool_input.command, and both are judged the same way.
+SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 
 NEVER_MERGE = "agents never merge in this harness: approvers and hangar land PRs (skill github-pr)"
 NEVER_APPROVE = ("agents never approve, auto-merge or dismiss reviews in this harness: approvers land PRs "
@@ -1141,7 +1145,7 @@ def main() -> int:
     except UnicodeDecodeError:
         return _block("the tool call is not valid UTF-8, so it cannot be checked")  # fail closed
     except OSError:
-        return 0
+        return _block("the tool call could not be read, so it cannot be checked")  # fail closed
     try:
         event = json.loads(text)
     except ValueError:

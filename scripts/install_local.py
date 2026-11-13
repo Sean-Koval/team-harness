@@ -54,6 +54,8 @@ Hooks that don't start. Claude Code carries on when a hook command can't start (
 so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the shell
 Claude Code uses (`sh -c`; on Windows Git Bash, or PowerShell where Git Bash isn't installed), with a harmless
 `git status` call on stdin; any exit but 0 fails loudly (exit 1).
+On Windows a PreToolUse guard whose matcher names Bash but not PowerShell fails the same way: without Git Bash,
+Claude Code's shell tool is PowerShell, so that guard would see no shell command.
 
 Uninstall puts back `settings.json`, `settings.local.json`, `.gitignore` and `CLAUDE.md` byte for byte. For a settings file, as the manifest keeps the original bytes, unless you
 changed the file meanwhile in some other way: then your settings are kept and only the formatting may differ.
@@ -897,6 +899,11 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
     for r in entries:
         if r.get("section") != "hooks" or not isinstance(r.get("value"), dict):
             continue
+        tools = str(r["value"].get("matcher") or "").split("|")
+        if WINDOWS and r.get("key") == "PreToolUse" and "Bash" in tools and "PowerShell" not in tools:
+            out.append(f"hook sees no PowerShell call, so its guard is OFF where Git Bash isn't installed: "
+                       f"PreToolUse [{r['value'].get('matcher')}] (Claude Code's shell tool on Windows without Git Bash "
+                       "is PowerShell; add PowerShell to the matcher, or install Git for Windows)")
         for hk in r["value"].get("hooks") or []:
             cmd = hk.get("command") if isinstance(hk, dict) and hk.get("type", "command") == "command" else None
             if not isinstance(cmd, str) or cmd in seen or not _runs_hook_file(cmd):
@@ -1120,7 +1127,7 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
     dead = probe_hooks(base, a.scope, [r for sp in p.sfiles.values() for r in sp.records])
     for d in dead:
         print(f"error: {d}", file=sys.stderr)
-    if dead:
+    if any(d.startswith("hook did not run") for d in dead):
         print("installed, but Claude Code skips a hook that can't start: fix the interpreter or path, then run "
               "--check", file=sys.stderr)
     return 1 if dead else 0

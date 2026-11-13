@@ -43,10 +43,21 @@ def test_hook_must_see_mcp_tools(tmp_path):
     root = copy_repo(tmp_path)
     settings = root / "harnesses/suite-default/native/claude-code/settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
-    data["hooks"]["PreToolUse"][0]["matcher"] = "Bash"
+    data["hooks"]["PreToolUse"][0]["matcher"] = "Bash|PowerShell"
     settings.write_text(json.dumps(data), encoding="utf-8")
     _, problems = sync_shared.plan(root)
-    assert any("must match Bash and mcp__" in p for p in problems)
+    assert any("must match Bash, PowerShell and mcp__" in p for p in problems)
+
+
+def test_hook_must_see_powershell_calls(tmp_path):
+    """On Windows without Git Bash, Claude Code's shell tool is PowerShell (KAN-482)."""
+    root = copy_repo(tmp_path)
+    settings = root / "harnesses/suite-default/native/claude-code/settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["hooks"]["PreToolUse"][0]["matcher"] = "Bash|mcp__.*"
+    settings.write_text(json.dumps(data), encoding="utf-8")
+    _, problems = sync_shared.plan(root)
+    assert any("must match Bash, PowerShell and mcp__" in p for p in problems)
 
 
 def test_unfilled_placeholder_is_a_problem(tmp_path):

@@ -738,3 +738,19 @@ def test_graphql_on_stdin_is_judged(hook, command):
 def test_harmless_graphql_on_stdin_and_defaults_pass():
     assert bash("echo '{\"query\": \"{ viewer { login } }\"}' | gh api graphql --input -") == 0
     assert bash("gh ${X:-pr} view 5") == 0
+
+
+@pytest.mark.parametrize("command", [
+    "git push origin main",
+    "git push --force origin KAN-1-x",
+    "gh pr merge 12 --squash",
+    "git push -u origin KAN-315-work-system-layer",
+    "gh pr list",
+])
+def test_powershell_calls_are_judged_like_bash(command):
+    """On Windows without Git Bash, Claude Code's shell tool is PowerShell (KAN-482): the same command gets the same
+    verdict and the same reason."""
+    as_bash = run({"tool_name": "Bash", "tool_input": {"command": command}})
+    as_ps = run({"tool_name": "PowerShell", "tool_input": {"command": command}})
+    assert (as_ps.returncode, as_ps.stderr) == (as_bash.returncode, as_bash.stderr)
+    assert command.startswith(("git push origin main", "git push --force", "gh pr merge")) == (as_ps.returncode == 2)

@@ -103,3 +103,19 @@ def test_non_ascii_utf8_command_is_still_judged():
 @pytest.mark.parametrize("command", ["ls\nenv", "echo ok\r\nterraform apply", "terraform init\necho -backend=false", "cd /workspace/deploy\ngit commit -am x", "true & kubectl delete pod x", "kubectl \\\ndelete pod x"])
 def test_every_line_and_separator_is_judged(command):
     assert bash(command) == 2
+
+
+@pytest.mark.parametrize("command", [
+    "kubectl delete pod web-1",
+    "helm upgrade api ./chart",
+    "kubectl get pods -n prod",
+])
+def test_powershell_calls_are_judged_like_bash(command):
+    """On Windows without Git Bash, Claude Code's shell tool is PowerShell (KAN-482): the same command gets the same
+    verdict and the same reason."""
+    def call(tool):
+        return subprocess.run([sys.executable, str(HOOK)], capture_output=True,
+                              input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}).encode())
+    as_bash, as_ps = call("Bash"), call("PowerShell")
+    assert (as_ps.returncode, as_ps.stderr) == (as_bash.returncode, as_bash.stderr)
+    assert (as_ps.returncode == 2) == (" get " not in command)

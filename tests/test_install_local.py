@@ -920,26 +920,60 @@ def test_a_git_bash_variable_naming_no_file_fails_the_probe_out_loud(tmp_path, m
         assert "CLAUDE_CODE_GIT_BASH_PATH names no file" in capsys.readouterr().err
 
 
+GUARD_BLOCKS = [  # (harness, guard, a command it blocks, its reason)
+    (WORK, "guard_work.py", "kubectl delete pod web-1", b"kubectl may only read"),
+    (WORK, "guard_work_system.py", "git push origin main", b"blocked by the work-system hook"),
+    (SUITE, "guard_work_system.py", "git push --force origin KAN-1-x", b"blocked by the work-system hook"),
+]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
 @pytest.mark.parametrize("shell", ["git-bash", "powershell"])
-def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypatch, shell):
-    """The probe only proves a hook starts; this proves a block survives the shell: Git Bash passes exit 2 and the
-    reason through. PowerShell's -Command turns a native exit 2 into 1, which Claude Code also treats as a block when
-    Git Bash isn't installed (a PreToolUse exit other than 0 or 2 fails closed), and the reason still reaches stderr."""
+@pytest.mark.parametrize("scope", ["user", "project"])
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("harness, guard, command, reason", GUARD_BLOCKS)
+def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypatch, shell, scope, tool, harness,
+                                                              guard, command, reason):
+    """The probe only proves a hook starts; this proves a block survives the shell, in both scopes, from a path with a
+    space and letters outside the console code page, for a Bash call and a PowerShell call. Git Bash passes exit 2 and
+    the reason through. PowerShell's -Command turns a native exit 2 into 1, which Claude Code also treats as a block
+    when Git Bash isn't installed (a PreToolUse exit other than 0 or 2 fails closed); the reason still reaches stderr."""
     if shell == "git-bash" and il._git_bash() is None:
         pytest.skip("no Git Bash on this machine")
     if shell == "powershell":
         monkeypatch.setattr(il, "_git_bash", lambda: None)
     monkeypatch.setattr(il, "WINDOWS", True)
-    root = tmp_path / "Jörg"
-    shutil.copytree(WORK / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
-    cmd = il._hook_command('python3 "$HOME/.claude/hooks/guard_work.py"', "project", WORK, root / ".claude")
-    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                        "tool_input": {"command": "kubectl delete pod web-1"}}).encode()
+    root = tmp_path / "Jörg Ñúñez"
+    shutil.copytree(harness / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
+    cmd = il._hook_command(f'python3 "$HOME/.claude/hooks/{guard}"', scope, harness, root / ".claude")
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}},
+                       ensure_ascii=False).encode("utf-8")
     r = subprocess.run(il.hook_shell(cmd), input=event, capture_output=True, timeout=60, cwd=root,
                        env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
-    assert b"kubectl may only read" in r.stderr, r.stderr
+    assert reason in r.stderr, (cmd, r.stderr)
     assert r.returncode == 2 if shell == "git-bash" else r.returncode != 0
+
+
+def test_windows_guard_that_cannot_see_powershell_fails_loudly(tmp_path, capsys, monkeypatch):
+    """On Windows without Git Bash, Claude Code's shell tool is PowerShell (KAN-482): a guard whose matcher names Bash
+    but not PowerShell would see no shell command there, so --apply says so instead of reporting a working setup."""
+    monkeypatch.setattr(il, "WINDOWS", True)
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "matcher": "Bash|mcp__.*"}}
+        if r["section"] == "hooks" and r["key"] == "PreToolUse" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 1
+    err = capsys.readouterr().err
+    assert "hook sees no PowerShell call, so its guard is OFF" in err and "install Git for Windows" in err
+
+
+def test_off_windows_a_bash_only_matcher_is_fine(tmp_path, monkeypatch):
+    monkeypatch.setattr(il, "WINDOWS", False)
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "matcher": "Bash|mcp__.*"}}
+        if r["section"] == "hooks" and r["key"] == "PreToolUse" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 0
 
 
 # --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """PreToolUse hook for the work harness: shared systems stay read-only, and the deploy checkout stays untouched.
 
-Claude Code passes the tool call as JSON on stdin. This exits 2 with the reason on stderr (Claude Code shows it to the
+Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash
+from PowerShell; both are judged alike. This exits 2 with the reason on stderr (Claude Code shows it to the
 agent and skips the call) for:
 
 - Terraform that changes real infrastructure or state (`apply`, `destroy`, `import`, state edits, an `init` that
@@ -48,6 +49,7 @@ BASH = [
      "the deploy checkout is read-only"),
 ]
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
+SHELL_TOOLS = {"Bash", "PowerShell"}  # PowerShell: Claude Code's shell tool on Windows without Git Bash
 
 
 def _commands(command: str) -> list[str]:
@@ -65,7 +67,7 @@ def _read_event() -> tuple[object, str | None]:
     except UnicodeDecodeError:
         return None, "the tool call is not valid UTF-8, so it cannot be checked"
     except OSError:
-        return None, None
+        return None, "the tool call could not be read, so it cannot be checked"
     try:
         return json.loads(text), None
     except ValueError:
@@ -87,7 +89,7 @@ def why(event: dict) -> str | None:
         if path == DEPLOY or path.startswith(DEPLOY + "/"):
             return "the deploy checkout is read-only: hangar's deploy step bumps it after the other PRs merge"
         return None
-    if tool == "Bash":
+    if tool in SHELL_TOOLS:
         for command in _commands(str(args.get("command") or "")):
             for pattern, reason in BASH:
                 if re.search(pattern, command):
