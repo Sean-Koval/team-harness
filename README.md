@@ -33,8 +33,9 @@ harnesses/team-default/
     .claude-plugin/marketplace.json  lists exactly the lock's plugins of this marketplace
     ai-dlc-workflow/                 the ai-dlc workflow plugin, pinned as one component
   harness.lock                       pins all of the above, plus the CLI version, model and MCP bindings
-  env.stable.yaml                    hangar environments that provide these files (generated)
-  env.candidate.yaml
+  releases/rN/                       release copies: each promoted lock and its files (scripts/promote.py)
+  env.stable.yaml                    environment team-default: stable's release copy (generated)
+  env.candidate.yaml                 environment team-default-candidate: the current lock (generated)
 channels.yaml                        {stable: sha256:…, candidate: sha256:…} for each harness
 ```
 
@@ -176,12 +177,15 @@ HANGAR_ENV_DIRS='["envs", "/srv/team-harness/harnesses/team-default"]'  # a chec
 hangar harness thaw team-default@stable --env team-default "Pick up ABC-123"
 ```
 
-`team-default@stable` resolves through `channels.yaml` to a digest, and hangar finds that lock in the checkout or in
-its git history. The session is pinned to the lock's CLI version, model and approval mode; the MCP servers must exist
-in the environment (endpoints and credentials live there, not here). hangar mounts the lock's files itself when it
-thaws (hangar#221). `env.stable.yaml` still carries exactly the pinned files for runs that name an environment instead
-of a lock, and `scripts/check_registry.py` proves with hangar's own manifest code that a turn on it reports the lock's
-digest.
+`team-default@stable` resolves through `channels.yaml` to a digest. hangar finds that lock in the checkout or in a
+release copy, `harnesses/<name>/releases/rN/`, never in git history (hangar#465). The session is pinned to the lock's
+CLI version, model and approval mode. The MCP servers must exist in the environment: endpoints and credentials live
+there, not here. hangar mounts the lock's guide, skills and plugins itself when it thaws (hangar#221).
+
+Hooks still come from the environment (KAN-477). `env.stable.yaml` (environment `<name>`) is rendered from stable's
+release copy, so a stable session runs the promoted hook bytes. A hook edit on main reaches it only by a promotion.
+`env.candidate.yaml` (`<name>-candidate`) serves the current lock: thaw `@candidate` there. `scripts/check_registry.py`
+proves with hangar's own manifest code that a turn on each reports its lock's digest, so turn 1 reports no drift.
 
 ## The agent environment: one definition, local and cloud
 
@@ -253,7 +257,7 @@ flowchart LR
    `harnesses/<name>/releases/rN/`, that keeps yesterday's files in the tree. The digest covers hook scripts too
    (`env.HARNESS_NATIVE_DIGEST`), and `check_registry.py` fails if files change without a new digest (KAN-473).
 2. **The candidate becomes an experiment.** `flightdeck/suite.yaml` runs the same tasks on both arms
-   (`environment: team-default` and `team-default-candidate`, which differ only by the plugin), `n` trials each.
+   (`environment: team-default`, stable's release copy, and `team-default-candidate`, the current lock), `n` trials each.
    `flightdeck/decision.yaml` was committed first: promote only if the candidate costs at most $0.40 more per trial,
    with guardrails on resolved tasks, behavior-spec pass rates and exclusions (the file has the numbers).
    The behavior specs in `flightdeck/specs/` judge how each arm worked (tests before commit, a PR delivered, the
@@ -266,9 +270,9 @@ flowchart LR
 This repository's history shows the first round: commit one is `r1` (no plugin, `stable`), commit two adds the
 plugin as `r2` (`candidate`), `r3` refreshes it from ai-dlc main with its Codex form, `r4` moves it into hangar#221's
 marketplace layout, and `r5` (`candidate`) drops the unused Codex form and marks team-default's `jira-ticket` as the
-example's own status rules (KAN-324). The `team-default` environment now renders r5 without the plugin rather than r1
-byte for byte; the arms still differ only by the plugin. `flightdeck/decision.yaml` names r1 and r4, so confirm the
-move before trial 1.
+example's own status rules (KAN-324). Since KAN-477 the `team-default` environment renders r1, stable's release copy,
+byte for byte, hooks included. So the arms differ by more than the plugin: r5's `jira-ticket` rules and r6's hooks too.
+`flightdeck/decision.yaml` names r1 and r4, so confirm the arms before trial 1.
 
 ## The ai-dlc workflow plugin
 
