@@ -38,6 +38,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: main
+          fetch-depth: 0   # as check.yml: a release copy renders with the bindings of the commit that added it
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
