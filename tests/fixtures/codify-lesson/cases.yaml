@@ -1,0 +1,29 @@
+# Example lessons for the codify-lesson skill (KAN-470).
+#
+# Each case is a small knowledge repository. before/ is what the skill sees: the open lesson and any records already
+# there. after/ is the repository once the PR the skill opens merges; followup/ is the repository once the follow-up
+# that marks the lesson codified merges (the convention numbered, as at merge). A harness change (outcome b) changes
+# no record, so its after/ equals before/, and harness-pr.md is the expected pull request: its title, the harness
+# files it changes and its body citing the lesson. A not-codifiable lesson (outcome c) has no follow-up.
+# All names and URLs are invented. `ai-dlc knowledge check` exits 0 on every tree.
+format: codify-lesson-cases/v1
+cases:
+- id: 01-token-economics
+  lesson: LES-0004
+  outcome: convention
+  tests: 'Spec scenario 4: a harness token-economics finding becomes a team Convention that cites the lesson in its
+    sources and implements the decision that governs skills.'
+  writes: [team/conventions/skill-md-under-150-lines.md]
+  governing_decision: DEC-0031
+- id: 02-hook-refusal
+  lesson: LES-0011
+  outcome: harness-change
+  tests: 'A one-time fix to a named shared hook becomes a harness PR citing the lesson, with no records change; the
+    follow-up points codified_as at the merged PR.'
+  writes: []
+- id: 03-customer-boundary
+  lesson: LES-0019
+  outcome: not-codifiable
+  tests: 'A customer-bound lesson whose next step is a team-wide rule is not codifiable here: the reason is written to
+    the lesson, its status stays open, and nothing leaves the project.'
+  writes: [projects/harbor-portal/lessons/LES-0019.md]
