@@ -1,0 +1,53 @@
+# Builds the generated files on main after each merge (KAN-481): the shared layer's copies, each harness's lock and
+# env files, `candidate` and the agent environment's harness pin (scripts/build_generated.py). PRs commit sources
+# only, so they never conflict on these. `stable` and releases/ are left alone: only scripts/promote.py moves them.
+# The commit is pushed to main; where branch protection refuses that, it goes to the bot/generated branch as a PR.
+name: generated
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: generated-main   # one build at a time, in merge order
+  cancel-in-progress: false
+
+env:
+  HANGAR_REF: c7a2de229aecbad9b82d9cddd6112776dc6c9c5a   # keep equal to check.yml's
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install hangar
+        run: pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}"
+      - name: Build
+        run: python scripts/build_generated.py --note "$(git log -1 --format=%s)"
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then echo "generated files are current"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A harnesses channels.yaml environments
+          git commit -q -m "build: regenerate after $(git rev-parse --short HEAD) (KAN-481)"
+          git push origin HEAD:main && exit 0
+          echo "main refused the push; opening a PR from bot/generated instead"
+          git push -f origin HEAD:refs/heads/bot/generated
+          if [ "$(gh pr list --head bot/generated --state open --json number --jq length)" = "0" ]; then
+            gh pr create --head bot/generated --base main \
+              --title "KAN-481: regenerate generated files" \
+              --body "$(printf 'Built by generated.yml from main: scripts/build_generated.py.\n\nJira: KAN-481\nDocs: none needed - generated files only')"
+          fi

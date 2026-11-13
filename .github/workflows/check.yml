@@ -36,11 +36,16 @@ jobs:
           "$RUNNER_TEMP/ai-dlc/bin/pip" install --quiet "ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@${AI_DLC_REF}"
           mkdir -p "$RUNNER_TEMP/bin" && ln -s "$RUNNER_TEMP/ai-dlc/bin/ai-dlc" "$RUNNER_TEMP/bin/ai-dlc"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # PRs commit sources only; the generated files (shared-layer copies, locks, env files, candidate, the agent
+      # environment's pin) are built here on the PR merged with main, and on main after merge by generated.yml
+      # (KAN-481). The checks below run on the built tree, so committed generated files needn't be current.
+      - name: Build generated files
+        run: python scripts/build_generated.py --note "built in CI"
+      - name: Changelog fragments
+        run: python scripts/collect_changes.py
       - name: hangar harness check
         run: |
           for d in harnesses/*/; do hangar harness check "$d"; done
-      - name: Shared work-system layer in sync
-        run: python scripts/sync_shared.py --check
       - name: Guides, environments and channels
         run: python scripts/check_registry.py .
       - name: Behavior specs lint
@@ -69,6 +74,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install test tools
         run: python -m pip install pytest pyyaml
+      - name: Build the shared layer's copies (the rest needs hangar; the Linux job builds it, KAN-481)
+        run: python scripts/sync_shared.py
       - name: Hook tests
         run: >-
           python -m pytest -q -rs tests/test_guard_work_system.py tests/test_guard_work.py

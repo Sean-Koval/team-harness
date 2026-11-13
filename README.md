@@ -256,8 +256,9 @@ flowchart LR
 ```
 
 1. **A change becomes a candidate.** Someone edits the harness: here, turning on the ai-dlc workflow plugin. The PR
-   updates the files, re-pins them (`hangar harness freeze` from a good run, or `scripts/relock.py` for a hand edit)
-   and points `candidate` at the new digest. `stable` doesn't move: it names a release copy,
+   changes the sources only; after it merges, `scripts/build_generated.py` (the `generated` workflow) re-pins the
+   files and points `candidate` at the new digest, so parallel PRs never conflict on locks (KAN-481). A run-frozen
+   lock (`hangar harness freeze`) still lands as its own PR. `stable` doesn't move: it names a release copy,
    `harnesses/<name>/releases/rN/`, that keeps yesterday's files in the tree. The digest covers hook scripts too
    (`env.HARNESS_NATIVE_DIGEST`), and `check_registry.py` fails if files change without a new digest (KAN-473).
 2. **The candidate becomes an experiment.** `flightdeck/suite.yaml` runs the same tasks on both arms
@@ -372,7 +373,9 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `orgs/<org>/` | A company's org overlay: its `org-process` flow skill and `org.yaml` (ticket types, gates, review request); `example-co` is the placeholder |
 | `actions/work-system-pr/` | The PR check other repositories call, pinned by commit |
 | `templates/` | The PR template the PR check reads |
-| `scripts/sync_shared.py` | Copy the shared layer into each harness; `--check` in CI |
+| `scripts/sync_shared.py` | Copy the shared layer into each harness; `--check` reports drift |
+| `scripts/build_generated.py` | Build every generated file (sync, relock, render, `candidate`); CI runs it on each PR, `generated.yml` on main after merge |
+| `changes/`, `scripts/collect_changes.py` | Changelog fragments, one per PR, folded into `CHANGELOG.md` at release |
 | `channels.yaml` | Channel → `harness_digest`, per harness |
 | `bindings/<name>.yaml` | Where each MCP credential comes from (credential names, `${VAR}` references), for the environments |
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |

@@ -20,5 +20,17 @@ This is the example team harness: `harnesses/<name>/` is what agents run with, p
 
 - Edit the work-system skills and hook only in `shared/work-system/`. What differs per harness (owner, Decision type,
   knowledge-base site and space, merge rule, approval steps) is a `{{placeholder}}` filled from
-  `shared/work-system/profiles/<harness>.yaml`. Never write a person, a company or a site into a shared file. Then run `python scripts/sync_shared.py`, `python scripts/relock.py harnesses/<h> --write` and `python scripts/render_envs.py harnesses/<h>` for each harness in `shared/work-system/targets.yaml`. Never edit the copies under `harnesses/`.
+  `shared/work-system/profiles/<harness>.yaml`. Never write a person, a company or a site into a shared file. Never edit the copies under `harnesses/`.
+
+## Parallel PRs (KAN-481)
+
+- A PR commits sources only: `shared/`, `orgs/`, a harness's own files, scripts, tests, docs. It never commits generated
+  files: the shared layer's copies in `harnesses/`, any `harness.lock` or `env.*.yaml`, the `candidate` lines in
+  `channels.yaml`, or `AGENT_ENV_HARNESS_DIGEST` in `environments/agent.yaml`. CI builds them on the PR merged with
+  main; `.github/workflows/generated.yml` commits them on main after each merge. So one PR's merge can't conflict
+  with another's.
+- To test locally, run `python scripts/build_generated.py` (needs hangar), run the tests, then
+  `git restore harnesses channels.yaml environments/agent.yaml` before you commit.
+- The changelog entry is a fragment, `changes/<KEY>.md` (see `changes/README.md`); never edit `CHANGELOG.md`.
+- `stable` and `releases/` still move only by `scripts/promote.py`, in a PR of its own.
 - A new harness revision moves `candidate` in `channels.yaml`; only a promotion moves `stable`.
