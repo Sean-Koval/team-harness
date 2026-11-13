@@ -6,7 +6,8 @@
     python scripts/capture_batch.py process-now <source id> --repo "$KNOWLEDGE_REPO"
 
 Run it from the ai-dlc project that configures the knowledge and transcripts roles (or pass --project): the pulls and
-every session run there. `run` does, in order:
+`propose` run there, and each session gets that project's installed extract-records skill as text, while it works in a
+copy of the knowledge repository. `run` does, in order:
 
 1. `ai-dlc knowledge pull-transcripts --since <window> --into <repo>`;
 2. `work-copilot export --to <repo> --since <window> --owner <owner> --scope <scope>` (skipped when work-copilot is
@@ -84,32 +85,34 @@ MESSAGE = re.compile(r"^\s*(?:\[[^\]\n]{1,40}\]\s*)?[^\s:\[][^:\n]{0,79}:\s+\S")
 PR_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+)")
 # A transcript segment's time, "[HH:MM:SS]" at the start of a line (ai-dlc pull-transcripts).
 SEGMENT_TIME = re.compile(r"^\[(\d{1,2}):([0-5]\d):([0-5]\d)\]", re.MULTILINE)
-RUN_LOG_KINDS = {"transcript": "transcript", "chat": "chat", "notes": "note"}  # the capture run format's kinds
+RUN_LOG_KINDS = {"transcript": "transcript", "chat": "chat", "notes": "note", "other": "other"}  # the format's kinds
 MODEL_NAME = re.compile(r"^[A-Za-z0-9][\w.:-]{0,79}$")
 LOGIN = re.compile(r"^[A-Za-z0-9][\w.@-]{0,99}$")
 SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-# The session reaches the knowledge repository read-only, writes only its scratch copy, and runs only ai-dlc's
-# knowledge records and check commands. Glob and Grep follow the Read rules. Deny rules win over any allow rule the
-# project's settings hold, and user settings are not loaded at all.
-SESSION_TOOLS = "Read,Write,Edit,Glob,Grep,Bash,Skill"
-# The session reads and writes only its scratch copy: the live knowledge repository is not one of its directories.
-# It may read records and run the check; it never proposes (the batch does, with a fixed root), so it cannot push to
-# another repository through `--root` or `--provider`. Secret files in the project it runs in stay unreadable.
-SESSION_BASH = ["Bash(ai-dlc knowledge records get:*)", "Bash(ai-dlc knowledge records search:*)",
-                "Bash(ai-dlc knowledge records captured:*)", "Bash(ai-dlc knowledge records template:*)",
-                "Bash(ai-dlc knowledge check:*)"]  # fmt: skip
-SESSION_DENY = ["Bash(ai-dlc knowledge records propose:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)",
-                "Bash(wget:*)", "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Read(**/.env)",
-                "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/.ssh/**)"]  # fmt: skip
-SESSION_MODE = "dontAsk"  # anything the rules above do not allow is denied; a project's defaultMode cannot widen it
-SCRATCH_SKIP = {".git", "capture", ".claude", "CLAUDE.md", "CLAUDE.local.md"}
+# The session: `--restricted` (no user, project or local settings; file tools confined to its working directory),
+# `--disable-slash-commands` (no skill or command loads, whatever it or the repository writes), no MCP servers, and the
+# batch's own rules through `--settings` with mode dontAsk (anything they do not allow is denied). Its working
+# directory is a throwaway copy of the knowledge repository and nothing else: the live repository, the project and
+# its files are not working directories. It may read and write the copy and run two ai-dlc commands; it never
+# proposes (the batch does, with the project's knowledge role), so it cannot push anywhere.
+SESSION_TOOLS = "Read,Write,Edit,Glob,Grep,Bash"
+SESSION_BASH = ["Bash(ai-dlc knowledge check:*)", "Bash(ai-dlc knowledge records template:*)"]
+SESSION_DENY = ["Bash(ai-dlc knowledge records:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(curl:*)", "Bash(wget:*)",
+                "Bash(ssh:*)", "Bash(scp:*)", "WebFetch", "WebSearch", "Skill"]  # fmt: skip
+SESSION_MODE = "dontAsk"
+SKILL = ".claude/skills/extract-records/SKILL.md"  # in the project; the batch hands its text to the session
+# Left out of the copy at any depth, compared without case: .Claude/ and claude.md are .claude/ and CLAUDE.md on the
+# case-insensitive disks of a Mac or Windows machine.
+SCRATCH_SKIP = {".git", "capture", ".claude", "claude.md", "claude.local.md", ".mcp.json"}
 NOT_PROPOSED = ("inbox/", "processed/", "capture/", ".capture/")  # never part of a records PR
 PR_BODY = ".capture/pr-body.md"
 PROMPT = (
-    "Use the extract-records skill on one Source, with one change to its step 7.\n"
-    "Your copy of the knowledge repository is {scratch}; read everything there, and write only there.\n"
-    "Source record: {path}\nSource id: {id}\n"
-    "Write the records and the processed Source into {scratch} at their repository paths (step 7.1, the copy is "
+    "Follow the extract-records instructions in your system prompt for one Source, with these changes.\n"
+    "Your working directory {scratch} is a copy of the knowledge repository: read everything there and write only "
+    "there.\nSource record: {path}\nSource id: {id}\n"
+    "`ai-dlc knowledge records get`, `search` and `captured` are not available: use Grep and Read on the copy "
+    "instead (the Source's hash is in its `sources` entry; Grep the copy for it to see whether it was captured).\n"
+    "Write the records and the processed Source into the copy at their repository paths (step 7.1, the copy is "
     "made), run `ai-dlc knowledge check {scratch}` until it exits 0, and write the PR body to {body}. "
     "Do not propose: when you finish, the batch proposes the records you wrote as one draft PR. "
     "If nothing should be proposed, write no record and say why.\n"
@@ -302,16 +305,21 @@ def rule_path(path: Path) -> str:
     return "//" + text.lstrip("/")
 
 
-def session_command(exe: str, scratch: Path, config: dict) -> list[str]:
-    """Headless Claude Code: no MCP servers, no user settings, a fixed mode, tool list and permission rules."""
-    allow = [f"Read({rule_path(scratch)}/**)", f"Write({rule_path(scratch)}/**)", f"Edit({rule_path(scratch)}/**)",
-             "Skill", *SESSION_BASH]  # fmt: skip
-    command = [exe, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-               "--setting-sources", "project", "--permission-mode", SESSION_MODE, "--tools", SESSION_TOOLS,
-               "--add-dir", str(scratch), "--allowedTools", *allow, "--disallowedTools", *SESSION_DENY]  # fmt: skip
+def session_settings(scratch: Path) -> dict:
+    """The session's only permission rules, given with --settings (the one settings source --restricted keeps)."""
+    where = rule_path(scratch)
+    return {"permissions": {"defaultMode": SESSION_MODE, "deny": SESSION_DENY,
+                            "allow": [f"Read({where}/**)", f"Write({where}/**)", f"Edit({where}/**)", *SESSION_BASH]}}
+
+
+def session_command(exe: str, settings: Path, system: Path, config: dict) -> list[str]:
+    """Headless Claude Code, every flag fixed here; the working directory (the copy) is set by the caller."""
+    command = [exe, "-p", "--output-format", "json", "--no-session-persistence", "--restricted",
+               "--strict-mcp-config", "--disable-slash-commands", "--permission-mode", SESSION_MODE,
+               "--settings", str(settings), "--append-system-prompt-file", str(system), "--tools", SESSION_TOOLS]
     if config["model"]:
         command += ["--model", config["model"]]
-    return command
+    return command  # fmt: skip
 
 
 def scratch_copy(repo: Path) -> Path:
@@ -320,7 +328,7 @@ def scratch_copy(repo: Path) -> Path:
 
     def skip(folder: str, names: list[str]) -> set[str]:
         """Leave out what could configure a session (.claude/, CLAUDE.md) and every symlink, at any depth."""
-        return {n for n in names if n in SCRATCH_SKIP or os.path.islink(os.path.join(folder, n))}
+        return {n for n in names if n.lower() in SCRATCH_SKIP or os.path.islink(os.path.join(folder, n))}
 
     shutil.copytree(repo, scratch / "repo", ignore=skip)
     return scratch / "repo"
@@ -331,7 +339,7 @@ def written(repo: Path, scratch: Path) -> list[str]:
     found = []
     for path in sorted(scratch.rglob("*.md")):
         relative = path.relative_to(scratch).as_posix()
-        if path.is_symlink() or relative.startswith(NOT_PROPOSED) or any(p in SCRATCH_SKIP for p in path.parts):
+        if path.is_symlink() or relative.startswith(NOT_PROPOSED) or any(p.lower() in SCRATCH_SKIP for p in path.parts):
             continue
         before = repo / relative
         if not before.is_file() or before.read_bytes() != path.read_bytes():
@@ -359,16 +367,23 @@ def propose(source: dict, scratch: Path, files: list[str], config: dict) -> str:
 
 
 def claude_runner(source: dict, repo: Path, config: dict) -> dict:
-    """One headless Claude Code session for one Source, on the user's own login, in the ai-dlc project."""
+    """One headless Claude Code session for one Source, on the user's own login, in a copy of the repository."""
     exe = shutil.which("claude")
     if not exe:
         raise RuntimeError("the claude CLI is not on PATH")
+    skill = Path(config["project"]) / SKILL
+    if not skill.is_file():
+        raise RuntimeError(f"{skill} is missing")
     scratch = scratch_copy(repo)
     try:
+        # Both files sit beside the copy, outside the session's working directory, where it cannot change them.
+        settings, system = scratch.parent / "settings.json", scratch.parent / "extract-records.md"
+        settings.write_text(json.dumps(session_settings(scratch), indent=2), encoding="utf-8")
+        system.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
         prompt = PROMPT.format(path=scratch / source["path"], id=source["id"], scratch=scratch,
                                body=scratch / PR_BODY)  # fmt: skip
-        run = subprocess.run(session_command(exe, scratch, config), input=prompt, capture_output=True,
-                             text=True, encoding="utf-8", errors="replace", cwd=config["project"],
+        run = subprocess.run(session_command(exe, settings, system, config), input=prompt, capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", cwd=scratch,
                              timeout=config["timeout_seconds"], check=False)  # fmt: skip
         try:
             reply = json.loads(run.stdout)
@@ -388,7 +403,11 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
 
 
 def origin(repo: Path) -> str | None:
-    """owner/name of the knowledge repository's GitHub origin, lower case; None when it has none."""
+    """owner/name of the knowledge repository's GitHub origin, lower case; None when it has none.
+
+    With no GitHub origin there is nothing to compare a PR link with, and the link is taken as it is: the PR came from
+    `propose`, run by the batch through the project's own knowledge role, which the session cannot change.
+    """
     try:
         run = subprocess.run(["git", "-C", str(repo), "remote", "get-url", "origin"], capture_output=True,
                              text=True, timeout=30, check=False)  # fmt: skip
@@ -472,16 +491,22 @@ def duration_seconds(repo: Path, source: dict) -> float | None:
     return float(span if span >= 0 else span + 86_400)  # a meeting that ran past midnight
 
 
-def run_entry(repo: Path, source: dict, what: str, outcome: str, record: dict | None = None) -> dict | None:
-    """One Source in ai-dlc's capture run format (`CaptureEntry`); None for a kind that format has no name for."""
-    if what not in RUN_LOG_KINDS:
-        return None
-    entry: dict[str, Any] = {"id": source["id"], "kind": RUN_LOG_KINDS[what], "outcome": outcome}
-    if record and outcome == "extracted":
-        entry["input_tokens"] = record.get("input_tokens", 0)
-        entry["output_tokens"] = record.get("output_tokens", 0)
-        entry["cost_usd"] = round(record["cost_usd"], 6) if record.get("cost_usd") is not None else 0
-        number = PR_LINK.fullmatch(record["pr"] or "")
+def run_entry(repo: Path, source: dict, what: str, outcome: str, record: dict | None = None) -> dict:
+    """One Source in ai-dlc's capture run format (`CaptureEntry`).
+
+    A failed session reports no usage, so its tokens and cost are null (unknown), not 0; a Source whose session
+    finished but failed after (its PR outside the knowledge repository) keeps what it spent.
+    """
+    entry: dict[str, Any] = {"id": source["id"], "kind": RUN_LOG_KINDS.get(what, "other"), "outcome": outcome}
+    if record and outcome in ("extracted", "failed"):
+        known = "input_tokens" in record
+        entry["input_tokens"] = record["input_tokens"] if known else None
+        entry["output_tokens"] = record["output_tokens"] if known else None
+        if not known:
+            entry["cost_usd"] = None
+        else:
+            entry["cost_usd"] = round(record["cost_usd"], 6) if record.get("cost_usd") is not None else 0
+        number = PR_LINK.fullmatch(record.get("pr") or "")
         entry["pull_request"] = int(number.group(1)) if number else None
     if what == "transcript":
         entry["duration_seconds"] = duration_seconds(repo, source)
@@ -674,8 +699,6 @@ def process_now(repo: Path, source_id: str, *, force: bool = False, runner: Runn
            "extracted": [], "no_pr": [], "failed": [], "model_calls": 1, "tokens": record.get("tokens", 0),
            "cost_usd": record.get("cost_usd")}  # fmt: skip
     log[where].append(record)
-    if entry is None:
-        log["not_in_run_log"] = "the capture run format has no kind for this Source's provider"
     write_json(repo / STATE, state)
     append_log(repo, capture_run(log["run_id"], started, [entry], ceiling_reached=False))
     return log
@@ -737,11 +760,10 @@ def preflight(project: Path) -> None:
     missing = [name for name in ("claude", "ai-dlc") if not shutil.which(name)]
     if missing:
         raise Refused(f"{' and '.join(missing)} not on PATH")
-    skill = project.resolve() / ".claude/skills/extract-records/SKILL.md"
+    skill = project.resolve() / SKILL
     if not skill.is_file():
-        raise Refused(f"extract-records is not installed at project scope ({skill} is missing). The sessions load "
-                      "project settings only, so a user-scope install is not seen; install the harness into the "
-                      "project, or pass --project")  # fmt: skip
+        raise Refused(f"extract-records is not installed in the project ({skill} is missing); the batch hands that "
+                      "file to each session. Install the harness into the project, or pass --project")  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
