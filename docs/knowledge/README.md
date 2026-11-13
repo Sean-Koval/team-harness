@@ -37,6 +37,5 @@ Some steps rely on work that is still open. Each such step says so where it appe
 | team-harness #32 (KAN-431) | Adds the `knowledge-context`, `query-knowledge` and `whats-next` skills. Until then, use the `ai-dlc knowledge records` commands directly |
 | ai-dlc #266 (KAN-466) | Adds `ai-dlc knowledge why`, and makes each record's evidence carry its quote, speaker and time |
 | ai-dlc #172 | Supports installing ai-dlc natively on Windows. Until then, ai-dlc on Windows is unsupported, and every Windows step that runs `ai-dlc` may fail |
-| KAN-457, KAN-458 | Meeting transcripts arrive in the inbox by themselves, and a nightly batch opens the records PRs |
 | KAN-450 | Written sign-off on what may be stored, and on how a meeting opts out |
 | KAN-475 | Creates a separate knowledge repository for a customer |
