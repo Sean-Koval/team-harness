@@ -47,6 +47,10 @@ Hook commands are written for Windows: `py -3` instead of `python3`; in user sco
 quotes with forward slashes, built from the profile directory (`--home`) instead of `$HOME`; in project scope a
 `py -3 -c` line that finds the hook through `CLAUDE_PROJECT_DIR`, so no machine path lands in a committed file.
 
+Hooks that don't start. Claude Code carries on when a hook command can't start (no `py` or `python3`, a wrong path),
+so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the
+system shell (cmd on Windows), with a harmless `git status` call on stdin; any exit but 0 fails loudly (exit 1).
+
 Uninstall puts back a `settings.json` it changed byte for byte, as the manifest keeps the original bytes, unless you
 changed the file meanwhile in some other way: then your settings are kept and only the formatting may differ.
 
@@ -727,15 +731,61 @@ def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base
         elif sha(f.read_bytes()) != dg:
             drift.append(f"edited: {rel}")
     s = _read_settings(base) or {}
+    present = []
     for r in (m.get("settings") or {}).get("entries") or []:
         if not _has(s, _unrecord(r)):
             drift.append(f"settings.json no longer has {_describe(_unrecord(r))}")
+        else:
+            present.append(r)
+    drift += probe_hooks(base, m.get("scope") or "user", present)
     if lock_digest and lock_digest != m["harness_digest"]:
         newer = lock_rev is not None and lock_rev > int(m["revision"])
         where = f"on the {channel} channel" if channel and channel != "checkout" else "in the checkout"
         drift.append(f"{'newer harness revision' if newer else 'the harness changed'}: r{lock_rev} {lock_digest} "
                      f"{where}, r{m['revision']} {m['harness_digest']} installed; run --apply to upgrade")
     return drift
+
+
+# a call every guard lets through: a hook that doesn't exit 0 on it either didn't start or is broken
+PROBE = {"session_id": "team-harness-probe", "tool_name": "Bash", "tool_input": {"command": "git status"}}
+
+
+def _runs_hook_file(cmd: str) -> bool:
+    """A guard: a command that runs a script from .claude/hooks (an echo reminder is not a guard)."""
+    return ".claude/hooks/" in cmd or "'.claude','hooks'" in cmd
+
+
+def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[str]:
+    """Run each hook command these settings entries add once, as Claude Code would, and say which didn't run."""
+    root = base.parent  # the project, or the home whose .claude this is
+    env = dict(os.environ)
+    if scope == "project":
+        env["CLAUDE_PROJECT_DIR"] = str(root)
+    elif not WINDOWS:
+        env["HOME"] = str(root)  # the --home the commands were installed for
+    out, seen = [], set()
+    for r in entries:
+        if r.get("section") != "hooks" or not isinstance(r.get("value"), dict):
+            continue
+        for hk in r["value"].get("hooks") or []:
+            cmd = hk.get("command") if isinstance(hk, dict) and hk.get("type", "command") == "command" else None
+            if not isinstance(cmd, str) or cmd in seen or not _runs_hook_file(cmd):
+                continue
+            seen.add(cmd)
+            event = json.dumps({**PROBE, "hook_event_name": r["key"], "cwd": str(root)}).encode()
+            try:
+                res = subprocess.run(cmd, shell=True, input=event, capture_output=True, env=env,  # noqa: S602
+                                     cwd=root if root.is_dir() else None, timeout=30, check=False)
+                rc, said = res.returncode, (res.stderr or res.stdout).decode("utf-8", "replace").strip()
+            except subprocess.TimeoutExpired:
+                rc, said = None, "timed out after 30s"
+            except OSError as e:
+                rc, said = None, str(e)
+            if rc != 0:
+                first = said.splitlines()[0] if said else "no output"
+                out.append(f"hook did not run, so its guard is OFF: {r['key']} {cmd!r} "
+                           f"({'exit ' + str(rc) if rc is not None else 'error'}: {first[:200]})")
+    return out
 
 
 def uninstall(base: Path) -> tuple[list[str], list[str]]:
@@ -922,7 +972,13 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         return 0
     apply_install(h, p, a.scope, src.channel)
     print(f"installed {h.name}@{src.channel} r{h.revision} into {base}" if changes else "up to date")
-    return 0
+    dead = probe_hooks(base, a.scope, p.records)
+    for d in dead:
+        print(f"error: {d}", file=sys.stderr)
+    if dead:
+        print("installed, but Claude Code skips a hook that can't start: fix the interpreter or path, then run "
+              "--check", file=sys.stderr)
+    return 1 if dead else 0
 
 
 if __name__ == "__main__":

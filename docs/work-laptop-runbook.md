@@ -90,6 +90,7 @@ python3 scripts/install_local.py harnesses/work-default --scope project --target
 
 On Windows, run the same lines with `py -3` in place of `python3`, and `$HOME\src\<work-repo>` as the target. The
 installed hooks run with `py -3` as well, and `--uninstall` leaves `settings.json` byte for byte as it was, unless you changed it since.
+Claude Code skips a hook that can't start, so `--apply` and `--check` run each guard once and fail when one doesn't.
 
 Use project scope, one repo at a time, until KAN-367 lands; user scope puts the guards on every session. Run the two
 `claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira

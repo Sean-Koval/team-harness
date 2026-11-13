@@ -20,6 +20,18 @@ WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
 
 
+@pytest.fixture(autouse=True)
+def fake_py(tmp_path_factory, monkeypatch):
+    """`py` (the Windows launcher) on PATH off Windows, so the Windows hook commands run here too."""
+    if os.name == "nt":
+        return
+    bin_dir = tmp_path_factory.mktemp("bin")
+    launcher = bin_dir / "py"
+    launcher.write_text(f'#!/bin/sh\n[ "$1" = "-3" ] && shift\nexec "{sys.executable}" "$@"\n')
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
 def run(*args) -> int:
     return il.main([str(a) for a in args])
 
@@ -771,3 +783,51 @@ def test_crlf_claude_md_comes_back_byte_identical(tmp_path):
     assert user(WORK, tmp_path, "--check") == 0
     assert user(WORK, tmp_path, "--uninstall") == 0
     assert guide.read_bytes() == b"# mine\r\n- one rule\r\n"
+
+
+def test_check_runs_each_hook_once(tmp_path, monkeypatch, windows):
+    """A clean --check has run every installed hook command, with this OS's commands, and each exited 0."""
+    calls = []
+    real = il.probe_hooks
+
+    def spy(base, scope, entries):
+        out = real(base, scope, entries)
+        calls.append((scope, sorted({hk["command"] for r in entries if r["section"] == "hooks"
+                                     for hk in r["value"]["hooks"]}), out))
+        return out
+
+    monkeypatch.setattr(il, "probe_hooks", spy)
+    assert project(WORK, tmp_path / "svc", "--apply") == 0
+    assert project(WORK, tmp_path / "svc", "--check") == 0
+    assert len(calls) == 2 and all(out == [] for _, _, out in calls)
+    cmds = calls[1][1]
+    assert hook_command("guard_work.py", "project", tmp_path / "svc/.claude", windows) in cmds
+    assert all(("py -3" in c) == windows for c in cmds if not c.startswith("echo "))
+
+
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_hook_that_does_not_start_fails_check_loudly(tmp_path, capsys, monkeypatch, scope):
+    """No Python on PATH (no `py` launcher on Windows): Claude Code would skip the hook; --check says the guard is off."""
+    where = tmp_path / ("home" if scope == "user" else "svc")
+    install = user if scope == "user" else project
+    assert install(WORK, where, "--apply") == 0
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    capsys.readouterr()
+    assert install(WORK, where, "--check") == 1
+    out = capsys.readouterr().out
+    assert "hook did not run, so its guard is OFF: PreToolUse" in out
+    assert "guard_work.py" in out and "guard_work_system.py" in out
+    assert "drift: work-default" in out
+
+
+def test_apply_fails_loudly_when_a_hook_does_not_start(tmp_path, capsys, monkeypatch):
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "hooks": [{"type": "command", "command": "no-such-interpreter-kan460 .claude/hooks/x.py"}]}}
+        if r["section"] == "hooks" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 1
+    err = capsys.readouterr().err
+    assert "error: hook did not run, so its guard is OFF" in err and "no-such-interpreter-kan460" in err
+    assert "Claude Code skips a hook that can't start" in err
