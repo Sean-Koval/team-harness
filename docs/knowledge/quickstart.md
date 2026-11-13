@@ -44,8 +44,8 @@ py -3 "$th\scripts\install_local.py" "$th\harnesses\work-default" --scope projec
 `--check` prints `clean`. Use `--channel candidate` because `stable` (r3) does not have `extract-records` yet. Drop
 the flag once a promotion moves `stable` past r6.
 
-**Windows:** the hook commands written to `settings.json` call `python3` with a POSIX path. The Windows form is open
-work (KAN-460). If the hook cannot start, Claude Code runs without the guard, so do step 2's guard test.
+**Windows:** the hooks run natively on Windows (#16). Still open (KAN-460, installer half): the installer writing `py -3`
+into `settings.json` and checking that the hook starts. If it cannot start, the guard is off, so do step 2's test.
 
 ## 2. Point your shell at the knowledge repository
 
