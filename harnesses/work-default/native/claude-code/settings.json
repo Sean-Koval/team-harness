@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Work harness: read the ticket (jira-ticket; no ticket: work-start), read the company's flow (org-process), plan across /workspace/<role> (change-set), questions become Decision tickets (decision-ticket), docs in the same PR (work-docs), describe each PR with its Jira and Docs lines (github-pr), then the approval gates the org declares and a drafted review request (release-approvals). Never merge. /workspace/deploy is read-only. Agents never move tickets.'",
+            "command": "echo 'Work harness: read the ticket (jira-ticket; no ticket: work-start), read the company process (org-process), plan across /workspace/<role> (change-set), questions become Decision tickets (decision-ticket), docs in the same PR (work-docs), describe each PR with its Jira and Docs lines (github-pr), then the approval gates the org declares and a drafted review request (release-approvals). Never merge. /workspace/deploy is read-only. Agents never move tickets.'",
             "timeout": 5
           }
         ]
