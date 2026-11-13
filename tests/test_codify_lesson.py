@@ -101,7 +101,7 @@ def test_skill_keeps_its_rules():
     ):  # fmt: skip
         assert rule in text, rule
     assert re.search(r"Never\s+`derived_from`", text)
-    assert len(text.splitlines()) < 150, "the skill keeps its own convention (fixture 01)"
+    assert len(SKILL.read_text().splitlines()) < 150, "the skill keeps its own convention (fixture 01)"
 
 
 @pytest.mark.parametrize("case", MANIFEST, ids=[c["id"] for c in MANIFEST])
@@ -201,12 +201,30 @@ def test_harness_change_cites_the_lesson_and_touches_only_shared_files(pr):
 
 
 def codeowners_pattern(pattern: str) -> re.Pattern:
-    """A CODEOWNERS pattern as GitHub reads it (gitignore rules, enough for these fixtures)."""
-    anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
-    body = re.escape(pattern.strip("/")).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+    """A CODEOWNERS pattern as GitHub documents it: gitignore rules, except that `dir/*` takes only direct children.
+
+    A leading `/` or a `/` inside anchors it at the root; `**/` is any number of directories, none included; `*` and
+    `?` never cross a `/`; a match on a directory covers everything under it.
+    """
     if pattern == "*":
         return re.compile(".*")
-    return re.compile(("^" if anchored else "^(?:.*/)?") + body + "(?:/.*)?$")
+    anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
+    core, out, i = pattern.strip("/"), "", 0
+    while i < len(core):
+        if core.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif core.startswith("/**", i) and i + 3 == len(core):
+            out, i = out + "/.*", i + 3
+        elif core.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif core[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        elif core[i] == "?":
+            out, i = out + "[^/]", i + 1
+        else:
+            out, i = out + re.escape(core[i]), i + 1
+    children_only = pattern.endswith("/*")  # GitHub: `docs/*` owns docs/a.md, not docs/sub/b.md
+    return re.compile(("^" if anchored else "^(?:.*/)?") + out + ("" if children_only else "(?:/.*)?") + "$")
 
 
 def code_owner(codeowners: str | None, changed: list[str], author: str) -> str | None:
