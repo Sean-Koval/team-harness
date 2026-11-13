@@ -23,6 +23,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -286,18 +287,27 @@ def broken_links(produced: dict[str, dict], known: dict[str, dict]) -> list[str]
     return out
 
 
+def _ai_dlc() -> str | None:
+    """The `ai-dlc` executable: on PATH, or beside the running interpreter (a virtualenv not on PATH)."""
+    beside = Path(sys.executable).with_name("ai-dlc")
+    return shutil.which("ai-dlc") or (str(beside) if beside.is_file() else None)
+
+
 def knowledge_check(tree: Path) -> list[str] | None:
-    """ai-dlc's knowledge check on a records tree: failure lines, or None when ai-dlc is not available."""
-    try:
-        from ai_dlc.documentation import knowledge_check as kc  # type: ignore[import-not-found]
-    except ImportError:
-        exe = shutil.which("ai-dlc")
-        if not exe:
-            return None
-        run = subprocess.run([exe, "knowledge", "check", str(tree)], capture_output=True, text=True, check=False)
-        lines = [ln for ln in run.stdout.splitlines() if ln and not ln.startswith("knowledge check:")]
-        return lines if run.returncode else []
-    return list(kc.failure_lines(kc.check_records(tree)))
+    """`ai-dlc knowledge check` on a records tree: failure lines, or None when ai-dlc is not installed.
+
+    It calls the CLI, the knowledge role's contract, never an ai-dlc module path. It runs inside the tree on `.`, so
+    each failure line starts with the record's path relative to the tree. Exit 0 is clean and 1 lists failures;
+    anything else means the check did not run, and that is an error, not a pass.
+    """
+    exe = _ai_dlc()
+    if not exe:
+        return None
+    run = subprocess.run([exe, "knowledge", "check", "."], cwd=tree, capture_output=True, text=True, check=False)
+    if run.returncode not in (0, 1):
+        raise RuntimeError(f"ai-dlc knowledge check exited {run.returncode}: {(run.stderr or run.stdout).strip()}")
+    lines = [ln.removeprefix("./") for ln in run.stdout.splitlines() if ln and not ln.startswith("knowledge check:")]
+    return lines if run.returncode else []
 
 
 def limits_broken(produced: dict[str, dict], limits: dict[str, Any]) -> list[str]:

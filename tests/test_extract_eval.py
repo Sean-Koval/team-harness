@@ -524,3 +524,38 @@ description: Moves releases off Tuesday
     ]
     assert grade.classify_pr_edit(proposed, "") == [{"field": "drop", "severity": "substantive"}]
     assert grade.severity("some-new-field") == "substantive"
+
+
+def _fake_ai_dlc(tmp_path: Path, monkeypatch, code: int, out: str) -> Path:
+    """An `ai-dlc` on PATH that records its arguments and working directory, then prints `out`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "ai-dlc"
+    exe.write_text(
+        f'#!/bin/sh\necho "$PWD $*" > "{tmp_path}/called"\nprintf "%s" "{out}"\n'
+        f'echo "knowledge check: 1 records" >&2\nexit {code}\n'
+    )
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    return tmp_path / "called"
+
+
+def test_knowledge_check_calls_the_cli_inside_the_tree(tmp_path, monkeypatch):
+    """The grader runs `ai-dlc knowledge check .` in the tree, so failure lines carry record-relative paths."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    called = _fake_ai_dlc(tmp_path, monkeypatch, 1, "./team/x.md: /type: bad")
+    assert grade.knowledge_check(tree) == ["team/x.md: /type: bad"]
+    assert called.read_text().split() == [str(tree.resolve()), "knowledge", "check", "."]
+
+
+def test_knowledge_check_that_cannot_run_is_an_error_not_a_pass(tmp_path, monkeypatch):
+    _fake_ai_dlc(tmp_path, monkeypatch, 2, "")
+    with pytest.raises(RuntimeError, match="exited 2"):
+        grade.knowledge_check(tmp_path)
+
+
+def test_knowledge_check_is_skipped_without_ai_dlc(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(grade.sys, "executable", str(tmp_path / "python"))
+    assert grade.knowledge_check(tmp_path) is None
