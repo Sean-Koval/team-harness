@@ -831,6 +831,11 @@ def test_a_closed_stdin_fails_closed():
     '$sb={gh pr merge 12}; Invoke-Command $sb',
     '1 | % { gh pr merge 12 }',
     'Start-Job { gh pr merge 12 }',
+    "$s = @'\nit's\n'@\nicm { gh pr merge 5 }",
+    'Write-Output "x`"y"; icm { gh pr merge 5 }',
+    'icm -ScriptBlock {[CmdletBinding()]param($n) gh pr merge 5}',
+    "iex(\n'gh pr merge 5')",
+    "Invoke-Expression @('gh pr merge 5')",
 ])
 def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
     """KAN-491, the PR 40 post-merge review: iex('...'), -Command, an Invoke-Command or icm script block, and a
@@ -852,7 +857,7 @@ def test_a_long_powershell_call_is_judged_in_linear_time():
     """The unwrapping is one pass: thousands of `icm` or `iex(` words cannot hold the hook past its timeout, which
     would let the call through."""
     import time
-    for filler in ("icm ", "iex('", "{param($n) } ", "{param(("):
+    for filler in ("icm ", "iex('", "{param($n) } ", "{param((", "| iex "):
         start = time.monotonic()
         r = _tool("PowerShell", "Write-Output " + filler * 30000 + "; iex('gh pr merge 1')")
         assert time.monotonic() - start < 10, filler

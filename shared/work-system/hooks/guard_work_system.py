@@ -452,13 +452,20 @@ def _script_blocks(text: str) -> str:
     """Every script block's body as commands of its own: `{` and `}` outside quotes become `;`, and a leading
     `param(...)` is dropped. Invoke-Command {...}, icm -ScriptBlock {...}, `% {...}`, Start-Job {...}, an `if` body and
     `$sb={...}` then each have their commands judged, however deeply they nest and whether or not the block runs.
-    `${name}` is a variable, not a block, and stays. One pass, so a long call costs linear time."""
+    `${name}` is a variable, not a block, and stays. A quote still open at the end (a here-string, an escaped quote)
+    means the quotes were misread, so the pass is made again with every brace converted and the quotes dropped, which
+    leaves each command's words to be judged. Linear time."""
+    out = _blocks(text, track_quotes=True)
+    return out if out is not None else _blocks(text.replace("'", " ").replace('"', " "), track_quotes=False)
+
+
+def _blocks(text: str, track_quotes: bool) -> str | None:
     out, i, n, quote = [], 0, len(text), ""
     while i < n:
         c = text[i]
         if quote:
             quote = "" if c == quote else quote
-        elif c in "'\"":
+        elif track_quotes and c in "'\"":
             quote = c
         elif c == "{" and i and text[i - 1] == "$":
             end = text.find("}", i)
@@ -474,12 +481,12 @@ def _script_blocks(text: str) -> str:
             continue
         out.append(c)
         i += 1
-    return "".join(out)
+    return None if quote else "".join(out)
 
 
-PS_IEX_CALL = re.compile(r"(?i)\b(iex|invoke-expression)\s*\(")
+PS_IEX_CALL = re.compile(r"(?i)\b(iex|invoke-expression)\s*@?\(\s*")
 PS_IEX_COMMAND = re.compile(r"(?i)\b(iex|invoke-expression)\s+-c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?(?::|(?=[\s('\"]))")
-PS_PARAM = re.compile(r"(?i)\s*param\s*\((?:[^()]|\([^()]*\))*\)")
+PS_PARAM = re.compile(r"(?i)\s*(?:\[\w+(?:\([^()]*\))?\]\s*)*param\s*\((?:[^()]|\([^()]*\))*\)")
 
 
 # Claude Code's shell tools: Bash, and on Windows PowerShell (where Git Bash isn't installed). Both carry the command
@@ -644,6 +651,7 @@ class _Ctx:
         self.vars: dict[str, str] = {}
         self.ps_vars: dict[str, str] = {}  # PowerShell's, by lower-case name: its variable names ignore case
         self.stdin: str | None = None  # the heredoc body the current command reads
+        self.scanned: list[str | None] = []  # _scan of the whole call, once: each bare iex asks again
 
 
 def _canon(text: str) -> str:
@@ -787,7 +795,7 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
         return None
     if prog in ("iex", "invoke-expression"):  # PowerShell's eval; with no argument, the code comes down the pipeline
         return _judge(" ".join(words[1:]), ctx, depth + 1) or \
-            (_scan(ctx.full, ctx) if len(words) == 1 or re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
+            (_scan_full(ctx) if len(words) == 1 or re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
     if prog == "cmd":
         code = next((i for i, w in enumerate(words[1:], 1) if w.lower() in ("/c", "/k", "/r")), None)
         return _judge(" ".join(words[code + 1:]), ctx, depth + 1) if code else None
@@ -795,7 +803,7 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
         return _start_process(words, ctx, depth)
     if prog == "eval":
         code = " ".join(words[1:])
-        return _judge(code, ctx, depth + 1) or (_scan(ctx.full, ctx) if re.search(r"\$[({A-Za-z_]|`", code) else None)
+        return _judge(code, ctx, depth + 1) or (_scan_full(ctx) if re.search(r"\$[({A-Za-z_]|`", code) else None)
     if prog in ("source", ".") and len(words) > 1:
         return _script(words[1], ctx, depth, "shell")
     if prog in SHELLS:
@@ -854,7 +862,7 @@ def _program(word: str, ctx: _Ctx, depth: int) -> str | None:
     name = re.escape(re.split(r"[\\/]", word)[-1])
     if name and re.search(rf"(?:>|\btee\b[^|;&\n]*?|\b(?:cp|mv|install|ln)\b[^|;&\n]*?)\s*['\"]?[^\s'\"|;&]*{name}\b",
                           ctx.full):
-        return _scan(ctx.full, ctx)
+        return _scan_full(ctx)
     return None
 
 
@@ -954,7 +962,7 @@ def _script(path: str, ctx: _Ctx, depth: int, kind: str | None) -> str | None:
         with open(_path(path, ctx.cwd), "rb") as fh:
             data = fh.read(MAX_SCRIPT)
     except OSError:
-        return _scan(ctx.full, ctx)
+        return _scan_full(ctx)
     if b"\x00" in data[:4096]:
         return None  # a binary: not a script
     text = _text(data)
@@ -1021,6 +1029,13 @@ def _wrapped(prog: str, words: list[str], ctx: _Ctx, depth: int) -> str | None:
             i += 2 if args[i] in ("-n", "--interval", "-d", "-q") and not args[i].startswith("--differences") else 1
         return _judge(" ".join(args[i:]), ctx, depth + 1)
     return None
+
+
+def _scan_full(ctx: _Ctx) -> str | None:
+    """_scan of the whole call, worked out once per call, so many commands that read hidden code stay linear."""
+    if not ctx.scanned:
+        ctx.scanned.append(_scan(ctx.full, ctx))
+    return ctx.scanned[0]
 
 
 def _scan(text: str, ctx: _Ctx) -> str | None:
@@ -1200,7 +1215,7 @@ def _command(words: list[str], ctx: _Ctx, scan: bool = False, hops: int = 0) -> 
     if args[:1] == ["alias"] and args[1:2] == ["set"] and len(args) > 3:
         return _alias_value("gh", args[3], [], ctx, scan, hops, shell="--shell" in args or "-s" in args)
     if args[:1] == ["alias"] and args[1:2] == ["import"]:
-        return _script(args[2], ctx, 0, "code") if len(args) > 2 and args[2] != "-" else _scan(ctx.full, ctx)
+        return _script(args[2], ctx, 0, "code") if len(args) > 2 and args[2] != "-" else _scan_full(ctx)
     if args and args[0] not in GH_BUILTINS and hops < 3:
         value = _gh_aliases().get(args[0])
         if value is not None:
