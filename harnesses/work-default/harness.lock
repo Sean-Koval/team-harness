@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: work-default
-revision: 14
+revision: 15
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -25,13 +25,13 @@ components:
   path: skills/github-pr
   source: path:skills/github-pr
 - id: skill:jira-ticket
-  digest: sha256:879fd9b73d26db2c25a04aa1041e27e5d4b7c4195cd411b70c6ecf750cbde18c
-  tree: sha256:37ac380688aeed937a4e6e4ad6d718b44667d34eec2a0f67d47c3d944080b2a7
+  digest: sha256:4e5d744e3180b9d5563fab884e359028403c65c8e52f687f8157c8dfa08940b3
+  tree: sha256:0304ed165c51b5db7ff5096241b9ff3341435818242f25694a95f279ec0bc666
   path: skills/jira-ticket
   source: path:skills/jira-ticket
 - id: skill:decision-ticket
-  digest: sha256:16a11c8f7714b530251f331f4a11dc1ca001305e2683148e8639355434e2cfaa
-  tree: sha256:e56845d936674201dc3b8afcfb7d9f7c8d16c5cfe0660e5c60f27965cc112fa3
+  digest: sha256:456fd1fb889784cae2b6eedaefe1a2962c5ac1309be65565dbc6f84f049ecd63
+  tree: sha256:b492e13c3ae6592b240442c306ebb5e202cb9035643137c52c7656184c82e9f1
   path: skills/decision-ticket
   source: path:skills/decision-ticket
 - id: skill:work-docs
@@ -40,13 +40,13 @@ components:
   path: skills/work-docs
   source: path:skills/work-docs
 - id: skill:work-start
-  digest: sha256:6b5d672d7c77bf2ace9d1ec115b1aa7fc3807c2f732f024de67c147915f10eac
-  tree: sha256:a13b1753c36f39f35e15dd4fb9ee45ada1493e3b25f2ec4ee9412120b8c09a83
+  digest: sha256:c7c4c8c01a7356ec630b6e340235c9d8d0d0cce87fda5ac130039e0226a972c3
+  tree: sha256:45657489eec80ff5f5d4ec189a14085e84a009fad154f2b4185b5b12fafe7344
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:release-approvals
-  digest: sha256:647b87fa086402378c72e59bcebab995e0da30ff448d235443fb699f76c5b5d1
-  tree: sha256:f860a66a401b43800cef537c4a007d7434b4c1943e16d3c05fe5994531ce6298
+  digest: sha256:6b1995d0a7b49f2af4039e3e401793fa854e5ffb0407c4422ee25177d40e0f15
+  tree: sha256:266a6bb9f3cd008458010a9cfc58d6ea7c8dad4d0ba0d6c06dcf6ea3f6b74ee2
   path: skills/release-approvals
   source: path:skills/release-approvals
 - id: skill:org-process
@@ -83,7 +83,7 @@ components:
   digest: sha256:a8067e11cf9aae444e7feee6ecaaac60718bad6e4b01c7b44b0b81e04931889c
   path: native/claude-code/hooks/guard_work.py
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:f17a022324f59011fe4a641646c9b9f599c1d46282e1e6a4d66b1e1ccffc3589
+  digest: sha256:2e1921a9983b06cdf6f64f410dce96766a118f5a652a371324817a35d2d6dcbd
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/hooks/knowledge_session_end.py
   digest: sha256:5c021673f439e14ece3682255fb75b17cc73d579b60d0bb5db98ed149cd30350
@@ -116,13 +116,13 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:0a727ace310aa23d8464411dd65be7b228f3854065233e8cac7e07794ac8e41c
+    digest: sha256:e19d4c663f2e3baeb82784f8231e101079516dc23a0e7ce303e914bf254bfe97
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:0a727ace310aa23d8464411dd65be7b228f3854065233e8cac7e07794ac8e41c
+    digest: sha256:e19d4c663f2e3baeb82784f8231e101079516dc23a0e7ce303e914bf254bfe97
   - event: SessionEnd
     source: environment:.claude/settings.json
-    digest: sha256:0a727ace310aa23d8464411dd65be7b228f3854065233e8cac7e07794ac8e41c
+    digest: sha256:e19d4c663f2e3baeb82784f8231e101079516dc23a0e7ce303e914bf254bfe97
 plugins:
   autoUpdate: false
 remote: []
