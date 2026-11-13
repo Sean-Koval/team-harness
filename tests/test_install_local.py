@@ -18,6 +18,7 @@ import install_local as il  # noqa: E402
 
 WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
+TEAM = ROOT / "harnesses/team-default"
 
 
 @pytest.fixture(autouse=True)
@@ -924,6 +925,7 @@ GUARD_BLOCKS = [  # (harness, guard, a command it blocks, its reason)
     (WORK, "guard_work.py", "kubectl delete pod web-1", b"kubectl may only read"),
     (WORK, "guard_work_system.py", "git push origin main", b"blocked by the work-system hook"),
     (SUITE, "guard_work_system.py", "git push --force origin KAN-1-x", b"blocked by the work-system hook"),
+    (TEAM, "guard_readonly.py", "kubectl delete pod web-1", b"kubectl may only read"),
 ]
 
 
@@ -965,6 +967,16 @@ def test_windows_guard_that_cannot_see_powershell_fails_loudly(tmp_path, capsys,
     assert project(WORK, tmp_path / "svc", "--apply") == 1
     err = capsys.readouterr().err
     assert "hook sees no PowerShell call, so its guard is OFF" in err and "install Git for Windows" in err
+    assert "--channel candidate" in err  # stable's frozen release still has Bash-only matchers until a promotion
+
+
+@pytest.mark.parametrize("matcher, bash, powershell", [
+    ("Bash", True, False), ("Bash|PowerShell|mcp__.*", True, True), ("(Bash|Edit)", True, False),
+    ("Ba.*", True, False), ("", True, True), ("*", True, True), ("mcp__.*", False, False), ("Bash|(", True, False),
+])
+def test_a_matcher_is_read_as_claude_code_reads_it(matcher, bash, powershell):
+    """A regex form like `(Bash|Edit)` must not slip past the check that a guard also sees PowerShell."""
+    assert (il._matches(matcher, "Bash"), il._matches(matcher, "PowerShell")) == (bash, powershell)
 
 
 def test_off_windows_a_bash_only_matcher_is_fine(tmp_path, monkeypatch):

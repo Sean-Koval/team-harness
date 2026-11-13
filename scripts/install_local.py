@@ -849,6 +849,18 @@ def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base
 PROBE = {"session_id": "team-harness-probe", "tool_name": "Bash", "tool_input": {"command": "git status"}}
 
 
+def _matches(matcher: str, tool: str) -> bool:
+    """Whether a hook matcher selects `tool` as Claude Code reads it: empty or `*` is every tool, else a regex that
+    must match the whole name (`Bash|Edit`, `(Bash|Edit)`, `Ba.*`). A matcher that isn't a valid regex is read as a
+    `|` list."""
+    if matcher in ("", "*"):
+        return True
+    try:
+        return re.fullmatch(matcher, tool) is not None
+    except re.error:
+        return tool in matcher.split("|")
+
+
 def _runs_hook_file(cmd: str) -> bool:
     """A guard: a command that runs a script from .claude/hooks (an echo reminder is not a guard)."""
     return ".claude/hooks/" in cmd or "'.claude','hooks'" in cmd
@@ -899,11 +911,13 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
     for r in entries:
         if r.get("section") != "hooks" or not isinstance(r.get("value"), dict):
             continue
-        tools = str(r["value"].get("matcher") or "").split("|")
-        if WINDOWS and r.get("key") == "PreToolUse" and "Bash" in tools and "PowerShell" not in tools:
+        matcher = str(r["value"].get("matcher") or "")
+        sees_bash_only = _matches(matcher, "Bash") and not _matches(matcher, "PowerShell")
+        if WINDOWS and r.get("key") == "PreToolUse" and sees_bash_only:
             out.append(f"hook sees no PowerShell call, so its guard is OFF where Git Bash isn't installed: "
-                       f"PreToolUse [{r['value'].get('matcher')}] (Claude Code's shell tool on Windows without Git Bash "
-                       "is PowerShell; add PowerShell to the matcher, or install Git for Windows)")
+                       f"PreToolUse [{matcher}] (Claude Code's shell tool on Windows without Git Bash is PowerShell; "
+                       "add PowerShell to the matcher, or install Git for Windows. A release cut before the guards "
+                       "judged PowerShell has Bash-only matchers: install --channel candidate until one is promoted)")
         for hk in r["value"].get("hooks") or []:
             cmd = hk.get("command") if isinstance(hk, dict) and hk.get("type", "command") == "command" else None
             if not isinstance(cmd, str) or cmd in seen or not _runs_hook_file(cmd):

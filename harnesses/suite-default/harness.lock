@@ -65,7 +65,7 @@ components:
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:f5d904e58d25d94a25f5dad154940e76197a9c1cbbd9774a37eab9b355aaaa44
+  digest: sha256:84527f58d61cfbedb9250eaef7fae4f3081decd6cb160bbb140148035c3ba3b1
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/hooks/knowledge_session_end.py
   digest: sha256:5c021673f439e14ece3682255fb75b17cc73d579b60d0bb5db98ed149cd30350
@@ -98,13 +98,13 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:373215936740d38f5e4928141ff8e8fae6bff4e5886e1fe29860d6baffb6f9ec
+    digest: sha256:34507d840c9732de0e277ae2c1b92b3bb2dac4cfc79a6b9f51449dc78af320e8
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:373215936740d38f5e4928141ff8e8fae6bff4e5886e1fe29860d6baffb6f9ec
+    digest: sha256:34507d840c9732de0e277ae2c1b92b3bb2dac4cfc79a6b9f51449dc78af320e8
   - event: SessionEnd
     source: environment:.claude/settings.json
-    digest: sha256:373215936740d38f5e4928141ff8e8fae6bff4e5886e1fe29860d6baffb6f9ec
+    digest: sha256:34507d840c9732de0e277ae2c1b92b3bb2dac4cfc79a6b9f51449dc78af320e8
 plugins:
   autoUpdate: false
 remote: []

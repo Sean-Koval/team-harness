@@ -79,8 +79,9 @@ def test_input_that_is_not_json_fails_closed():
     assert r.returncode == 2 and b"not valid JSON" in r.stderr
 
 
-def test_json_that_is_not_an_event_passes():
-    assert run(["a list"]) == 0
+def test_json_that_is_not_an_event_fails_closed():
+    """It used to pass; a call the hook cannot read as an event is one it cannot check (PR 40 review)."""
+    assert run(["a list"]) == 2
 
 
 def run_bytes(data: bytes) -> subprocess.CompletedProcess:
@@ -119,3 +120,47 @@ def test_powershell_calls_are_judged_like_bash(command):
     as_bash, as_ps = call("Bash"), call("PowerShell")
     assert (as_ps.returncode, as_ps.stderr) == (as_bash.returncode, as_bash.stderr)
     assert (as_ps.returncode == 2) == (" get " not in command)
+
+
+def _tool(tool: str, command) -> subprocess.CompletedProcess:
+    event = {"tool_name": tool, "tool_input": {"command": command}}
+    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event).encode(), capture_output=True)
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", [
+    'terraform.exe apply',
+    'terraform.exe apply -auto-approve',
+    "& 'terraform' destroy",
+    'terraform `apply',
+    "$t='apply'; terraform $t",
+    "Start-Process terraform -ArgumentList 'apply','-auto-approve'",
+    'kubectl.exe delete pod x',
+])
+def test_powershell_s_own_spellings_are_blocked(tool, command):
+    """PowerShell runs these as the plain command: iex and Invoke-Expression are eval, Start-Process and cmd /c are sh -c,
+    a backtick escapes the next character or the line end, and $c = 'x' is c=x (PR 40 review). The .exe name
+    and a quoted program name are the same program in either shell."""
+    r = _tool(tool, command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", ['terraform validate', 'terraform.exe fmt', 'terraform init -backend=false', 'kubectl.exe get pods'])
+def test_ordinary_powershell_still_passes(tool, command):
+    assert _tool(tool, command).returncode == 0, command
+
+
+@pytest.mark.parametrize("data", [b"null", b"[]", b"7", b'"x"', b'{"tool_name": "Bash"}',
+                                  b'{"tool_name": "PowerShell", "tool_input": {"command": 5}}',
+                                  b'{"tool_name": "Bash", "tool_input": []}'])
+def test_a_call_that_is_not_an_object_or_has_no_command_text_fails_closed(data):
+    r = subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True)
+    assert r.returncode == 2 and b"cannot be checked" in r.stderr, (data, r.stderr)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="closes stdin with the POSIX shell")
+def test_a_closed_stdin_fails_closed():
+    """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
+    r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
+    assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
