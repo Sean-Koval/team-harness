@@ -1,6 +1,6 @@
 """The extraction eval (KAN-464): its grader on the eval's own cases, a broken extractor failing, and the recorded run.
 
-The eval's own cases (08, 09) live in evals/extract-records/cases/ and run everywhere. The recorded run over all
+The eval's own cases (08 to 12) live in evals/extract-records/cases/ and run everywhere. The recorded run over all
 cases needs the skill's example cases from KAN-435 and is skipped while they are not on the branch.
 """
 
@@ -48,7 +48,10 @@ def no_check(_tree: Path):
     return None
 
 
-@pytest.mark.parametrize("case_id", ["08-restated-rules", "09-restated-unrecorded"])
+@pytest.mark.parametrize(
+    "case_id",
+    ["08-restated-rules", "09-restated-unrecorded", "10-long-decision-record", "11-messy-meeting", "12-chat-thread"],
+)
 def test_expected_records_grade_perfect(tmp_path, case_id):
     case = own_cases()[case_id]
     result = grade.grade_case(case, case["root"], proposal(tmp_path, case), check=no_check)

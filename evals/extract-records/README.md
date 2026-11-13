@@ -2,7 +2,7 @@
 
 Measures the `extract-records` skill (KAN-435) on fixed sources with expected records (KAN-464).
 
-- **Cases:** the skill's examples in `tests/fixtures/extract-records/`, plus regression cases in `cases/`. `cases.yaml`
+- **Cases:** the skill's examples in `tests/fixtures/extract-records/`, plus regression cases in `cases/`. Cases 10 to 12 are long, messy synthetic sources shaped like real ones. `cases.yaml`
   adds per-case limits on how many records a run may produce.
 - **Extractor:** sees the rendered skill and a case's `before/` tree only. `recorded/` holds one run's proposals, and
   `run.json` says who made them and against which `SKILL.md`.
