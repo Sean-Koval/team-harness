@@ -870,8 +870,11 @@ def test_mixed_os_team_commits_no_hook_command(tmp_path, monkeypatch):
     """A Mac and a Windows machine install into the same repository: the committed files come out the same, and each
     machine's hook commands stay in its own settings.local.json."""
     committed = {}
+    real = il.probe_hooks
     for os_name, win in (("mac", False), ("windows", True)):
         monkeypatch.setattr(il, "WINDOWS", win)
+        # the other OS's commands can't start on this host (fake_py covers Windows off Windows, not sh under cmd)
+        monkeypatch.setattr(il, "probe_hooks", (lambda *_a: []) if os.name == "nt" and not win else real)
         target = tmp_path / os_name
         assert project(WORK, target, "--apply") == 0
         files = snapshot(target)
