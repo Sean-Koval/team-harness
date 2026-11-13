@@ -195,15 +195,17 @@ Variables are names only, listed in `environments/agent.env.example`: the inputs
 
 ```sh
 make agent-env          # build, start, clone the inputs, print the pins and `ai-dlc doctor`
-make agent-env-check    # two fresh instances print the same; nothing is mounted; off-list hosts are refused
+make agent-env-check    # two fresh instances print the same; nothing is mounted; off-list hosts and DNS are refused
 make agent-env-down
 ```
 
-`scripts/agent_env.py` does the local half with hangar's own code: hangar's renderer builds the image (with the agent
-CLI baked in, since there are no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. The
-container mounts nothing from the host and passes only the contract's names. It reaches the internet only through
-`scripts/egress_proxy.py`, a sidecar on an internal Docker network. The allowlist is GitHub, the package indexes,
-`api.atlassian.com` (tracker and wiki), the bound MCP servers and the model's hosts (`make agent-env-policy`).
+hangar runs the local half: the Makefile calls `hangar env local` at the hangar commit CI pins (KAN-472; hangar's
+`docs/environments/local-run.md`). hangar's renderer builds the image (with the agent CLI baked in, since there are
+no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. The container mounts nothing from the
+host and gets only the contract's names. It reaches the internet only through hangar's egress sidecar on an internal
+Docker network, and resolves no name itself: the sidecar refuses every DNS query. The allowlist is GitHub, the
+package indexes, `api.atlassian.com` (tracker and wiki), the bound MCP servers and the model's hosts
+(`make agent-env-policy`).
 
 ## Run it on a laptop
 
@@ -372,7 +374,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
 | `environments/` | Role environments for the four-repo convention, `work-multirepo` for change sets, and `agent.yaml` with its variable contract `agent.env.example` |
-| `scripts/agent_env.py`, `Makefile` | Start the agent environment locally (`make agent-env`); `scripts/egress_proxy.py` is its egress sidecar |
+| `Makefile` | Start the agent environment locally (`make agent-env`), with hangar's `hangar env local` |
 | `changesets/` | An example change-set profile |
 | `scripts/check_registry.py` | CI beyond `hangar harness check`: guides in sync, envs current and reproducing the lock, channels resolving and passing hangar's claim checks (on the role environments too), `work-multirepo` covering the roles, change-set profiles well formed |
 | `.github/workflows/check.yml` | This repository's CI |
