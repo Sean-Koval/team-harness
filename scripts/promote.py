@@ -88,7 +88,7 @@ def write_release(harness: Path, lock_file: Path | None = None) -> Path:
             else:
                 (t / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(src, t / rel)
-        (t / hl.LOCK_FILE).write_text(hl.dump(lock))
+        (t / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
         res = hl.check(t)
         if not res["ok"]:
             raise SystemExit(f"{harness}: the files don't match the lock: {'; '.join(res['problems'])}")
@@ -99,7 +99,7 @@ def write_release(harness: Path, lock_file: Path | None = None) -> Path:
 
 def set_channel(channels_file: Path, name: str, channel: str, digest: str, note: str) -> None:
     """Rewrite one `channel: "digest"  # note` line under `name:` in channels.yaml, keeping the rest as written."""
-    lines = channels_file.read_text().splitlines(keepends=True)
+    lines = channels_file.read_text(encoding="utf-8").splitlines(keepends=True)
     inside, done = False, False
     for i, line in enumerate(lines):
         if re.match(r"^\S", line):
@@ -110,8 +110,8 @@ def set_channel(channels_file: Path, name: str, channel: str, digest: str, note:
             done = True
     if not done:
         raise SystemExit(f"{channels_file}: no {name}.{channel} line to move")
-    channels_file.write_text("".join(lines))
-    assert (yaml.safe_load(channels_file.read_text()) or {})[name][channel] == digest
+    channels_file.write_text("".join(lines), encoding="utf-8", newline="\n")
+    assert (yaml.safe_load(channels_file.read_text(encoding="utf-8")) or {})[name][channel] == digest
 
 
 def main() -> int:
@@ -127,7 +127,7 @@ def main() -> int:
         raise SystemExit(f"{a.harness}: {'; '.join(res['problems'])} (run scripts/relock.py first)")
     digest = hl.harness_digest(lock)
     channels_file = a.harness.resolve().parent.parent / "channels.yaml"
-    chans = (yaml.safe_load(channels_file.read_text()) or {}).get(lock["name"]) or {}
+    chans = (yaml.safe_load(channels_file.read_text(encoding="utf-8")) or {}).get(lock["name"]) or {}
     if not a.release_only and a.channel == "stable" and chans.get("candidate") != digest:
         raise SystemExit(f"{lock['name']}: candidate is not the current lock ({digest}); promote what was evaluated")
     dest = write_release(a.harness)
