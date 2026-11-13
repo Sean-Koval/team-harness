@@ -1,4 +1,5 @@
 {
+  "live": false,
   "gate": false,
   "skill_ref": "team-harness 97929d3 (KAN-435, PR #20)",
   "extractor": "01-09: not blind (author saw case list), claude-opus-5-5 by hand at 97929d3; 10-12: blind, separate agent, opus-5-5, SKILL at 58de185",
