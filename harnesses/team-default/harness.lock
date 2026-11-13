@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 6
+revision: 7
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -78,10 +78,10 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca
+    digest: sha256:3ef6a20e5588ac7831cef9843770a33b220ffcd98fd2e3d1d253fe717cf4c194
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca
+    digest: sha256:3ef6a20e5588ac7831cef9843770a33b220ffcd98fd2e3d1d253fe717cf4c194
   permissions:
     approvals: deny-risky
 plugins:
