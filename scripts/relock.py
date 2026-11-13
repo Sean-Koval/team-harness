@@ -8,9 +8,17 @@ run exists to freeze from: it keeps the lock's runtime, model and binding layer,
 anything changed. `hangar harness check` then passes, and a turn run from the result reports the same
 `harness_digest` once the environment provides the same files.
 
+The digest covers every file the harness runs (KAN-473). hangar's identity takes a native `settings.json` only through
+its hook entries' digest, so the settings file is pinned as `render_envs.py` provides it, with
+`env.HARNESS_NATIVE_DIGEST` over the other native files (the hook scripts and what they call). Relock refuses a
+result whose pinned files changed while `harness_digest` did not, and a harness whose native files no hook entry
+covers. `--rekey` recomputes the digest of unchanged files and keeps the revision: use it when only the digest's form
+changed, so a channel can name the same content at its new digest.
+
     python scripts/relock.py harnesses/team-default            # print what would change
     python scripts/relock.py harnesses/team-default --write    # write harness.lock
     python scripts/relock.py harnesses/team-default --without-plugins --print-digest
+    python scripts/relock.py harnesses/work-default --rekey --write   # same files, new digest form, same revision
 
 Needs hangar importable (`pip install "hangar @ git+https://github.com/Sean-Koval/hangar@<ref>"`).
 """
@@ -28,6 +36,9 @@ import yaml
 
 from hangar import harness_lock as hl
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from render_envs import SETTINGS, native_files  # noqa: E402
+
 GUIDES = ("CLAUDE.md", "AGENTS.md")  # the first one present is the guide component
 CONFIG_ROOTS = {"claude-code": ".claude", "codex": ".codex"}  # native/<runtime>/ maps onto $HOME/<this>/
 
@@ -35,23 +46,43 @@ CONFIG_ROOTS = {"claude-code": ".claude", "codex": ".codex"}  # native/<runtime>
 
 def _hooks(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
     """binding.hooks as hangar's manifest records them: hangar's own hooks (kept from the lock), then each event
-    of every native `settings.json` in path order, sourced `environment:<path under $HOME>` with the file's digest."""
+    of every native `settings.json` in path order, sourced `environment:<path under $HOME>` with the digest of the
+    file as the environment provides it (`render_envs.native_files`: it names the other native files' digest)."""
     runtime = lock["runtime"]["harness"]
     home_dir = CONFIG_ROOTS.get(runtime)
     out = [h for h in lock["binding"].get("hooks") or [] if not str(h.get("source", "")).startswith("environment:")]
     base = root / "native" / runtime
     if home_dir is None or not base.is_dir():
         return out
-    for f in sorted(p for p in base.rglob("settings.json") if p.is_file()):
-        data = f.read_bytes()
-        for event in (json.loads(data).get("hooks") or {}):
-            out.append({"event": event, "source": f"environment:{home_dir}/{f.relative_to(base).as_posix()}",
-                        "digest": hl._sha(data)})
+    provided = native_files(root, runtime)
+    for rel in sorted(k for k in provided if k.rsplit("/", 1)[-1] == SETTINGS):
+        text = provided[rel]
+        for event in (json.loads(text).get("hooks") or {}):
+            out.append({"event": event, "source": f"environment:{home_dir}/{rel}", "digest": hl._sha(text.encode())})
     return out
 
 
-def relock(root: Path, *, without_plugins: bool = False) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """(new lock, previous lock) for the harness directory `root`."""
+def pinned(lock: dict[str, Any]) -> dict[str, str]:
+    """{component id: digest} of what a lock pins by content."""
+    return {c["id"]: c["digest"] for c in lock.get("components") or [] if c.get("digest")}
+
+
+def coverage_problems(root: Path, lock: dict[str, Any]) -> list[str]:
+    """Native files no hook entry's digest covers: hangar's identity would not change when they do."""
+    runtime = lock["runtime"]["harness"]
+    provided = native_files(root, runtime)
+    if not any(k.rsplit("/", 1)[-1] != SETTINGS for k in provided):
+        return []
+    if any(str(h.get("source", "")).startswith("environment:") for h in lock["binding"].get("hooks") or []):
+        return []
+    return [f"{root}: native/{runtime}/ has files but no settings.json with hooks, so harness_digest would not "
+            "cover them"]
+
+
+def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
+           ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """(new lock, previous lock) for the harness directory `root`. `rekey`: the files must be the previous lock's;
+    only the digest is recomputed and the revision stays."""
     lock_file = root / hl.LOCK_FILE
     prev = yaml.safe_load(lock_file.read_text()) if lock_file.is_file() else None
     if prev is None:
@@ -108,8 +139,20 @@ def relock(root: Path, *, without_plugins: bool = False) -> tuple[dict[str, Any]
 
     lock["components"] = comps
     lock["binding"]["hooks"] = _hooks(root, lock)
-    # a skeleton (no components yet) is a new harness: revision 1
-    lock["revision"] = 1 if not prev["components"] else hl.next_revision(prev, lock)
+    if problems := coverage_problems(root, lock):
+        raise SystemExit("; ".join(problems))
+    if rekey:
+        if pinned(lock) != pinned(prev):
+            changed = sorted(set(pinned(lock).items()) ^ set(pinned(prev).items()))
+            raise SystemExit(f"{root}: --rekey keeps the files, but these differ from the lock: "
+                             f"{', '.join(sorted({k for k, _ in changed}))}")
+        lock["revision"] = prev["revision"]
+    else:
+        # a skeleton (no components yet) is a new harness: revision 1
+        lock["revision"] = 1 if not prev["components"] else hl.next_revision(prev, lock)
+    if prev["components"] and pinned(lock) != pinned(prev) and hl.harness_digest(lock) == hl.harness_digest(prev):
+        raise SystemExit(f"{root}: the pinned files changed but harness_digest did not; a channel naming it would "
+                         "change without a promotion")
     hl.validate(lock)
     return lock, prev
 
@@ -122,8 +165,10 @@ def main() -> int:
                     help="leave plugin components out (a harness without its plugins, e.g. a stable channel that "
                          "can't load them yet)")
     ap.add_argument("--print-digest", action="store_true", help="print only the harness_digest")
+    ap.add_argument("--rekey", action="store_true",
+                    help="the files are the lock's: recompute the digest in its current form and keep the revision")
     a = ap.parse_args()
-    lock, prev = relock(a.harness, without_plugins=a.without_plugins)
+    lock, prev = relock(a.harness, without_plugins=a.without_plugins, rekey=a.rekey)
     digest = hl.harness_digest(lock)
     if a.print_digest:
         print(digest)

@@ -15,16 +15,23 @@ the way `hangar harness thaw name@<channel>` resolves it (hangar's resolver itse
 repository root, followed by its claim checks against the rendered environments: CLI version, model, approvals,
 MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel claims on `<name>`.
 
+And for promotion (KAN-473): a channel's digest names one content. Every lock in the history that carries it pins the
+same files, or the channel changed without a promotion (hangar's resolver takes the newest of them). Against the base
+(`--base`, default the merge base with origin/main), a harness whose pinned files changed needs a new
+`harness_digest`, a higher revision and `candidate` moved to it; its native files must be covered by the digest
+(`relock.coverage_problems`).
+
 And for the work conventions: every environment under `environments/` (the role environments and `work-multirepo`)
 loads in hangar's catalog next to the harness environments it extends, `work-multirepo` installs everything the
 infra, code and database roles do, and every change-set profile under `changesets/` is well formed against them.
 The agent environment's pins agree with what they name (`agent_env.pin_problems`).
 
-    python scripts/check_registry.py [REPO_ROOT]
+    python scripts/check_registry.py [REPO_ROOT] [--base REF]
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -42,6 +49,7 @@ from hangar.harnesses import HARNESSES
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent_env  # noqa: E402
+import relock  # noqa: E402
 import render_envs  # noqa: E402
 
 
@@ -87,6 +95,62 @@ def resolve_channel(root: Path, name: str, channel: str, digest: str) -> str:
         if not hl.problems(old) and hl.harness_digest(old) == digest:
             return commit
     raise ValueError(f"{name}@{channel} ({digest}) is neither the current lock nor in the git history of {rel}")
+
+
+def _history(root: Path, name: str) -> list[tuple[str, dict[str, Any]]]:
+    """(commit or 'current', lock) for every valid version of a harness's lock, newest first."""
+    rel = f"harnesses/{name}/{hl.LOCK_FILE}"
+    out: list[tuple[str, dict[str, Any]]] = [("current", hl.load(root / rel))]
+    for commit in (_git(root, "log", "--format=%H", "--", rel) or "").split():
+        try:
+            old = yaml.safe_load(_git(root, "show", f"{commit}:./{rel}") or "")
+        except yaml.YAMLError:
+            continue
+        if not hl.problems(old):
+            out.append((commit, old))
+    return out
+
+
+def channel_content_problems(root: Path, name: str, chans: dict[str, str]) -> list[str]:
+    """A channel's digest must name one content: every lock in the history with that digest pins the same files.
+    Otherwise the files changed under the digest, and the channel with them, without a promotion."""
+    errors: list[str] = []
+    history = _history(root, name)
+    for ch, digest in chans.items():
+        seen: dict[tuple[tuple[str, str], ...], str] = {}
+        for where, lock in history:
+            if hl.harness_digest(lock) == digest:
+                seen.setdefault(tuple(sorted(relock.pinned(lock).items())), where)
+        if len(seen) > 1:
+            errors.append(f"{name}@{ch}: {digest} names {len(seen)} different sets of files "
+                          f"({', '.join(w[:12] for w in seen.values())}): the files changed without a new digest")
+    return errors
+
+
+def base_problems(root: Path, base: str, d: Path, lock: dict[str, Any], chans: dict[str, str]) -> list[str]:
+    """Against the lock at `base`: changed files need a new digest, a higher revision and `candidate` on it."""
+    text = _git(root, "show", f"{base}:./harnesses/{d.name}/{hl.LOCK_FILE}")
+    if text is None:
+        return []  # a new harness
+    old = yaml.safe_load(text)
+    if hl.problems(old) or relock.pinned(old) == relock.pinned(lock):
+        return []
+    digest = hl.harness_digest(lock)
+    errors = []
+    if digest == hl.harness_digest(old):
+        errors.append(f"{d.name}: its files changed since {base[:12]} but harness_digest did not")
+    if lock["revision"] <= old["revision"]:
+        errors.append(f"{d.name}: its files changed since {base[:12]} but the revision is still r{lock['revision']}")
+    if chans and chans.get("candidate") != digest:
+        errors.append(f"{d.name}: its files changed since {base[:12]}; point candidate at {digest} "
+                      "(stable moves only by promotion)")
+    return errors
+
+
+def default_base(root: Path) -> str | None:
+    """The merge base with origin/main (a PR's base; HEAD itself on main), when there is one."""
+    out = (_git(root, "merge-base", "HEAD", "origin/main") or "").strip()
+    return out or None
 
 
 def claim_channel(root: Path, name: str, channel: str) -> str:
@@ -239,8 +303,16 @@ def check_changesets(root: Path) -> list[str]:
 
 
 def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("root", nargs="?", default=".", type=Path)
+    ap.add_argument("--base", help="the commit to compare each lock with (default: merge base with origin/main)")
+    a = ap.parse_args()
+    root = a.root.resolve()
     errors: list[str] = []
+    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
+    top = (_git(root, "rev-parse", "--show-toplevel") or "").strip()
+    is_repo = bool(top) and Path(top).resolve() == root
+    base = a.base or (default_base(root) if is_repo else None)
     for d in sorted((root / "harnesses").iterdir()):
         if not (d / hl.LOCK_FILE).is_file():
             continue
@@ -250,6 +322,9 @@ def main() -> int:
         if not res["ok"]:
             continue
         lock = hl.load(d)
+        errors += [f"{d.name}: {p}" for p in relock.coverage_problems(d, lock)]
+        if base:
+            errors += base_problems(root, base, d, lock, channels.get(d.name) or {})
         if (d / "AGENTS.md").exists() and (d / "AGENTS.md").read_bytes() != (d / "CLAUDE.md").read_bytes():
             errors.append(f"{d.name}: AGENTS.md differs from CLAUDE.md (copy it: the lock pins CLAUDE.md)")
         want = render_envs.render(d)
@@ -272,8 +347,9 @@ def main() -> int:
                 errors.append(f"{d.name}: env.candidate.yaml yields {got}, the lock is {hl.harness_digest(lock)}")
             else:
                 print(f"{d.name}: env.candidate.yaml reproduces {got}")
-    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
     for name, chans in channels.items():
+        if is_repo:
+            errors += channel_content_problems(root, name, chans or {})
         for ch, digest in (chans or {}).items():
             try:
                 where = resolve_channel(root, name, ch, digest)
