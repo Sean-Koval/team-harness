@@ -58,8 +58,10 @@ in `org.yaml`. The Jira and Confluence structure the flow needs is in [jira-conf
 
 - The work laptop is a Mac, so everything below runs natively (KAN-370). Install the Xcode Command Line Tools
   first; the plugin hooks call `python3`.
-- Coworkers on Windows run ai-dlc in WSL2 where policy allows. Work Copilot's Windows keyring fix (three OAuth
-  storage tests fail on Windows CI) stays in scope for them.
+- Coworkers on Windows install and run the team-harness hooks natively, in PowerShell or cmd, with the Python
+  launcher (`py -3`); CI runs those tests on Windows (KAN-460). WSL2 is a fallback only, for when the launcher isn't
+  allowed. ai-dlc itself has no native Windows install yet (ai-dlc #172), so Step 1 still needs WSL2 there. Work
+  Copilot's Windows keyring fix (three OAuth storage tests fail on Windows CI) stays in scope for them.
 - Behind a company proxy, set `HTTPS_PROXY`, and `SSL_CERT_FILE` if the proxy inspects TLS.
 - Run `gh auth login` against the company GitHub host.
 - Pick the model route first. Use a company-approved login, not a personal plan.
@@ -81,13 +83,21 @@ Adoption adds about 26 files that need review, and `work finish` can't pass its 
 
 ```sh
 git clone <your private fork> && cd team-harness
-python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo>          # dry run
-python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo> --apply
-python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo> --check
+python3 scripts/install_local.py harnesses/work-default --scope user            # dry run
+python3 scripts/install_local.py harnesses/work-default --scope user --apply
+python3 scripts/install_local.py harnesses/work-default --scope user --check
 ```
 
-Use project scope, one repo at a time, until KAN-367 lands; user scope puts the guards on every session. Run the two
-`claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
+On Windows, run the same lines with `py -3` in place of `python3`; the installed hooks run with `py -3` as well.
+`--uninstall` leaves your settings files byte for byte as they were, unless you changed them since. Claude Code skips a
+hook that can't start, so `--apply` and `--check` run each guard once and fail when one doesn't.
+
+User scope is the team default: `--scope user --apply` once per machine, and nothing lands in a repository. Its
+hooks and deny rules then apply to every Claude Code session on that machine. Use project scope when a repository
+should carry the skills and guide for everyone. Its hooks go to the gitignored `.claude/settings.local.json`, one
+command per OS, so a team of Macs and Windows machines commits the same files.
+
+Run the two `claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
 needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session, and that login does
 the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does not stand in for it.
 Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole
@@ -199,7 +209,7 @@ Each was a Decision ticket in KAN, now decided. The picks:
 | --- | --- | --- |
 | KAN-375 | Where the org overlay and process skill live | The laptop-only overlay first; then the company repo pins this one as upstream once teammates join |
 | KAN-355 | When a change needs the ESS review step | A gate a person files, triggered by a ticket label named in the private overlay |
-| KAN-370 | Laptop OS | Native on macOS (the work laptop is a Mac); WSL2 on Windows where policy allows |
+| KAN-370 | Laptop OS | Native on macOS (the work laptop is a Mac); native on Windows for the harness (KAN-460), WSL2 only as a fallback |
 | KAN-369 | Which Jira credential work allows | None for now; the Atlassian MCP in the session does the Jira work |
 | KAN-368 | CI evidence for `ai-dlc work finish` | Finish on spec-current and PR-merged for the trial; company branch protection enforces CI |
 | KAN-362 | Which flightdeck paths run before sign-off | Local only; GitHub ingest once a read-only work token is allowed |
