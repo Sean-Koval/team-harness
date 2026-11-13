@@ -2,4 +2,5 @@
 # Git for Windows' autocrlf included (KAN-460).
 shared/** text=auto eol=lf
 harnesses/** text=auto eol=lf
+orgs/** text=auto eol=lf          # org skills are copied into harnesses byte for byte
 templates/** text=auto eol=lf
