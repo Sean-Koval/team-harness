@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 8
+revision: 10
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -60,7 +60,7 @@ components:
   path: skills/whats-next
   source: path:skills/whats-next
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:7ad9479475b0b0770a6e06fd479000348e866866ca5c051bc0348527aa71e0ea
+  digest: sha256:c72175093607680d8833866cc12569bee38ab4992af7c462132acb1b6bef9e1a
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/hooks/knowledge_session_end.py
   digest: sha256:e871a09b2e15808c1dfae085f98d3909f00c9f188c95ab125e7deff0e34a8729
@@ -93,13 +93,13 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:7c0b0395807e00b397f4c5a665bc44b577d2fd08bea1f2e99ab695a3e96d133a
+    digest: sha256:d95240f43b811febdecddc8f0df58583e475c9d1f0313d85cf5a8893a4a5c13d
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:7c0b0395807e00b397f4c5a665bc44b577d2fd08bea1f2e99ab695a3e96d133a
+    digest: sha256:d95240f43b811febdecddc8f0df58583e475c9d1f0313d85cf5a8893a4a5c13d
   - event: SessionEnd
     source: environment:.claude/settings.json
-    digest: sha256:7c0b0395807e00b397f4c5a665bc44b577d2fd08bea1f2e99ab695a3e96d133a
+    digest: sha256:d95240f43b811febdecddc8f0df58583e475c9d1f0313d85cf5a8893a4a5c13d
 plugins:
   autoUpdate: false
 remote: []
