@@ -630,6 +630,9 @@ def test_unknown_or_unreachable_channel_is_refused(tmp_path, capsys):
 def windows(request, monkeypatch):
     """Run a test with the hook commands of each OS: the Windows forms are plain strings, checkable anywhere."""
     monkeypatch.setattr(il, "WINDOWS", request.param)
+    if os.name == "nt" and not request.param:
+        # sh commands can't start under cmd (the dry-run bug --apply now catches): Linux CI runs them
+        monkeypatch.setattr(il, "probe_hooks", lambda *_a: [])
     return request.param
 
 
@@ -787,6 +790,8 @@ def test_crlf_claude_md_comes_back_byte_identical(tmp_path):
 
 def test_check_runs_each_hook_once(tmp_path, monkeypatch, windows):
     """A clean --check has run every installed hook command, with this OS's commands, and each exited 0."""
+    if os.name == "nt" and not windows:
+        pytest.skip("the POSIX hook commands run on Linux CI")
     calls = []
     real = il.probe_hooks
 
@@ -831,3 +836,15 @@ def test_apply_fails_loudly_when_a_hook_does_not_start(tmp_path, capsys, monkeyp
     err = capsys.readouterr().err
     assert "error: hook did not run, so its guard is OFF" in err and "no-such-interpreter-kan460" in err
     assert "Claude Code skips a hook that can't start" in err
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the native Windows shell")
+def test_posix_hook_command_on_windows_is_caught(tmp_path, monkeypatch, capsys):
+    """The teammate-guide dry run: main wrote `python3 "$CLAUDE_PROJECT_DIR"/...` on Windows, cmd can't run it, and
+    Claude Code went on with the guard off. Such a command now fails --apply and --check out loud."""
+    monkeypatch.setattr(il, "WINDOWS", False)
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 1
+    assert "hook did not run, so its guard is OFF" in capsys.readouterr().err
+    assert project(WORK, target, "--check") == 1
+    assert "hook did not run, so its guard is OFF" in capsys.readouterr().out
