@@ -12,8 +12,8 @@ proposes records from each one as a pull request. Nothing becomes a record until
 | Recorded meetings | A transcript provider lands the transcript (KAN-457); the [nightly batch](#the-nightly-batch) proposes records (KAN-458) | Both on main, neither tried against a live meeting account yet. You schedule the batch yourself (no cloud runner until KAN-432) |
 
 Everything else stays out: unmarked note lines, rooms you did not pick, meetings nobody recorded, and direct
-messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days. The Source record and the records
-made from it stay.
+messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days: a nightly job in the knowledge
+repository opens the deletion PR, and a person merges it. The Source record and the records made from it stay.
 
 ## The nightly batch
 
@@ -131,7 +131,7 @@ captured. Until then:
 - don't record the meeting, or don't pick its room;
 - don't mark its notes with `>>`;
 - if a Source arrives anyway, tell `{{convention_owner}}`. Close its records PR unmerged. A PR can delete the raw
-  payload before its 30 days run out.
+  payload at once, without waiting for the 30-day deletion PR.
 
 Ask everyone in a recorded meeting whether it may be captured. Whether participants must be told is part of the
 KAN-450 sign-off.

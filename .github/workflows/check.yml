@@ -115,3 +115,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pytest -q -rs tests/test_install_local.py -k test_digests_match_hangar
           exit $LASTEXITCODE
+      # the teammate guide's PowerShell: every block parses, and quickstart step 3 runs (KAN-469)
+      - name: Guide PowerShell
+        if: ${{ !cancelled() }}
+        run: python -m pytest -q -rs tests/test_guide_powershell.py
