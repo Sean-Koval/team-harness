@@ -50,11 +50,13 @@ Windows (KAN-460). It runs natively, without WSL2, under PowerShell or cmd: `py 
 Hook commands are written for Windows: `py -3` instead of `python3`; in user scope the hook's absolute path, in double
 quotes with forward slashes, built from the profile directory (`--home`) instead of `$HOME`; in project scope a
 `py -3 -c` line that finds the hook through `CLAUDE_PROJECT_DIR`, so no machine path lands in a committed file.
+Each ends in `; exit $LASTEXITCODE`, so a guard's exit 2 survives PowerShell, whose -Command turns it into 1.
 
 Hooks that don't start. Claude Code carries on when a hook command can't start (no `py` or `python3`, a wrong path),
 so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the shell
 Claude Code uses (`sh -c`; on Windows Git Bash, or PowerShell where Git Bash isn't installed), with a harmless
-`git status` call on stdin; any exit but 0 fails loudly (exit 1).
+`git status` call on stdin; any exit but 0 fails loudly (exit 1). Each PreToolUse guard is also sent a call it
+can't read, which it must block with exit 2 through that shell, or it fails loudly too.
 On Windows a PreToolUse guard whose matcher names Bash but not PowerShell fails the same way: without Git Bash,
 Claude Code's shell tool is PowerShell, so that guard would see no shell command.
 
@@ -101,6 +103,11 @@ _HOME_HOOK = re.compile(r'"?(?:\$HOME|\$\{HOME\}|~)/\.claude/hooks/([^"\s]+)"?')
 # the one hook shape the harnesses use: python3 "$HOME/.claude/hooks/<file>.py", rewritten for Windows
 _PY_HOOK = re.compile(r'\s*python3?\s+"?(?:\$HOME|\$\{HOME\}|~)/\.claude/hooks/([A-Za-z0-9_.-]+\.py)"?\s*')
 WINDOWS = os.name == "nt"  # tests set it to check the Windows commands on any OS
+# PowerShell's -Command exits 1 when a native program fails, so a guard's exit 2 would reach Claude Code as 1, which
+# without Git Bash counts as a hook failure, not the guard's block. `exit $LASTEXITCODE` hands on py's own code, as
+# Microsoft's PowerShell docs advise. Git Bash reads the unset variable as a bare `exit`, which keeps the last
+# command's status, so the one line serves both shells. Appended to every Windows hook command.
+EXIT_AS_PY = "; exit $LASTEXITCODE"
 
 
 class Refused(Exception):
@@ -364,12 +371,12 @@ def _hook_command(cmd: str, scope: str, src: Path, base: Path | None) -> str:
     if scope == "project":
         # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for Git Bash and PowerShell alike
         return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
-                f"'.claude','hooks','{name}'),run_name='__main__')\"")
+                f"'.claude','hooks','{name}'),run_name='__main__')\"" + EXIT_AS_PY)
     path = Path(os.path.abspath(base or Path.home() / ".claude")).joinpath("hooks", name).as_posix()
     if any(c in path for c in '"$%`'):
         raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both Git Bash and PowerShell; '
                       "install with --home pointing elsewhere, or use --scope project")
-    return f'py -3 "{path}"'
+    return f'py -3 "{path}"' + EXIT_AS_PY
 
 
 # --- settings.json merge ----------------------------------------------------------------------------------------
@@ -946,19 +953,34 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
                 continue
             seen.add(cmd)
             event = json.dumps({**PROBE, "hook_event_name": r["key"], "cwd": str(root)}).encode()
-            try:
-                res = subprocess.run(hook_shell(cmd), input=event, capture_output=True, env=env,  # noqa: S603
-                                     cwd=root if root.is_dir() else None, timeout=30, check=False)
-                rc, said = res.returncode, (res.stderr or res.stdout).decode("utf-8", "replace").strip()
-            except subprocess.TimeoutExpired:
-                rc, said = None, "timed out after 30s"
-            except OSError as e:
-                rc, said = None, str(e)
+            # Run without the exit suffix: in PowerShell a `py` that doesn't start leaves $LASTEXITCODE empty, and
+            # `exit` with nothing exits 0, so only the bare command shows a hook that can't start.
+            rc, said = _probe(cmd.removesuffix(EXIT_AS_PY), event, env, root)
             if rc != 0:
-                first = said.splitlines()[0] if said else "no output"
-                out.append(f"hook did not run, so its guard is OFF: {r['key']} {cmd!r} "
-                           f"({'exit ' + str(rc) if rc is not None else 'error'}: {first[:200]})")
+                out.append(f"hook did not run, so its guard is OFF: {r['key']} {cmd!r} ({said})")
+                continue
+            if r.get("key") == "PreToolUse":
+                # A guard blocks a call it can't read. Through the full command, as Claude Code runs it, that block
+                # must still be exit 2: any other code is no verdict, and without Git Bash a hook failure.
+                rc, said = _probe(cmd, b"not a tool call", env, root)
+                if rc != 2:
+                    out.append(f"guard's block does not reach Claude Code as exit 2, so it may not block: "
+                               f"PreToolUse {cmd!r} ({said})")
     return out
+
+
+def _probe(cmd: str, event: bytes, env: dict[str, str], root: Path) -> tuple[int | None, str]:
+    """(exit code or None, what to show) after running one hook command through the hook shell with event on stdin."""
+    try:
+        res = subprocess.run(hook_shell(cmd), input=event, capture_output=True, env=env,  # noqa: S603
+                             cwd=root if root.is_dir() else None, timeout=30, check=False)
+    except subprocess.TimeoutExpired:
+        return None, "error: timed out after 30s"
+    except OSError as e:
+        return None, f"error: {e}"
+    said = (res.stderr or res.stdout).decode("utf-8", "replace").strip()
+    first = said.splitlines()[0] if said else "no output"
+    return res.returncode, f"exit {res.returncode}: {first[:200]}"
 
 
 def uninstall(base: Path) -> tuple[list[str], list[str]]:
@@ -1187,6 +1209,9 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
     if any(d.startswith("hook did not run") for d in dead):
         print("installed, but Claude Code skips a hook that can't start: fix the interpreter or path, then run "
               "--check", file=sys.stderr)
+    if any(d.startswith("guard's block") for d in dead):
+        print("installed, but Claude Code reads only exit 2 as a guard's block: check the hook shell keeps the "
+              "guard's exit code, then run --check", file=sys.stderr)
     return 1 if dead else 0
 
 

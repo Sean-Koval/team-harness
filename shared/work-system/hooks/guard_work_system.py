@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """PreToolUse hook for the work system: work carries a ticket key, and agents don't move tickets.
 
-Claude Code passes the tool call as JSON on stdin. This exits 2 with the reason on stderr and prints a PreToolUse
-deny with the same reason on stdout, which Claude Code reads even where PowerShell has turned the exit code into 1
-(Claude Code shows it to the agent and skips the call) for:
+Claude Code passes the tool call as JSON on stdin. This exits 2 with the reason on stderr, and prints the same
+reason as a PreToolUse deny on stdout, which Claude Code reads alongside the exit 2 (it shows the reason to the agent
+and skips the call), for:
 
 - `git commit` on a branch whose name has no ticket key (except `nokey/`, `deps/`, `dependabot/`, `renovate/`
   branches, and the `claude/` branches a cloud session is assigned), or on main/master;
@@ -1243,10 +1243,12 @@ def _main() -> int:
 
 
 def _block(reason: str) -> int:
-    # Two channels carry one verdict. Exit 2 with the reason on stderr is the contract every shell that keeps the
-    # exit code honours (sh, Git Bash, a direct caller). PowerShell turns a native exit 2 into 1, and Claude Code then
-    # shows its own error, so stdout also carries a PreToolUse deny: valid JSON decides the call whatever the exit code.
-    # If something else writes to stdout (a shell profile) the JSON is not read, and the non-zero exit still blocks.
+    # Exit 2 with the reason on stderr is the verdict: Claude Code blocks the call and shows the agent the reason.
+    # PowerShell's -Command turns a native exit 2 into 1, so the installer's Windows hook commands end in
+    # `exit $LASTEXITCODE` to keep the 2. The same reason also goes to stdout as a PreToolUse deny, which Claude Code
+    # reads alongside exit 2. Where a shell turns the 2 into 1 anyway, valid JSON decides the call, except on Windows
+    # without Git Bash, where any code but 0 or 2 is a hook failure. If something else writes to stdout (a shell
+    # profile) the JSON is not read, and the non-zero exit still blocks.
     message = f"blocked by the work-system hook: {reason}."
     deny = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": message}}

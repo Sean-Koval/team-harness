@@ -171,8 +171,8 @@ BLOCKED_CALL = json.dumps({"tool_name": "Bash", "tool_input": {"command": "kubec
 
 @pytest.mark.parametrize("data", [BLOCKED_CALL, b"not json", b"\xff\xfe"])
 def test_a_block_also_denies_on_stdout_with_the_same_reason(data):
-    """PowerShell turns exit 2 into 1, so Claude Code reads the verdict from stdout there (KAN-460): a block prints one
-    PreToolUse deny, nothing else, with the words stderr carries, and still exits 2 for every caller that reads that."""
+    """A block exits 2 and also prints one PreToolUse deny, nothing else, with the words stderr carries (KAN-460):
+    Claude Code reads it alongside the exit 2, and where a shell turns the 2 into 1, valid JSON still decides."""
     r = subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True)
     assert r.returncode == 2
     out = json.loads(r.stdout)["hookSpecificOutput"]
