@@ -20,6 +20,7 @@ concurrency:
 
 env:
   HANGAR_REF: c7a2de229aecbad9b82d9cddd6112776dc6c9c5a   # keep equal to check.yml's
+  PYTEST_VERSION: "9.2.0"
 
 jobs:
   build:
@@ -38,7 +39,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install hangar
-        run: pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" pytest
+        run: pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" "pytest==${PYTEST_VERSION}"
       - name: Build
         run: |
           # a merge commit's subject is "Merge pull request #N ..."; its body's first line is the PR title
@@ -54,7 +55,7 @@ jobs:
         id: diff
         run: |
           git add -A -- harnesses channels.yaml environments
-          git diff --cached --binary > "$RUNNER_TEMP/generated.patch"
+          git diff --cached --binary --no-ext-diff > "$RUNNER_TEMP/generated.patch"
           echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if [ -s "$RUNNER_TEMP/generated.patch" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/upload-artifact@v4
@@ -81,6 +82,16 @@ jobs:
         with:
           name: generated-patch
           path: ${{ runner.temp }}
+      # The build job ran repository code and installed packages, so its patch isn't trusted: refuse any path the
+      # build doesn't write (releases/, shared/, workflows), any symlink, mode change, rename or copy, and any
+      # change to a `stable:` line (only promote.py moves stable). Shell and git only.
+      - name: Refuse a patch that reaches outside the generated files
+        run: |
+          P="$RUNNER_TEMP/generated.patch"
+          bad=$( { git apply --numstat "$P" | cut -f3- | grep -vE '^(harnesses/[^/]+/(skills/[^/]+/|native/claude-code/hooks/[^/]+$|harness\.lock$|env\.(stable|candidate)\.yaml$|\.env\.example$)|channels\.yaml$|environments/agent\.yaml$)'; \
+                   git apply --summary "$P" | grep -E 'mode 120000|mode change|rename|copy'; \
+                   grep -E '^[-+][[:space:]]+stable:' "$P"; } || true )
+          [ -z "$bad" ] || { echo "the patch reaches outside the generated files:"; echo "$bad"; exit 1; }
       - name: Apply, commit and push
         env:
           GH_TOKEN: ${{ github.token }}
