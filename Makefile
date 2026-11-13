@@ -1,7 +1,7 @@
 # The agent environment (environments/agent.yaml) on this computer, run by hangar: `hangar env local` (KAN-472;
 # hangar's docs/environments/local-run.md). This repository holds only the definition and its variable contract.
 # Runs with the hangar commit CI pins (.github/workflows/check.yml; tests/test_agent_env.py keeps them equal).
-HANGAR_REF := c54041c258b961d16e8234d973eb0f2f47befd46
+HANGAR_REF := c7a2de229aecbad9b82d9cddd6112776dc6c9c5a
 WITH_HANGAR := uv run --no-project --python 3.12 --with "hangar @ git+https://github.com/Sean-Koval/hangar@$(HANGAR_REF)"
 LOCAL := $(WITH_HANGAR) hangar env local
 SPEC := agent --env-dir environments/roles --env-dir environments --harnesses harnesses
