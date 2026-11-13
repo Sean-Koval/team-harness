@@ -3,7 +3,8 @@
 
 The normal way to get a lock is `hangar harness freeze` from a turn that went well. Use this when you change the
 harness's files by hand (a new skill, an edited guide, your own MCP endpoints) and want the lock to pin them before a
-run exists to freeze from: it keeps the lock's runtime, model and binding layer, recomputes every component's digest
+run exists to freeze from: it keeps the lock's runtime, model and binding layer (but MCP servers come from
+`bindings/<name>.yaml` when its servers declare a `transport`), recomputes every component's digest
 (and each skill's `tree`), adds components for unpinned skills, plugins (each `plugins/<marketplace>/` directory marketplace) and native files, and bumps the revision when
 anything changed. `hangar harness check` then passes, and a turn run from the result reports the same
 `harness_digest` once the environment provides the same files.
@@ -59,6 +60,44 @@ def _hooks(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
         text = provided[rel]
         for event in (json.loads(text).get("hooks") or {}):
             out.append({"event": event, "source": f"environment:{home_dir}/{rel}", "digest": hl._sha(text.encode())})
+    return out
+
+
+MCP_SHAPE = {"http": ("endpoint",), "stdio": ("command", "args")}  # what the lock pins of each transport
+
+
+def bindings_file(root: Path, name: str) -> Path | None:
+    """The repository's `bindings/<name>.yaml` above the harness directory `root`, as render_envs.py finds it."""
+    repo = next((p for p in root.resolve().parents if (p / "bindings").is_dir()), None)
+    f = repo / "bindings" / f"{name}.yaml" if repo else None
+    return f if f and f.is_file() else None
+
+
+def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
+    """binding.mcp built from `bindings/<name>.yaml` when its servers declare a `transport` (KAN-459), so a server
+    added, renamed or moved is a source change and the build writes the lock; otherwise the lock's, as before.
+    One entry per server in name order: name, transport, then `endpoint` (http) or `command` and `args` (stdio), and
+    the names of its headers or env, never their values."""
+    f = bindings_file(root, lock["name"])
+    servers = ((yaml.safe_load(f.read_text()) or {}).get("mcp") or {}) if f else {}
+    declared = {n for n, s in servers.items() if isinstance(s, dict) and "transport" in s}
+    if not declared:
+        return lock["binding"].get("mcp") or []
+    if declared != set(servers):
+        raise SystemExit(f"{f}: give every mcp server a transport, or none (missing: "
+                         f"{', '.join(sorted(set(servers) - declared))})")
+    out = []
+    for name in sorted(servers):
+        s = servers[name]
+        shape = MCP_SHAPE.get(s["transport"])
+        if shape is None or any(k not in s for k in shape):
+            raise SystemExit(f"{f}: mcp.{name}: transport http needs endpoint; stdio needs command and args")
+        m: dict[str, Any] = {"name": name, "transport": s["transport"]}
+        m.update({k: (list(s[k]) if k == "args" else s[k]) for k in shape})
+        names = sorted(s.get("headers" if s["transport"] == "http" else "env") or {})
+        if names:
+            m["header_names" if s["transport"] == "http" else "env_names"] = names
+        out.append(m)
     return out
 
 
@@ -138,6 +177,7 @@ def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
             comps.append({"id": f"native:{runtime_path}", "digest": hl._sha(f.read_bytes()), "path": rel})
 
     lock["components"] = comps
+    lock["binding"]["mcp"] = _mcp(root, lock)
     lock["binding"]["hooks"] = _hooks(root, lock)
     if problems := coverage_problems(root, lock):
         raise SystemExit("; ".join(problems))
@@ -150,6 +190,8 @@ def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
     else:
         # a skeleton (no components yet) is a new harness: revision 1
         lock["revision"] = 1 if not prev["components"] else hl.next_revision(prev, lock)
+    if rekey and lock["binding"]["mcp"] != prev["binding"].get("mcp"):
+        raise SystemExit(f"{root}: --rekey keeps the binding, but bindings/ declares other MCP servers than the lock")
     if prev["components"] and pinned(lock) != pinned(prev) and hl.harness_digest(lock) == hl.harness_digest(prev):
         raise SystemExit(f"{root}: the pinned files changed but harness_digest did not; a channel naming it would "
                          "change without a promotion")
