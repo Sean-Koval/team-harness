@@ -97,9 +97,9 @@ def test_broken_extractor_fails_the_gates(tmp_path):
     assert result["limits"] == ["other: produced 3, allowed 0..2"]
     assert result["missed"] == ["team/actions/render-job-service-account.md"]
     summary.update(cost_usd=0.0, blind=None)
-    config = {"thresholds": {"recall_min": 0.8, "edit_or_drop_max": 0.25, "cost_usd_max": 5}}
+    config = {"thresholds": {"recall_min": 0.8, "substantive_max": 0.1, "cost_usd_max": 5}}
     failures = extract_eval.gates(summary, config, [])
-    assert any("recall" in f for f in failures) and any("edit or deletion" in f for f in failures)
+    assert any("recall" in f for f in failures) and any("substantive edit or deletion" in f for f in failures)
     assert any("limit failures" in f for f in failures)
 
 
@@ -155,12 +155,21 @@ def test_matching_is_by_type_and_quote(tmp_path):
     assert other["missed"] == [rel] and other["extra"] == [rel]
 
 
-def test_recorded_run_meets_the_gates(tmp_path):
+def test_recorded_run_splits_edits_and_fails_only_on_the_substantive_gate(tmp_path):
+    """The recorded run (KAN-474): every edited or dropped record is substantive or cosmetic, and the two add up.
+
+    Edits never fail the run except through the substantive gate; a record the check refuses fails it as well.
+    """
     if not (ROOT / "tests/fixtures/extract-records/cases.yaml").is_file():
         pytest.skip("the skill's example cases (KAN-435) are not on this branch")
-    assert extract_eval.main(["--out", str(tmp_path)]) == 0
+    code = extract_eval.main(["--out", str(tmp_path)])
     result = json.loads((tmp_path / "result.json").read_text())
-    assert result["summary"]["recall"] >= 0.8 and result["summary"]["edit_or_drop_rate"] < 0.25
+    s = result["summary"]
+    for part in (s, s["blind"]):
+        assert part["substantive_rate"] + part["cosmetic_rate"] == pytest.approx(part["edit_or_drop_rate"], abs=1e-3)
+    assert s["recall"] >= 0.8
+    assert all("substantive edit or deletion" in f or f.startswith("check failures") for f in result["failures"])
+    assert code == (1 if s["substantive_rate"] >= 0.1 or s["check_failures"] else 0)
     assert (tmp_path / "summary.md").read_text().startswith("# Extraction eval: fixture")
 
 
@@ -419,6 +428,148 @@ def test_a_record_knowledge_check_refuses_counts_as_an_edit(tmp_path):
     assert next(m["edits"] for m in result["matched"] if m["produced"] == rel) == ["check"]
 
 
+def test_changed_scope_is_substantive_and_reworded_title_cosmetic(tmp_path):
+    """KAN-474 acceptance: a changed scope makes the record wrong; a reworded title only costs wording."""
+    case = own_cases()["08-restated-rules"]
+    rel = "team/actions/render-job-service-account.md"
+    text = (case["root"] / "after" / rel).read_text()
+    scoped = grade.grade_case(
+        case, case["root"], proposal(tmp_path / "s", case, {rel: text.replace("scope: team", "scope: personal")}),
+        check=no_check,
+    )  # fmt: skip
+    assert [(e["fields"], e["severity"]) for e in scoped["edits"]] == [(["scope"], "substantive")]
+    titled, root, out = _meeting_case(tmp_path / "t", "Weekly deploys move to a new weekday slot")
+    reworded = grade.grade_case(titled, root, out, check=no_check)
+    assert [(e["fields"], e["severity"]) for e in reworded["edits"]] == [(["title"], "cosmetic")]
+    both = grade.summarize([scoped, reworded])
+    assert (both["substantive"], both["cosmetic"]) == (1, 1)
+    assert both["substantive_rate"] + both["cosmetic_rate"] == pytest.approx(both["edit_or_drop_rate"], abs=1e-3)
+    assert both["substantive_edits"] == [{"case": case["id"], "record": rel, "fields": ["scope"]}]
+
+
+def test_substantive_wins_and_drops_and_contradictions_are_substantive(tmp_path):
+    case = own_cases()["08-restated-rules"]
+    rel = "team/actions/render-job-service-account.md"
+    text = (case["root"] / "after" / rel).read_text()
+    mixed = text.replace("owner: unknown", "owner: lead-example")
+    extra = {"team/conventions/never-edit-wiki.md": _convention("never-edit-wiki", "Never edit the wiki by hand")}
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case, {rel: mixed, **extra}), check=no_check)
+    by = {e["record"]: e for e in result["edits"]}
+    assert by[rel]["severity"] == "substantive" and "owner" in by[rel]["fields"]
+    assert by["team/conventions/never-edit-wiki.md"] == {
+        "record": "team/conventions/never-edit-wiki.md",
+        "fields": ["drop"],
+        "severity": "substantive",
+    }
+    _case, root, out = _meeting_case(tmp_path / "c", "Release on Fridays")
+    wrong = grade.grade_case(_case, root, out, check=no_check)
+    assert [(e["fields"], e["severity"]) for e in wrong["edits"]] == [(["contradiction"], "substantive")]
+
+
+def test_right_claim_filed_as_another_type_is_a_type_edit(tmp_path):
+    case = own_cases()["08-restated-rules"]
+    rel = "team/decisions/records-in-git-wiki-rendered.md"
+    text = (case["root"] / "after" / rel).read_text()
+    result = grade.grade_case(
+        case, case["root"], proposal(tmp_path, case, {rel: text.replace("type: decision", "type: question")}),
+        check=no_check,
+    )  # fmt: skip
+    assert result["missed"] == [rel] and result["extra"] == [rel]
+    assert [(e["fields"], e["severity"]) for e in result["edits"]] == [(["type"], "substantive")]
+
+
+def test_needs_human_is_its_own_class_and_not_gated(tmp_path):
+    case = own_cases()["08-restated-rules"]
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case), check=no_check)
+    result["needs_human"] = ["team/decisions/records-in-git-wiki-rendered.md"]
+    summary = grade.summarize([result])
+    assert (summary["needs_human"], summary["substantive"], summary["cosmetic"]) == (1, 0, 0)
+    summary.update(cost_usd=0.0)
+    config = {"thresholds": {"recall_min": 0.8, "substantive_max": 0.1, "cost_usd_max": 5}}
+    assert extract_eval.gates(summary, config, []) == []
+
+
+def test_cosmetic_edits_alone_never_fail_the_eval(tmp_path):
+    """Every record reworded: the total edit rate is 100%, reported beside the gate, and the eval still passes."""
+    _case, root, out = _meeting_case(tmp_path, "Weekly deploys move to a new weekday slot")
+    summary = grade.summarize([grade.grade_case(_case, root, out, check=no_check)])
+    assert (summary["edit_or_drop_rate"], summary["cosmetic_rate"], summary["substantive_rate"]) == (1.0, 1.0, 0.0)
+    summary.update(cost_usd=0.0, unfiled_sources=0)  # the synthetic case files no Source
+    config = {"thresholds": {"recall_min": 0.8, "substantive_max": 0.1, "cost_usd_max": 5}}
+    assert extract_eval.gates(summary, config, []) == []
+
+
+def test_classify_pr_edit_for_knowledge_stats():
+    """The classifier works on one proposed and one merged record, as `knowledge stats` diffs a records PR."""
+    proposed = """---
+id: release-day
+type: decision
+scope: team
+status: accepted
+owner: lead-example
+links: []
+title: Release on Thursdays
+description: Moves releases off Tuesday
+---
+> we release on Thursdays from now on.
+"""
+    merged = proposed.replace("scope: team", "scope: personal").replace(
+        "title: Release on Thursdays", "title: Weekly deploys move to a new weekday slot"
+    )
+    assert grade.classify_pr_edit(proposed, proposed) == []
+    assert grade.classify_pr_edit(proposed, merged) == [
+        {"field": "title", "severity": "cosmetic"},
+        {"field": "scope", "severity": "substantive"},
+    ]
+    assert grade.classify_pr_edit(proposed, "") == [{"field": "drop", "severity": "substantive"}]
+    assert grade.severity("some-new-field") == "substantive"
+
+
+def _fake_ai_dlc(tmp_path: Path, monkeypatch, code: int, out: str) -> Path:
+    """An `ai-dlc` on PATH that records its arguments and working directory, then prints `out`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "ai-dlc"
+    exe.write_text(
+        f'#!/bin/sh\necho "$PWD $*" > "{tmp_path}/called"\nprintf "%s" "{out}"\n'
+        f'echo "knowledge check: 1 records" >&2\nexit {code}\n'
+    )
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    return tmp_path / "called"
+
+
+def test_knowledge_check_calls_the_cli_inside_the_tree(tmp_path, monkeypatch):
+    """The grader runs `ai-dlc knowledge check .` in the tree, so failure lines carry record-relative paths."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    called = _fake_ai_dlc(tmp_path, monkeypatch, 1, "./team/x.md: /type: bad")
+    assert grade.knowledge_check(tree) == ["team/x.md: /type: bad"]
+    assert called.read_text().split() == [str(tree.resolve()), "knowledge", "check", "."]
+
+
+def test_knowledge_check_that_cannot_run_is_an_error_not_a_pass(tmp_path, monkeypatch):
+    _fake_ai_dlc(tmp_path, monkeypatch, 2, "")
+    with pytest.raises(RuntimeError, match="exited 2"):
+        grade.knowledge_check(tmp_path)
+
+
+def test_knowledge_check_is_skipped_without_ai_dlc(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(grade.sys, "executable", str(tmp_path / "python"))
+    assert grade.knowledge_check(tmp_path) is None
+
+
+def test_a_record_whose_header_does_not_parse_is_produced_and_substantive(tmp_path):
+    """Invalid YAML front matter hides the record's type; it still counts, as one the check refuses."""
+    case = own_cases()["08-restated-rules"]
+    rel = "team/actions/render-job-service-account.md"
+    text = (case["root"] / "after" / rel).read_text().replace("owner: unknown", "owner: unknown: really")
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case, {rel: text}), check=no_check)
+    assert result["produced"] == 2 and result["missed"] == [rel] and rel in result["extra"]
+    assert {"record": rel, "fields": ["check"], "severity": "substantive"} in result["edits"]
+    summary = grade.summarize([result])
+    assert summary["precision"] == 0.5 and summary["substantive"] == 1
 @pytest.mark.parametrize(("live", "code"), [(False, 0), (True, 1)])
 def test_stale_recording_warns_until_a_live_baseline_exists(tmp_path, monkeypatch, live, code):
     if not (ROOT / "tests/fixtures/extract-records/cases.yaml").is_file():

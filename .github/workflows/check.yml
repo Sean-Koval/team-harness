@@ -43,7 +43,7 @@ jobs:
 
   # Coworkers run the hooks natively on Windows (KAN-460). No bash: every step is Python under PowerShell. The checkout
   # keeps Git for Windows' default CRLF conversion, as a coworker's clone would; .gitattributes holds the pinned
-  # harness files at LF. The installer's tests join this list when scripts/install_local.py lands (KAN-367).
+  # harness files at LF. The installer's tests run here too: py -3 hook commands, settings.json back byte for byte.
   windows:
     runs-on: windows-latest
     strategy:
@@ -64,3 +64,5 @@ jobs:
         run: >-
           python -m pytest -q -rs tests/test_guard_work_system.py tests/test_guard_work.py
           tests/test_guard_readonly.py tests/test_sync_shared.py
+      - name: Installer tests
+        run: python -m pytest -q -rs tests/test_install_local.py

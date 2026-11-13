@@ -1,8 +1,11 @@
 """scripts/install_local.py: a harness on a laptop, in user and project scope, pinned and never clobbering."""
 
+import base64
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +18,18 @@ import install_local as il  # noqa: E402
 
 WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
+
+
+@pytest.fixture(autouse=True)
+def fake_py(tmp_path_factory, monkeypatch):
+    """`py` (the Windows launcher) on PATH off Windows, so the Windows hook commands run here too."""
+    if os.name == "nt":
+        return
+    bin_dir = tmp_path_factory.mktemp("bin")
+    launcher = bin_dir / "py"
+    launcher.write_text(f'#!/bin/sh\n[ "$1" = "-3" ] && shift\nexec "{sys.executable}" "$@"\n')
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
 def run(*args) -> int:
@@ -52,11 +67,40 @@ def snapshot(d: Path) -> dict[str, bytes]:
 
 
 def manifest(base: Path) -> dict:
-    return json.loads((base / il.MANIFEST).read_text())
+    return json.loads((base / il.MANIFEST).read_text(encoding="utf-8"))
 
 
-def settings(base: Path) -> dict:
-    return json.loads((base / "settings.json").read_text())
+def settings(base: Path, name: str = "settings.json") -> dict:
+    return json.loads((base / name).read_bytes().decode("utf-8-sig"))
+
+
+def hook_command(hook: str, scope: str, base: Path, windows: bool = il.WINDOWS) -> str:
+    """The command a harness's `python3 "$HOME/.claude/hooks/<hook>"` becomes, spelled out per OS and scope."""
+    if not windows:
+        return (f'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/{hook}' if scope == "project"
+                else f'python3 "$HOME/.claude/hooks/{hook}"')
+    if scope == "project":
+        return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
+                f"'.claude','hooks','{hook}'),run_name='__main__')\"")
+    return f'py -3 "{Path(os.path.abspath(base)).as_posix()}/hooks/{hook}"'
+
+
+def expected_hooks(hooks: dict, scope: str, base: Path, windows: bool = il.WINDOWS) -> dict:
+    out = json.loads(json.dumps(hooks))
+    for groups in out.values():
+        for g in groups:
+            for hk in g["hooks"]:
+                m = re.fullmatch(r'python3 "\$HOME/\.claude/hooks/(.+)"', hk["command"])
+                if m:
+                    hk["command"] = hook_command(m.group(1), scope, base, windows)
+    return out
+
+
+def symlink(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as e:  # Windows without the symlink privilege
+        pytest.skip(f"no symlinks here: {e}")
 
 
 def copy_harness(tmp_path: Path, src: Path = SUITE) -> Path:
@@ -137,7 +181,7 @@ def test_fresh_user_install(tmp_path, harness):
         assert (base / "hooks" / hook.name).read_bytes() == hook.read_bytes()
     want = json.loads((harness / "native/claude-code/settings.json").read_text())
     got = settings(base)
-    assert got["hooks"] == want["hooks"] and got["permissions"] == want["permissions"]
+    assert got["hooks"] == expected_hooks(want["hooks"], "user", base) and got["permissions"] == want["permissions"]
     m = manifest(base)
     assert (m["harness"], m["revision"], m["scope"]) == (lock["name"], lock["revision"], "user")
     assert m["harness_digest"] == il.harness_digest(lock)
@@ -341,7 +385,7 @@ def test_check_reports_a_newer_revision(tmp_path, capsys):
 def test_uninstall_leaves_edited_files(tmp_path, capsys):
     assert user(WORK, tmp_path, "--apply") == 0
     base = tmp_path / ".claude"
-    (base / "skills/release-approvals/SKILL.md").write_text("my edits\n")
+    (base / "skills/release-approvals/SKILL.md").write_bytes(b"my edits\n")
     capsys.readouterr()
     assert user(WORK, tmp_path, "--uninstall") == 0
     assert "left skills/release-approvals/SKILL.md" in capsys.readouterr().err
@@ -353,7 +397,7 @@ def test_uninstall_leaves_edited_files(tmp_path, capsys):
 def test_project_scope(tmp_path):
     target, home = tmp_path / "svc", tmp_path / "home"
     (target / "src").mkdir(parents=True)
-    (target / "CLAUDE.md").write_text("# the project's own guide\n")
+    (target / "CLAUDE.md").write_bytes(b"# the project's own guide\n")
     assert project(WORK, target, "--home", home, "--apply") == 0
     base = target / ".claude"
     assert not home.exists()
@@ -362,10 +406,13 @@ def test_project_scope(tmp_path):
     assert (base / "CLAUDE.md").read_text() == "@team-harness/work-default.md\n"
     assert "path" not in manifest(base)["source"]  # a project's manifest may be committed: no machine path
     assert (base / "skills/change-set/SKILL.md").is_file() and (base / "hooks/guard_work.py").is_file()
-    cmds = [hk["command"] for g in settings(base)["hooks"]["PreToolUse"] for hk in g["hooks"]]
-    assert cmds == ['python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard_work.py',
-                    'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard_work_system.py']
-    assert "$HOME" not in (base / "settings.json").read_text()
+    # hooks per machine, in the gitignored settings.local.json; the deny rules stay in the committed settings.json
+    cmds = [hk["command"] for g in settings(base, "settings.local.json")["hooks"]["PreToolUse"] for hk in g["hooks"]]
+    assert cmds == [hook_command("guard_work.py", "project", base),
+                    hook_command("guard_work_system.py", "project", base)]
+    assert "hooks" not in settings(base) and "Bash(gh pr merge:*)" in settings(base)["permissions"]["deny"]
+    assert (target / ".gitignore").read_bytes() == b".claude/*.local.json\n"
+    assert "$HOME" not in (base / "settings.local.json").read_text()
     assert manifest(base)["scope"] == "project"
     assert project(WORK, target, "--check") == 0
     assert project(WORK, target, "--uninstall") == 0
@@ -377,8 +424,9 @@ def test_project_scope(tmp_path):
 def test_mcp_commands_use_placeholders_only(tmp_path, capsys):
     assert user(WORK, tmp_path) == 0
     out = capsys.readouterr().out
+    var = "$env:JIRA_MCP_AUTHORIZATION" if il.WINDOWS else "$JIRA_MCP_AUTHORIZATION"
     assert ('claude mcp add --scope user --transport http jira https://mcp.atlassian.com/v1/mcp '
-            '--header "Authorization: $JIRA_MCP_AUTHORIZATION"') in out
+            f'--header "Authorization: {var}"') in out
     assert project(SUITE, tmp_path / "p") == 0
     out = capsys.readouterr().out
     assert "--header 'Authorization: ${ATLASSIAN_MCP_AUTHORIZATION}'" in out
@@ -453,7 +501,7 @@ def test_symlinked_settings_are_written_through(tmp_path):
     dotfiles.write_text(json.dumps(MINE))
     base = tmp_path / ".claude"
     base.mkdir()
-    (base / "settings.json").symlink_to(dotfiles)
+    symlink(base / "settings.json", dotfiles)
     assert user(WORK, tmp_path, "--apply") == 0
     assert (base / "settings.json").is_symlink()
     assert "Bash(gh pr merge:*)" in json.loads(dotfiles.read_text())["permissions"]["deny"]
@@ -467,7 +515,7 @@ def test_symlinked_claude_md_is_written_through(tmp_path):
     dotfiles.write_text("# mine\n")
     base = tmp_path / ".claude"
     base.mkdir()
-    (base / "CLAUDE.md").symlink_to(dotfiles)
+    symlink(base / "CLAUDE.md", dotfiles)
     assert user(WORK, tmp_path, "--apply") == 0
     assert (base / "CLAUDE.md").is_symlink() and "@team-harness/work-default.md" in dotfiles.read_text()
     assert user(WORK, tmp_path, "--uninstall") == 0
@@ -490,9 +538,9 @@ def test_edited_harness_hook_group_is_not_added_twice(tmp_path, capsys):
 
 def test_user_scope_says_where_a_work_harness_belongs(tmp_path, capsys):
     assert user(WORK, tmp_path) == 0
-    assert "a work harness belongs in --scope project" in capsys.readouterr().out
+    assert "every Claude Code session on this machine" in capsys.readouterr().out
     assert project(WORK, tmp_path / "svc") == 0
-    assert "a work harness belongs" not in capsys.readouterr().out
+    assert "every Claude Code session" not in capsys.readouterr().out
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -577,3 +625,308 @@ def test_unknown_or_unreachable_channel_is_refused(tmp_path, capsys):
     assert run(h, "--scope", "user", "--home", home, "--apply") == 2
     assert "neither this checkout's lock" in capsys.readouterr().err
     assert not (home / ".claude").exists()
+
+
+# --- KAN-460: native Windows hook commands, settings.json back byte for byte ------------------------------------
+
+@pytest.fixture(params=[False, True], ids=["posix", "windows"])
+def windows(request, monkeypatch):
+    """Run a test with the hook commands of each OS: the Windows forms are plain strings, checkable anywhere."""
+    monkeypatch.setattr(il, "WINDOWS", request.param)
+    if os.name == "nt" and not request.param:
+        # sh commands can't start under cmd (the dry-run bug --apply now catches): Linux CI runs them
+        monkeypatch.setattr(il, "probe_hooks", lambda *_a: [])
+    return request.param
+
+
+def hook_commands(base: Path) -> list[str]:
+    """Every hook command installed: settings.json (user scope) and settings.local.json (project scope)."""
+    return [hk["command"] for name in ("settings.json", "settings.local.json") if (base / name).is_file()
+            for groups in (settings(base, name).get("hooks") or {}).values() for g in groups for hk in g["hooks"]]
+
+
+def test_windows_user_scope_runs_hooks_with_py_and_a_quoted_profile_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(il, "WINDOWS", True)
+    home = tmp_path / "Users" / "Jo Smith"  # a profile directory with a space
+    assert user(WORK, home, "--apply") == 0
+    base = home / ".claude"
+    cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
+    profile = Path(os.path.abspath(base)).as_posix()
+    assert cmds == [f'py -3 "{profile}/hooks/guard_work.py"', f'py -3 "{profile}/hooks/guard_work_system.py"']
+    assert not any("$HOME" in c or "python3" in c for c in hook_commands(base))
+    assert user(WORK, home, "--check") == 0
+    assert user(WORK, home, "--uninstall") == 0
+    assert not (base / "settings.json").exists()
+
+
+@pytest.mark.parametrize("bad", ["50%off", "a$b", 'say"hi'])
+def test_windows_profile_path_that_cannot_be_quoted_is_refused(tmp_path, monkeypatch, capsys, bad):
+    monkeypatch.setattr(il, "WINDOWS", True)
+    home = tmp_path / bad
+    assert user(WORK, home, "--apply") == 2
+    assert "can't be quoted for both PowerShell and cmd" in capsys.readouterr().err
+    assert not (home / ".claude").exists()
+
+
+def test_windows_project_scope_has_no_machine_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(il, "WINDOWS", True)
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 0
+    base = target / ".claude"
+    text = (base / "settings.json").read_text(encoding="utf-8") + (base / "settings.local.json").read_text("utf-8")
+    assert str(tmp_path) not in text and tmp_path.as_posix() not in text and "$" not in text
+    cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
+    assert cmds == [hook_command("guard_work.py", "project", base, True),
+                    hook_command("guard_work_system.py", "project", base, True)]
+
+
+BLOCKED = {"tool_name": "Bash", "tool_input": {"command": "terraform apply -auto-approve"}}
+
+
+def test_windows_project_hook_command_blocks_with_the_same_message(tmp_path, monkeypatch):
+    """The `py -3 -c` line runs the installed hook as running the file does: same exit code, same bytes out."""
+    monkeypatch.setattr(il, "WINDOWS", True)
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 0
+    cmd = next(c for c in hook_commands(target / ".claude") if "guard_work.py" in c)
+    prefix = 'py -3 -c "'
+    assert cmd.startswith(prefix) and cmd.endswith('"')
+    code = cmd[len(prefix):-1]
+    event = json.dumps(BLOCKED).encode()
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(target)}
+    via = subprocess.run([sys.executable, "-c", code], input=event, capture_output=True, env=env, cwd=tmp_path)
+    direct = subprocess.run([sys.executable, str(target / ".claude/hooks/guard_work.py")], input=event,
+                            capture_output=True, env=env, cwd=tmp_path)
+    assert direct.returncode == 2 and direct.stderr
+    assert (via.returncode, via.stdout, via.stderr) == (direct.returncode, direct.stdout, direct.stderr)
+
+
+def test_windows_hook_that_is_not_python_is_refused(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(il, "WINDOWS", True)
+    h = copy_harness(tmp_path)
+    sfile = h / "native/claude-code/settings.json"
+    sfile.write_text(sfile.read_text().replace('python3 \\"$HOME/.claude/hooks/guard_work_system.py\\"',
+                                               'bash \\"$HOME/.claude/hooks/guard.sh\\"'))
+    repin(h)
+    assert user(h, tmp_path / "home", "--channel", "checkout", "--apply") == 2
+    assert "has no native Windows form" in capsys.readouterr().err
+
+
+# Written the way a person's editor might: a BOM, CRLF, tabs, its own key order, non-ASCII, no final newline.
+OWN_SETTINGS = ('\ufeff{\r\n\t"model":"my-model",  "env": {"GREETING": "Grüße"},\r\n'
+                '\t"permissions": {"deny": ["Read(./secrets/**)"]},\r\n'
+                '\t"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "my-hook"}]}]}'
+                '\r\n}').encode("utf-8")
+
+
+OWN_LOCAL = b'{\r\n  "permissions": {"allow": ["Bash(make test)"]}\r\n}\r\n'
+OWN_IGNORE = b"node_modules/\r\n*.log"  # CRLF, and no final newline
+
+
+def test_uninstall_leaves_settings_byte_identical(tmp_path, windows):
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_bytes(OWN_SETTINGS)
+    assert user(WORK, tmp_path, "--apply") == 0
+    s = settings(base)
+    assert s["env"] == {"GREETING": "Grüße"} and "Bash(gh pr merge:*)" in s["permissions"]["deny"]
+    assert s["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "my-hook"
+    assert user(WORK, tmp_path, "--apply") == 0  # a re-run keeps the original it recorded
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert (base / "settings.json").read_bytes() == OWN_SETTINGS
+    assert sorted(p.name for p in base.iterdir()) == ["settings.json"]
+
+
+def test_project_uninstall_leaves_settings_byte_identical_across_an_upgrade(tmp_path, windows):
+    h = copy_harness(tmp_path)
+    target = tmp_path / "svc"
+    base = target / ".claude"
+    base.mkdir(parents=True)
+    (base / "settings.json").write_bytes(OWN_SETTINGS)
+    (base / "settings.local.json").write_bytes(OWN_LOCAL)
+    (target / ".gitignore").write_bytes(OWN_IGNORE)
+    assert project(h, target, "--apply") == 0
+    assert (target / ".gitignore").read_bytes() == OWN_IGNORE + b"\r\n.claude/*.local.json\r\n"
+    sfile = h / "native/claude-code/settings.json"
+    s = json.loads(sfile.read_text())
+    s["permissions"]["deny"].remove("Read(~/.git-credentials)")
+    sfile.write_text(json.dumps(s, indent=2))
+    repin(h, revision=3)
+    assert project(h, target, "--apply") == 0
+    assert manifest(base)["revision"] == 3
+    assert project(h, target, "--uninstall") == 0
+    assert (base / "settings.json").read_bytes() == OWN_SETTINGS
+    assert (base / "settings.local.json").read_bytes() == OWN_LOCAL
+    assert (target / ".gitignore").read_bytes() == OWN_IGNORE
+
+
+def test_settings_changed_since_the_install_keep_the_change(tmp_path):
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_bytes(OWN_SETTINGS)
+    assert user(WORK, tmp_path, "--apply") == 0
+    s = settings(base)
+    s["env"]["NEW"] = "1"
+    (base / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    want = json.loads(OWN_SETTINGS.decode("utf-8-sig"))
+    want["env"]["NEW"] = "1"
+    assert settings(base) == want  # not the old bytes: that would drop NEW
+
+
+def test_manifest_from_before_kan_460_is_not_taken_as_the_original(tmp_path):
+    """An install that recorded no original: uninstall falls back to removing its entries, as it always did."""
+    base = tmp_path / ".claude"
+    base.mkdir()
+    (base / "settings.json").write_bytes(OWN_SETTINGS)
+    assert user(WORK, tmp_path, "--apply") == 0
+    mfile = base / il.MANIFEST
+    m = manifest(base)
+    assert base64.b64decode(m["settings"]["original"]) == OWN_SETTINGS
+    del m["settings"]["original"]
+    mfile.write_text(json.dumps(m, indent=2) + "\n", encoding="utf-8")
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert "original" not in manifest(base)["settings"]  # the file now holds our entries: never recorded as yours
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert settings(base) == json.loads(OWN_SETTINGS.decode("utf-8-sig"))
+
+
+def test_crlf_claude_md_comes_back_byte_identical(tmp_path):
+    guide = tmp_path / ".claude/CLAUDE.md"
+    guide.parent.mkdir(parents=True)
+    guide.write_bytes(b"# mine\r\n- one rule\r\n")
+    assert user(WORK, tmp_path, "--apply") == 0
+    assert guide.read_bytes() == b"# mine\r\n- one rule\r\n@team-harness/work-default.md\r\n"
+    assert user(WORK, tmp_path, "--check") == 0
+    assert user(WORK, tmp_path, "--uninstall") == 0
+    assert guide.read_bytes() == b"# mine\r\n- one rule\r\n"
+
+
+def test_check_runs_each_hook_once(tmp_path, monkeypatch, windows):
+    """A clean --check has run every installed hook command, with this OS's commands, and each exited 0."""
+    if os.name == "nt" and not windows:
+        pytest.skip("the POSIX hook commands run on Linux CI")
+    calls = []
+    real = il.probe_hooks
+
+    def spy(base, scope, entries):
+        out = real(base, scope, entries)
+        calls.append((scope, sorted({hk["command"] for r in entries if r["section"] == "hooks"
+                                     for hk in r["value"]["hooks"]}), out))
+        return out
+
+    monkeypatch.setattr(il, "probe_hooks", spy)
+    assert project(WORK, tmp_path / "svc", "--apply") == 0
+    assert project(WORK, tmp_path / "svc", "--check") == 0
+    assert len(calls) == 2 and all(out == [] for _, _, out in calls)
+    cmds = calls[1][1]
+    assert hook_command("guard_work.py", "project", tmp_path / "svc/.claude", windows) in cmds
+    assert all(("py -3" in c) == windows for c in cmds if not c.startswith("echo "))
+
+
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_hook_that_does_not_start_fails_check_loudly(tmp_path, capsys, monkeypatch, scope):
+    """No Python on PATH (no `py` launcher on Windows): Claude Code would skip the hook; --check says the guard is off."""
+    where = tmp_path / ("home" if scope == "user" else "svc")
+    install = user if scope == "user" else project
+    assert install(WORK, where, "--apply") == 0
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    capsys.readouterr()
+    assert install(WORK, where, "--check") == 1
+    out = capsys.readouterr().out
+    assert "hook did not run, so its guard is OFF: PreToolUse" in out
+    assert "guard_work.py" in out and "guard_work_system.py" in out
+    assert "drift: work-default" in out
+
+
+def test_apply_fails_loudly_when_a_hook_does_not_start(tmp_path, capsys, monkeypatch):
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "hooks": [{"type": "command", "command": "no-such-interpreter-kan460 .claude/hooks/x.py"}]}}
+        if r["section"] == "hooks" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 1
+    err = capsys.readouterr().err
+    assert "error: hook did not run, so its guard is OFF" in err and "no-such-interpreter-kan460" in err
+    assert "Claude Code skips a hook that can't start" in err
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the native Windows shell")
+def test_posix_hook_command_on_windows_is_caught(tmp_path, monkeypatch, capsys):
+    """The teammate-guide dry run: main wrote `python3 "$CLAUDE_PROJECT_DIR"/...` on Windows, cmd can't run it, and
+    Claude Code went on with the guard off. Such a command now fails --apply and --check out loud."""
+    monkeypatch.setattr(il, "WINDOWS", False)
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 1
+    assert "hook did not run, so its guard is OFF" in capsys.readouterr().err
+    assert project(WORK, target, "--check") == 1
+    assert "hook did not run, so its guard is OFF" in capsys.readouterr().out
+
+
+# --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------
+
+def test_mixed_os_team_commits_no_hook_command(tmp_path, monkeypatch):
+    """A Mac and a Windows machine install into the same repository: the committed files come out the same, and each
+    machine's hook commands stay in its own settings.local.json."""
+    committed = {}
+    real = il.probe_hooks
+    for os_name, win in (("mac", False), ("windows", True)):
+        monkeypatch.setattr(il, "WINDOWS", win)
+        # the other OS's commands can't start on this host (fake_py covers Windows off Windows, not sh under cmd)
+        monkeypatch.setattr(il, "probe_hooks", (lambda *_a: []) if os.name == "nt" and not win else real)
+        target = tmp_path / os_name
+        assert project(WORK, target, "--apply") == 0
+        files = snapshot(target)
+        local = {".claude/settings.local.json", ".claude/team-harness.local.json"}
+        assert local <= files.keys()
+        committed[os_name] = {k: v for k, v in files.items() if k not in local}
+        for shared in (".claude/settings.json", ".claude/team-harness.json"):
+            text = files[shared].decode("utf-8")
+            assert "python3" not in text and "py -3" not in text
+    assert committed["mac"] == committed["windows"]  # byte for byte: no churn between the two machines
+
+
+def test_gitignore_already_covering_settings_local_is_left_alone(tmp_path):
+    target = tmp_path / "svc"
+    target.mkdir()
+    _git(target, "init", "-q")
+    (target / ".gitignore").write_bytes(b"*.local.json\n")
+    assert project(WORK, target, "--apply") == 0
+    assert (target / ".gitignore").read_bytes() == b"*.local.json\n"
+    assert "gitignore" not in manifest(target / ".claude")
+    assert project(WORK, target, "--uninstall") == 0
+    assert (target / ".gitignore").read_bytes() == b"*.local.json\n"
+
+
+def test_gitignore_line_removed_by_hand_is_drift(tmp_path, capsys):
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 0
+    (target / ".gitignore").write_bytes(b"")
+    capsys.readouterr()
+    assert project(WORK, target, "--check") == 1
+    assert ".gitignore no longer has the line .claude/*.local.json" in capsys.readouterr().out
+    assert project(WORK, target, "--apply") == 0
+    assert project(WORK, target, "--check") == 0
+
+
+def test_older_project_install_moves_its_hooks_to_settings_local(tmp_path, monkeypatch):
+    """An install from before this change put the hooks in the committed settings.json: --apply moves them out, and
+    --uninstall still leaves settings.json as the person had it."""
+    target = tmp_path / "svc"
+    base = target / ".claude"
+    base.mkdir(parents=True)
+    (base / "settings.json").write_bytes(OWN_SETTINGS)
+    real = il.split_settings
+    monkeypatch.setattr(il, "split_settings", lambda s, scope: real(s, "user"))  # the old layout
+    assert project(WORK, target, "--apply") == 0
+    assert "hooks" in manifest(base)["settings"]["entries"][0]["section"]
+    monkeypatch.setattr(il, "split_settings", real)
+    assert project(WORK, target, "--apply") == 0
+    own_hooks = json.loads(OWN_SETTINGS.decode("utf-8-sig"))["hooks"]
+    assert settings(base)["hooks"] == own_hooks  # only the person's own hook is left in the committed file
+    assert len(settings(base, "settings.local.json")["hooks"]["PreToolUse"]) == 2
+    assert project(WORK, target, "--check") == 0
+    assert project(WORK, target, "--uninstall") == 0
+    assert (base / "settings.json").read_bytes() == OWN_SETTINGS
+    assert sorted(p.name for p in target.rglob("*") if p.is_file()) == ["settings.json"]
