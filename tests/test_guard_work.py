@@ -187,3 +187,31 @@ def test_an_allowed_call_prints_nothing():
                        input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                          "tool_input": {"command": "kubectl get pods"}}).encode())
     assert (r.returncode, r.stdout) == (0, b"")
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", [
+    'Terraform apply',
+    'TERRAFORM.EXE apply -auto-approve',
+    "& 'Terraform' destroy",
+    'Kubectl delete pod x',
+    'KUBECTL.exe delete pod x',
+    'Helm uninstall web',
+])
+def test_program_names_in_any_case_are_blocked(tool, command):
+    """KAN-491: Windows, and macOS's default file system, find Terraform.EXE as terraform."""
+    r = _tool(tool, command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("command", [
+    'Terraform validate', 'TERRAFORM.EXE fmt', 'Kubectl Get Pods',
+    "psql -H -h localhost -c 'select 1'", 'mysql -H -h db -e status', "sqlcmd -S localhost -H build01 -Q 'select 1'",
+])
+def test_mixed_case_reads_and_capital_flags_still_pass(command):
+    """KAN-491: matching in any case leaves -H (HTML output, a workstation name) apart from -h (the host)."""
+    assert _tool("PowerShell", command).returncode == 0, command
+
+
+def test_the_host_flag_still_counts_in_lower_case_only():
+    assert _tool("PowerShell", "psql -h prod-db.internal -c 'select 1'").returncode == 2

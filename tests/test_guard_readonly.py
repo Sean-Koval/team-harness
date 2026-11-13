@@ -168,3 +168,21 @@ def test_an_allowed_call_prints_nothing():
                        input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                          "tool_input": {"command": "kubectl get pods"}}).encode())
     assert (r.returncode, r.stdout) == (0, b"")
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", [
+    'Kubectl delete pod x',
+    'KUBECTL.exe delete pod x',
+    "& 'Kubectl' delete pod x",
+    'Helm UNINSTALL web',
+])
+def test_program_names_in_any_case_are_blocked(tool, command):
+    """KAN-491: Windows, and macOS's default file system, find Kubectl.EXE as kubectl."""
+    r = _tool(tool, command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("command", ['Kubectl get pods', 'KUBECTL describe pod x', 'Helm list'])
+def test_reads_in_any_case_still_pass(command):
+    assert _tool("PowerShell", command).returncode == 0, command
