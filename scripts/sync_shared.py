@@ -358,30 +358,61 @@ def _skill_name(skill_md: Path) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def shared_skills(shared: Path, t: dict, harnesses: dict, problems: list[str]) -> list[str]:
-    """The skills every harness carries: each directory under `shared/work-system/skills/` that no harness names in
-    its own `skills:` (those go to that harness only), so a new shared skill ships with no edit to targets.yaml. The
-    top-level `skills:` list may still name them; a name there must be a shared skill directory. A directory without
-    a SKILL.md, or whose SKILL.md names another skill, is an error rather than a skill shipped half-made."""
+_HARNESSES = re.compile(r"^harnesses:\s*\[([^\]\n]*)\]\s*$", re.MULTILINE)
+
+
+def _skill_harnesses(skill_md: Path) -> list[str] | None:
+    """The frontmatter `harnesses: [a, b]` of a SKILL.md: the only harnesses it ships to. None when absent."""
+    text = skill_md.read_text(encoding="utf-8", errors="replace")
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    m = _HARNESSES.search(text[3:end if end > 0 else len(text)])
+    if not m:
+        return None
+    return [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
+
+
+def shared_skills(shared: Path, t: dict, harnesses: dict, problems: list[str]) -> dict[str, list[str]]:
+    """The shared skills each harness carries, so a new shared skill ships with no edit to targets.yaml (KAN-433).
+
+    Every directory under `shared/work-system/skills/` ships to every harness, except: one that a harness names in its
+    own `skills:` goes to that harness only, and one whose SKILL.md frontmatter has `harnesses: [..]` goes to those
+    only (a work-only skill says so where it is written). A directory without a SKILL.md, or whose SKILL.md names
+    another skill, is an error rather than a skill shipped half-made; one whose name starts with `.` or `_` is
+    skipped. The top-level `skills:` list may still name skills; a name there must ship to every harness."""
     skills_dir = shared / "skills"
-    present = sorted(d.name for d in skills_dir.iterdir() if d.is_dir()) if skills_dir.is_dir() else []
+    present = sorted(d.name for d in skills_dir.iterdir()
+                     if d.is_dir() and not d.name.startswith((".", "_"))) if skills_dir.is_dir() else []
     own = {s for e in harnesses.values() for s in ((e or {}).get("skills") or [])}
-    listed = list(t.get("skills") or [])
-    for s in listed:
-        if s not in present:
-            problems.append(f"targets.yaml: skills names {s}, which is not a directory under shared/work-system/skills/")
-        elif s in own:
-            problems.append(f"targets.yaml: {s} is in skills (every harness) and in a harness's own skills")
-    common = []
+    common: dict[str, list[str]] = {h: [] for h in harnesses}
+    limited: set[str] = set()
     for s in present:
         md = skills_dir / s / "SKILL.md"
         if not md.is_file():
             problems.append(f"shared/work-system/skills/{s}: no SKILL.md, so it is not a skill (add one or remove "
                             "the directory)")
-        elif _skill_name(md) != s:
+            continue
+        if _skill_name(md) != s:
             problems.append(f"shared/work-system/skills/{s}/SKILL.md must have frontmatter name: {s}")
-        elif s not in own:
-            common.append(s)
+            continue
+        if s in own:
+            continue
+        only = _skill_harnesses(md)
+        if only is not None:
+            limited.add(s)
+            for h in only:
+                if h not in harnesses:
+                    problems.append(f"shared/work-system/skills/{s}/SKILL.md: harnesses names {h}, which "
+                                    "targets.yaml does not list")
+        for h in harnesses:
+            if only is None or h in only:
+                common[h].append(s)
+    for s in t.get("skills") or []:
+        if s not in present:
+            problems.append(f"targets.yaml: skills names {s}, which is not a directory under shared/work-system/skills/")
+        elif s in own or s in limited:
+            problems.append(f"targets.yaml: {s} is in skills (every harness) but ships to only some harnesses")
     return common
 
 
@@ -409,7 +440,7 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         params = _profile(shared, h, entry, problems)
         org_dir, org_params = _org(root, h, entry, params, problems, warnings)
         params = {**params, **org_params}  # the org wins
-        sources = [(shared / "skills" / s, s, True) for s in common + list(entry.get("skills") or [])]
+        sources = [(shared / "skills" / s, s, True) for s in common.get(h, []) + list(entry.get("skills") or [])]
         own = set(entry.get("own_skills") or [])
         for s in sorted(own & {n for _, n, _ in sources}):
             problems.append(f"{h}: own_skills names {s}, which the shared layer renders")

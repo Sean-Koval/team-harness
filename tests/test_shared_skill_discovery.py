@@ -27,12 +27,18 @@ def add_skill(root: Path, name: str, frontmatter_name: str | None = None) -> Non
     (d / "SKILL.md").write_text(f"---\nname: {frontmatter_name or name}\ndescription: a test skill\n---\n\n# Test\n")
 
 
-def test_every_listed_skill_is_a_shared_directory_and_the_list_is_complete():
-    """The top-level list still records what ships today, and names nothing that isn't there."""
+def every_harness(root: Path = ROOT) -> set[str]:
+    """The shared skills that ship to every harness, as sync_shared.py decides it."""
     problems: list[str] = []
-    common = sync_shared.shared_skills(ROOT / "shared/work-system", TARGETS, TARGETS["harnesses"], problems)
-    assert problems == []
-    assert set(TARGETS["skills"]) <= set(common)
+    t = yaml.safe_load((root / "shared/work-system/targets.yaml").read_text())
+    common = sync_shared.shared_skills(root / "shared/work-system", t, t["harnesses"], problems)
+    assert problems == [], problems
+    return set.intersection(*(set(v) for v in common.values()))
+
+
+def test_every_listed_skill_ships_to_every_harness():
+    """The optional top-level list names nothing that doesn't ship everywhere."""
+    assert set(TARGETS["skills"]) <= every_harness()
 
 
 def test_a_new_skill_directory_ships_to_every_harness_without_a_targets_edit(tmp_path):
@@ -80,3 +86,33 @@ def test_the_list_may_not_name_a_missing_skill(tmp_path):
     t.write_text(yaml.safe_dump(data, sort_keys=False))
     _, problems = sync_shared.plan(root)
     assert any("no-such-skill" in p for p in problems), problems
+
+
+def test_frontmatter_harnesses_limits_where_a_skill_ships(tmp_path):
+    """A work-only skill says so in its SKILL.md; it never reaches suite-default."""
+    root = copy_repo(tmp_path)
+    d = root / "shared/work-system/skills/work-only"
+    d.mkdir()
+    (d / "SKILL.md").write_text("---\nname: work-only\nharnesses: [work-default]\ndescription: t\n---\n\n# T\n")
+    stale, problems = sync_shared.plan(root)
+    assert problems == [], problems
+    sync_shared.write(stale, root)
+    assert (root / "harnesses/work-default/skills/work-only/SKILL.md").is_file()
+    assert not (root / "harnesses/suite-default/skills/work-only").exists()
+
+
+def test_frontmatter_harnesses_must_name_a_listed_harness(tmp_path):
+    root = copy_repo(tmp_path)
+    d = root / "shared/work-system/skills/typo"
+    d.mkdir()
+    (d / "SKILL.md").write_text("---\nname: typo\nharnesses: [wrok-default]\n---\n")
+    _, problems = sync_shared.plan(root)
+    assert any("harnesses names wrok-default" in p for p in problems), problems
+
+
+def test_hidden_and_tooling_directories_are_skipped(tmp_path):
+    root = copy_repo(tmp_path)
+    for name in (".scratch", "__pycache__"):
+        (root / "shared/work-system/skills" / name).mkdir()
+    stale, problems = sync_shared.plan(root)
+    assert problems == [] and stale == [], (problems, stale)

@@ -39,9 +39,15 @@ def skill_text(name: str) -> str:
     return (SHARED / "skills" / name / "SKILL.md").read_text()
 
 
+def _every_harness() -> set[str]:
+    """The shared skills sync_shared.py ships to every harness (KAN-433: no list to edit)."""
+    common = sync_shared.shared_skills(SHARED, TARGETS, TARGETS["harnesses"], [])
+    return set.intersection(*(set(v) for v in common.values()))
+
+
 @pytest.mark.parametrize("name", SKILLS)
 def test_skill_is_registered_and_rendered_everywhere(name):
-    assert name in TARGETS["skills"]
+    assert name in _every_harness()
     for h in HARNESSES:
         rendered = ROOT / "harnesses" / h / "skills" / name / "SKILL.md"
         assert rendered.is_file(), rendered

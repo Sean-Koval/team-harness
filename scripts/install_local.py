@@ -955,7 +955,7 @@ def _pruned(s: dict[str, Any]) -> dict[str, Any]:
     """`s` without the empty containers `_remove` takes out, so a person's own `"hooks": {}` still matches (KAN-433)."""
     out: dict[str, Any] = {}
     for k, v in s.items():
-        if isinstance(v, dict):
+        if k in ("hooks", "permissions") and isinstance(v, dict):  # the only sections `_remove` empties
             v = {kk: vv for kk, vv in v.items() if vv != [] and vv != {}}
             if not v:
                 continue
