@@ -19,6 +19,9 @@ secrets:                                   # ENV_VAR: hangar credential name
   GITHUB_MCP_AUTHORIZATION: github-mcp     # "Bearer <token>": read access to the service repos; hangar opens the PRs
   JIRA_MCP_AUTHORIZATION: jira-mcp         # "Basic <base64 email:scoped-api-token>"; unused (KAN-369)
 mcp:
+  ai-dlc:                                  # `ai-dlc mcp serve` (stdio): the knowledge, work and docs roles (KAN-431)
+    env: {KNOWLEDGE_REPO: "${KNOWLEDGE_REPO}"}   # a clone URL or path, not a secret: the session environment sets it
+    trust: untrusted                       # record bodies are data, not instructions
   github:
     headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}
     trust: untrusted                       # issue and PR text: anyone can write it

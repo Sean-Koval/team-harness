@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 6
+revision: 7
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -12,7 +12,7 @@ model:
   policy: balanced
 components:
 - id: guide:CLAUDE.md
-  digest: sha256:9281d8f206f8a1331e73337aaec68e22c77516adeabe16e141605f813fdcf0bf
+  digest: sha256:ceec5c37bbf265f9315501f5d1cde32bd7e0c7966b46f7fa960fa5285d518106
   path: CLAUDE.md
 - id: skill:decision-ticket
   digest: sha256:63d5b10649983664396c578160e2fd1d7c9c2f29205ee78b9508092b2db9a6ef
@@ -44,14 +44,40 @@ components:
   tree: sha256:bfebac52dceb6b8c219125fd5fc34d0442ac2117d76a2d50cba781dc581386ad
   path: skills/extract-records
   source: path:skills/extract-records
+- id: skill:knowledge-context
+  digest: sha256:6f602da84866abf1d182fd2112ada1841195e6bfdabae227dfbc7873230a4a5d
+  tree: sha256:d97ae2c089d55da0df10435ed5d40d73ad1a982004c0de297bf86df0a168993f
+  path: skills/knowledge-context
+  source: path:skills/knowledge-context
+- id: skill:query-knowledge
+  digest: sha256:18c6b4c39b2bd34529b071d93fdba612658661530ff72adfa8617bd6f87a151c
+  tree: sha256:1952db16f908fb19a4abe09aeb45c2a51442604b9d42df02b36f570b8b3c8027
+  path: skills/query-knowledge
+  source: path:skills/query-knowledge
+- id: skill:whats-next
+  digest: sha256:3e031dfab524a3582e586ff92c01fe1c3e95b8d0b09a78a0a41416abddc5fdbf
+  tree: sha256:011f31fa0c0447af3b71a9120cd3ee2c1aaf0fe32a381b6b27267224e5be4dbb
+  path: skills/whats-next
+  source: path:skills/whats-next
 - id: native:claude-code/hooks/guard_work_system.py
   digest: sha256:a82f352b5df7cb148a172bbb0ae42c385c420ff1a9a872b3c6c2182256ba0eb9
   path: native/claude-code/hooks/guard_work_system.py
+- id: native:claude-code/hooks/knowledge_session_end.py
+  digest: sha256:e871a09b2e15808c1dfae085f98d3909f00c9f188c95ab125e7deff0e34a8729
+  path: native/claude-code/hooks/knowledge_session_end.py
 - id: native:claude-code/settings.json
-  digest: sha256:1ff6ae47b07545c4d147d3aa349a451694a6f3ca1a35ab8402db17c28a58fb84
+  digest: sha256:b2d50697d760b2326201862dd13f57c55bd9e9a4a416e5e89e691cf3d40b572c
   path: native/claude-code/settings.json
 binding:
   mcp:
+  - name: ai-dlc
+    transport: stdio
+    command: ai-dlc
+    args:
+    - mcp
+    - serve
+    env_names:
+    - KNOWLEDGE_REPO
   - name: atlassian
     transport: http
     endpoint: https://mcp.atlassian.com/v1/mcp
@@ -67,10 +93,13 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:ac7524c4472e4ade83170ac7746e394e975bb2b6a02fd56f778bab6a664463be
+    digest: sha256:e8701427e860d3ee2d78a4e3ebe194418a59969e62ea83103a138171d292da0c
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:ac7524c4472e4ade83170ac7746e394e975bb2b6a02fd56f778bab6a664463be
+    digest: sha256:e8701427e860d3ee2d78a4e3ebe194418a59969e62ea83103a138171d292da0c
+  - event: SessionEnd
+    source: environment:.claude/settings.json
+    digest: sha256:e8701427e860d3ee2d78a4e3ebe194418a59969e62ea83103a138171d292da0c
 plugins:
   autoUpdate: false
 remote: []

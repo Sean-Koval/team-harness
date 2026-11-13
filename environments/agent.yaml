@@ -31,7 +31,7 @@ dependencies:
 env:
   AGENT_ENV: agent
   AGENT_ENV_HARNESS: suite-default
-  AGENT_ENV_HARNESS_DIGEST: "sha256:88703621b8277aaf483236b1ae5d7e95ebb00ce94dec6fb22eefffe72a57136d"  # r6
+  AGENT_ENV_HARNESS_DIGEST: "sha256:cd22478e5e7013352548bb31b6388231e054e0cc9eb307a9c371d3175d1ed8a7"  # r7
   AI_DLC_REF: "cf665b96c13710025fc1a4a2932cc18f1f97b431"
   KNOWLEDGE_FORMAT_VERSION: "1"   # ai-dlc's knowledge-record FORMAT_VERSION; a knowledge repo pins [format] version
 secrets:                          # ENV_VAR: hangar credential name (values never live here)

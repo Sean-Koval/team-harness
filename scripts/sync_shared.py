@@ -8,11 +8,14 @@ file and each harness gets concrete text. For each target harness this:
 
 - renders `shared/work-system/skills/<name>/` into `harnesses/<h>/skills/<name>/` (the whole directory), for the
   shared skill list plus the harness's own `skills:` from targets.yaml;
-- renders the hook into `harnesses/<h>/native/claude-code/hooks/`;
+- renders the hook into `harnesses/<h>/native/claude-code/hooks/`, and each `session_hooks:` entry beside it;
+- renders `guide_fragment:` into the harness's `CLAUDE.md` (and `AGENTS.md`, its copy), between the markers FRAGMENT_BEGIN and FRAGMENT_END (a
+  write appends the block when the markers are missing); the rest of the guide is the harness's own;
+- renders `env_example:` into `harnesses/<h>/.env.example`, the session's environment contract (names only);
 - deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
   own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
-  tools (it never edits settings.json: that file is the harness's own).
+  tools, and each session hook on its event (it never edits settings.json: that file is the harness's own).
 
 A harness may also name a company's org overlay (`org: orgs/<org>` in targets.yaml). Its `org.yaml`
 (`team-harness.org/v1`) is validated; its `params` may set only `tracker` and the `kb_*` keys, and win over the
@@ -26,7 +29,7 @@ A placeholder the profile does not fill is an error, never an empty string.
 
     python scripts/sync_shared.py            # write the copies
     python scripts/sync_shared.py --check    # CI: exit 1 when a copy differs, a skill copy is left over, a
-                                             # placeholder is unfilled, the hook is not registered, an org is
+                                             # placeholder is unfilled, a hook is not registered, an org is
                                              # invalid, or suite-default names an org
 
 After a write, re-pin each changed harness (`python scripts/relock.py harnesses/<h> --write`) and re-render its
@@ -67,6 +70,23 @@ RESERVED_PR_LINES = {"jira", "docs", "decision"}  # the PR check's own lines
 ORG_PARAMS = frozenset({"tracker"})
 ORG_PARAM_PREFIXES = ("kb_",)
 PR_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]*$")
+
+
+FRAGMENT_BEGIN = "<!-- BEGIN shared/work-system/{name}: rendered by scripts/sync_shared.py; edit it there -->"
+FRAGMENT_END = "<!-- END shared/work-system/{name} -->"
+
+
+def with_fragment(guide: str, name: str, fragment: str) -> str | None:
+    """`guide` with the block between the fragment's markers replaced by `fragment` (appended when there are no
+    markers); None when the markers are broken (one without the other, or out of order)."""
+    begin, end = FRAGMENT_BEGIN.format(name=name), FRAGMENT_END.format(name=name)
+    block = f"{begin}\n{fragment.strip()}\n{end}\n"
+    i, j = guide.find(begin), guide.find(end)
+    if i < 0 and j < 0:
+        return guide.rstrip("\n") + "\n\n" + block
+    if i < 0 or j < i:
+        return None
+    return guide[:i] + block + guide[j + len(end):].removeprefix("\n")
 
 
 def _files(d: Path) -> dict[str, bytes]:
@@ -393,12 +413,42 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         want_hook = render(hook_src.read_bytes(), params, f"{h}: {t['hook']}", problems)
         if not dst.is_file() or dst.read_bytes() != want_hook:
             stale.append((hook_src, dst, {"": want_hook}))
+        for sh in t.get("session_hooks") or []:
+            src = shared / sh["file"]
+            dst = hd / "native" / "claude-code" / "hooks" / src.name
+            want_hook = render(src.read_bytes(), params, f"{h}: {sh['file']}", problems)
+            if not dst.is_file() or dst.read_bytes() != want_hook:
+                stale.append((src, dst, {"": want_hook}))
+        if t.get("guide_fragment"):
+            src = shared / t["guide_fragment"]
+            fragment = render(src.read_bytes(), params, f"{h}: {t['guide_fragment']}", problems).decode("utf-8")
+            for name in ("CLAUDE.md", "AGENTS.md"):  # AGENTS.md is CLAUDE.md's copy (check_registry.py)
+                guide = hd / name
+                if name != "CLAUDE.md" and not guide.is_file():
+                    continue
+                current = guide.read_text(encoding="utf-8") if guide.is_file() else ""
+                want_guide = with_fragment(current, t["guide_fragment"], fragment)
+                if want_guide is None:
+                    problems.append(f"{h}: {name} has broken {t['guide_fragment']} markers (one without the other)")
+                elif want_guide != current:
+                    stale.append((src, guide, {"": want_guide.encode("utf-8")}))
+        if t.get("env_example"):
+            src = shared / t["env_example"]
+            dst = hd / ".env.example"
+            want_env = render(src.read_bytes(), params, f"{h}: {t['env_example']}", problems)
+            if not dst.is_file() or dst.read_bytes() != want_env:
+                stale.append((src, dst, {"": want_env}))
         settings = hd / "native" / "claude-code" / "settings.json"
         try:
-            pre = json.loads(settings.read_text(encoding="utf-8")).get("hooks", {}).get("PreToolUse", [])
+            registered = json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})
+            pre = registered.get("PreToolUse", [])
         except (OSError, ValueError) as e:
             problems.append(f"{h}: cannot read {settings.relative_to(root)}: {e}")
             continue
+        for sh in t.get("session_hooks") or []:
+            if not any(x.get("command") == sh["command"] for e in registered.get(sh["event"], [])
+                       for x in e.get("hooks", [])):
+                problems.append(f"{h}: settings.json does not register {sh['command']!r} on {sh['event']}")
         entries = [e for e in pre if any(x.get("command") == t["hook_command"] for x in e.get("hooks", []))]
         matchers = " ".join(e.get("matcher", "") for e in entries)
         if not entries:
