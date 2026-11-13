@@ -551,3 +551,24 @@ def test_wiki_write_allowlist(allowing_hook, args, code):
     assert r.returncode == code, r.stderr
     if code:
         assert "render job" in r.stderr
+
+
+@pytest.mark.parametrize("label", ["EXEC:AGENT", "Exec:Agent", "exec : agent", " exec:agent ", "LANE:AGENT"])
+def test_exec_agent_is_matched_in_any_case_and_spacing(label):
+    args = {"projectKey": "KAN", "summary": "x", "labels": [label]}
+    r = run({"tool_name": "mcp__jira__createJiraIssue", "tool_input": args})
+    assert r.returncode == 2 and "exec:agent" in r.stderr
+    edit = {"issueIdOrKey": "KAN-1", "fields": {"labels": [label.replace("agent", "pair").replace("AGENT", "PAIR")]}}
+    assert run({"tool_name": "mcp__jira__editJiraIssue", "tool_input": edit}).returncode == 2
+
+
+@pytest.mark.parametrize("tool", ["mcp__ai_dlc__wiki_upsert", "mcp__ai-dlc__wiki_create", "mcp__ai-dlc__wiki_page_update",
+                                  "mcp__ai-dlc__confluence_publish", "mcp__ai-dlc__wiki_frobnicate"])
+def test_ai_dlc_wiki_writes_are_walled(tool):
+    r = run({"tool_name": tool, "tool_input": {"space": "SD", "title": "x"}})
+    assert r.returncode == 2
+
+
+@pytest.mark.parametrize("tool", ["mcp__ai-dlc__wiki_get", "mcp__ai-dlc__wiki_search", "mcp__ai-dlc__knowledge_append"])
+def test_ai_dlc_wiki_reads_and_knowledge_writes_pass(tool):
+    assert run({"tool_name": tool, "tool_input": {"query": "x"}}).returncode == 0

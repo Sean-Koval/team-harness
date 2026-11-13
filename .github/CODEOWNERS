@@ -1,0 +1,5 @@
+# What the agents run with and what gates them: changes here need the owner's review.
+/shared/work-system/profiles/ @Sean-Koval
+/shared/work-system/hooks/ @Sean-Koval
+/channels.yaml @Sean-Koval
+/harnesses/*/releases/ @Sean-Koval

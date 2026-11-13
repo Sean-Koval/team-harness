@@ -45,7 +45,7 @@ components:
   path: skills/extract-records
   source: path:skills/extract-records
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:3581acd2a449dc6d3aedd3828b551c42217f6d950dfda37d7283e6d6c528fc35
+  digest: sha256:7ad9479475b0b0770a6e06fd479000348e866866ca5c051bc0348527aa71e0ea
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:1ff6ae47b07545c4d147d3aa349a451694a6f3ca1a35ab8402db17c28a58fb84
