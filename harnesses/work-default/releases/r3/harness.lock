@@ -1,0 +1,84 @@
+# hangar harness lock (docs/harness-lock.md). Written by `hangar harness freeze`; identity is
+# harness_digest, printed by `hangar harness check`.
+schema: hangar.harness-lock/v1
+name: work-default
+revision: 3
+runtime:
+  harness: claude-code
+  version: 2.1.296
+  pack: null
+model:
+  id: claude-opus-5-5
+  policy: balanced
+components:
+- id: guide:CLAUDE.md
+  digest: sha256:4c10f600bdc556b492a0d0f35e973740b834b9a00889a495c8952e64b1287409
+  path: CLAUDE.md
+- id: skill:change-set
+  digest: sha256:c5bf04538692f87401fefa0a8a974c538f349ec935fc2bc3a720b8f39eae2070
+  tree: sha256:7675d580a6ee710d720fb6f218d1f3bac4a0d5681c99e89e99a47bfa6e108e7f
+  path: skills/change-set
+  source: path:skills/change-set
+- id: skill:github-pr
+  digest: sha256:ed225c1743d9bf3e2dedfd1d14c963c71a2029a722ae0cd5c57ed29399e62fef
+  tree: sha256:0b1c02848205c57e3221a65496705af9954718a2c1a58e131c4efb841e3ed953
+  path: skills/github-pr
+  source: path:skills/github-pr
+- id: skill:jira-ticket
+  digest: sha256:b193ba161a32b124e47f1c5381c731cd4004f0f84c4fbf963070af7c90eb3eb0
+  tree: sha256:efa8015f43afe0a21ced0e60962f53eb64d7a315c1f7390da5bfc389d27baa9b
+  path: skills/jira-ticket
+  source: path:skills/jira-ticket
+- id: skill:decision-ticket
+  digest: sha256:16a11c8f7714b530251f331f4a11dc1ca001305e2683148e8639355434e2cfaa
+  tree: sha256:e56845d936674201dc3b8afcfb7d9f7c8d16c5cfe0660e5c60f27965cc112fa3
+  path: skills/decision-ticket
+  source: path:skills/decision-ticket
+- id: skill:work-docs
+  digest: sha256:f8824db55fe2ca80e05fc5de612fabbbd376790a807dfd96efaddedd8675c9f4
+  tree: sha256:fdce5abaca72ec662ef92e04d67e154e4290a972904d3b8d3997202bab5e936e
+  path: skills/work-docs
+  source: path:skills/work-docs
+- id: skill:work-start
+  digest: sha256:d081561c98b99188ba3203d2349047af144d9abed0d4fa81b7de0206c4364449
+  tree: sha256:84d1051f62a3a1f978687fa6e0b2f9986684a2227bf91d379856c465ba862bbb
+  path: skills/work-start
+  source: path:skills/work-start
+- id: skill:release-approvals
+  digest: sha256:1dae5b44dd14097c4b6b36c5b84002fdadafc2da35328c482fc493c1427ac8fe
+  tree: sha256:b2747557b8c219ae0662eda770d8acd94e70a9cf1567f145348e7ca60e821ba3
+  path: skills/release-approvals
+  source: path:skills/release-approvals
+- id: native:claude-code/hooks/guard_work.py
+  digest: sha256:e3567f06861e0b7cc200689296002c1b00a7c80b5e795f70081524a5b66f92ca
+  path: native/claude-code/hooks/guard_work.py
+- id: native:claude-code/hooks/guard_work_system.py
+  digest: sha256:f7bc0ee8cc61ca48f154ae5bca6ff334a821a7db2beb309a46003be1b652229e
+  path: native/claude-code/hooks/guard_work_system.py
+- id: native:claude-code/settings.json
+  digest: sha256:a76da701261e382af1c27995b232fc582245ef1370b15201e36df93f5d37f584
+  path: native/claude-code/settings.json
+binding:
+  mcp:
+  - name: github
+    transport: http
+    endpoint: https://api.githubcopilot.com/mcp/
+    header_names:
+    - Authorization
+  - name: jira
+    transport: http
+    endpoint: https://mcp.atlassian.com/v1/mcp
+    header_names:
+    - Authorization
+  permissions:
+    approvals: deny-risky
+  hooks:
+  - event: SessionStart
+    source: environment:.claude/settings.json
+    digest: sha256:02d311fa6e3a2ecfd769277ad5cb20bf1588f20787cf2aeaceffa25a96b12b14
+  - event: PreToolUse
+    source: environment:.claude/settings.json
+    digest: sha256:02d311fa6e3a2ecfd769277ad5cb20bf1588f20787cf2aeaceffa25a96b12b14
+plugins:
+  autoUpdate: false
+remote: []
