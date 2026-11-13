@@ -1,8 +1,9 @@
 {
+  "gate": false,
   "skill_ref": "team-harness 97929d3 (KAN-435, PR #20)",
-  "extractor": "by hand: claude-opus-5-5 following SKILL.md, cases 01-07, after/ unread while extracting",
-  "precision": 1.0,
-  "recall": 1.0,
-  "edit_or_drop_rate": 0.0667,
-  "note": "An upper bound: the extractor had read cases.yaml (expected file names) first. Replace with a live run's blind numbers."
+  "extractor": "by hand: claude-opus-5-5 following SKILL.md; no model call",
+  "graded_by": "scripts/extract_grade.py, quote pairing with contradiction and title/description edits",
+  "blind_cases_01_07": {"precision": 1.0, "recall": 1.0, "edit_or_drop_rate": 0.2667, "field_edit_rate": 0.0296},
+  "all_cases": {"precision": 1.0, "recall": 0.9474, "edit_or_drop_rate": 0.3333, "field_edit_rate": 0.037},
+  "note": "Upper bound: the extractor had read cases.yaml (expected file names) before extracting. Not a gate. Replace from the first live run: python scripts/extract_eval.py --live --runner claude-cli --record"
 }

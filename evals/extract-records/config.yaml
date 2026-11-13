@@ -1,13 +1,11 @@
 # Extraction eval settings (KAN-464). A change here, to the skill or to the eval, runs the eval in CI.
 skill: shared/work-system/skills/extract-records/SKILL.md
 profile: shared/work-system/profiles/suite-default.yaml   # fills the skill's {{placeholders}} for live runs
-# Live runs use this model unless --model is given; `--model latest` asks the API for its newest model.
-# Strongest generally available model on 2026-11-12, per the provider's models overview.
-model: claude-fable-5-2
-price_usd_per_mtok: {input: 8, output: 40}               # for the pinned model; used for the cost estimate
+# The one model setting: live runs (either runner) use it unless --model is given.
+model: claude-sonnet-5-5
+price_usd_per_mtok: {input: 2, output: 10}               # list price of that model, for the cost estimate
 # O3 of the north star (Confluence 7307265): 8 of 10 expected records correct; reviewers edit or drop under 25%.
 thresholds:
   recall_min: 0.80
   edit_or_drop_max: 0.25
-  baseline_drop_max: 0.05    # KAN-464: fail when precision or recall falls more than 5 points below baseline.json
   cost_usd_max: 5.0

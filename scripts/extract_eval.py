@@ -3,7 +3,8 @@
 
     python scripts/extract_eval.py                    # fixture mode: grade the recorded proposals; no key, no network
     python scripts/extract_eval.py --require-fresh    # also fail when the recording predates the current SKILL.md
-    python scripts/extract_eval.py --live [--model M] # live mode: run the model on every case (ANTHROPIC_API_KEY)
+    python scripts/extract_eval.py --live             # live mode: Claude Code CLI on your login (--runner claude-cli)
+    python scripts/extract_eval.py --live --runner api  # live mode through the API (ANTHROPIC_API_KEY)
     python scripts/extract_eval.py --live --record    # ...and replace evals/extract-records/recorded/ with the run
     python scripts/extract_eval.py --out DIR          # also write DIR/result.json and DIR/summary.md
 
@@ -19,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -81,27 +83,75 @@ def _headers(key: str) -> dict[str, str]:
     return {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
 
 
-def extract_live(config: dict, case: dict, model: str, key: str, dest: Path) -> dict[str, Any]:
-    """Run the skill on one case's before/ tree and write the proposed files to dest. Never reads after/."""
-    before = case["root"] / "before"
+def prompt(config: dict, case: dict) -> tuple[str, str]:
+    """(system, user) for one case: the rendered skill, and the case's before/ tree. Never after/."""
     system = render_skill(config, case.get("scope_map")) + "\n\n" + HARNESS_NOTE
+    before = case["root"] / "before"
     user = f"The Source to process is `{case['source']}`.\n\n<repository>\n{repository_text(before)}\n</repository>"
-    payload = {"model": model, "max_tokens": 16000, "system": system, "messages": [{"role": "user", "content": user}]}
-    request = urllib.request.Request(f"{API}/messages", json.dumps(payload).encode(), _headers(key))
-    with urllib.request.urlopen(request, timeout=600) as response:
-        reply = json.load(response)
-    text = "".join(block.get("text", "") for block in reply["content"])
+    return system, user
+
+
+def write_proposal(text: str, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
     for path, content in FILE_BLOCK.findall(text):
         target = (dest / path).resolve()
         if dest.resolve() not in target.parents:
             continue  # a path outside the case is not a proposal
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content.rstrip("\n") + "\n")
+
+
+def extract_api(config: dict, case: dict, model: str, dest: Path) -> dict[str, Any]:
+    """Runner `api`: one Messages API call with ANTHROPIC_API_KEY."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise SystemExit("--runner api needs ANTHROPIC_API_KEY")
+    system, user = prompt(config, case)
+    payload = {"model": model, "max_tokens": 16000, "system": system, "messages": [{"role": "user", "content": user}]}
+    request = urllib.request.Request(f"{API}/messages", json.dumps(payload).encode(), _headers(key))
+    with urllib.request.urlopen(request, timeout=600) as response:
+        reply = json.load(response)
+    write_proposal("".join(block.get("text", "") for block in reply["content"]), dest)
     usage = reply.get("usage", {})
     return {"input": usage.get("input_tokens", 0), "output": usage.get("output_tokens", 0), "estimated": False}
 
 
-def gates(summary: dict, config: dict, baseline: dict | None, stale: list[str]) -> list[str]:
+def cli_command(model: str) -> list[str]:
+    """Headless Claude Code with every tool off and no MCP servers: it can only answer from the prompt."""
+    exe = shutil.which("claude") or "claude"
+    return [exe, "-p", "--model", model, "--output-format", "json", "--tools", "", "--allowedTools", "",
+            "--strict-mcp-config", "--no-session-persistence"]  # fmt: skip
+
+
+def extract_cli(config: dict, case: dict, model: str, dest: Path) -> dict[str, Any]:
+    """Runner `claude-cli`: the Claude Code CLI on the user's own login (CLAUDE_CODE_OAUTH_TOKEN in CI).
+
+    It runs in an empty temporary directory holding only the prompt, with no tools, so after/ and the case list are
+    out of its reach.
+    """
+    system, user = prompt(config, case)
+    with tempfile.TemporaryDirectory(prefix="extract-cli-") as work:
+        run = subprocess.run(
+            cli_command(model), input=f"{system}\n\n{user}", capture_output=True, text=True, cwd=work,
+            timeout=900, check=False,
+        )  # fmt: skip
+    try:
+        reply = json.loads(run.stdout)
+    except json.JSONDecodeError:
+        reply = {"is_error": True, "result": (run.stdout or run.stderr).strip()}
+    if run.returncode or reply.get("is_error"):
+        raise SystemExit(f"claude CLI failed ({run.returncode}): {str(reply.get('result'))[:500]}")
+    write_proposal(str(reply.get("result", "")), dest)
+    usage = reply.get("usage", {})
+    tokens_in = sum(usage.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    return {"input": tokens_in, "output": usage.get("output_tokens", 0), "estimated": False}
+
+
+RUNNERS = {"claude-cli": extract_cli, "api": extract_api}
+
+
+def gates(summary: dict, config: dict, stale: list[str]) -> list[str]:
+    """O3 gates. No baseline gate yet: the baseline is re-recorded from the first live run (README)."""
     t = config["thresholds"]
     out = []
     if summary["recall"] < t["recall_min"]:
@@ -116,16 +166,22 @@ def gates(summary: dict, config: dict, baseline: dict | None, stale: list[str]) 
             out.append(f"{key.replace('_', ' ')}: {summary[key]}")
     if summary["cost_usd"] > t["cost_usd_max"]:
         out.append(f"cost ${summary['cost_usd']:.2f} is over ${t['cost_usd_max']:.2f} a run")
-    if baseline:
-        # The baseline holds blind numbers, so compare the blind cases when there are any.
-        current = summary.get("blind") or summary
-        for key in ("precision", "recall"):
-            if current[key] < baseline[key] - t["baseline_drop_max"]:
-                out.append(
-                    f"blind {key} {current[key]:.0%} fell more than {t['baseline_drop_max']:.0%} below the "
-                    f"baseline {baseline[key]:.0%}"
-                )
     return out + stale
+
+
+def preflight(repo: Path = REPO) -> tuple[str, str]:
+    """Whether CI can measure: ("run" | "skip" | "fail", reason). Missing but registered skill fails."""
+    config = yaml.safe_load((repo / "evals/extract-records/config.yaml").read_text())
+    skill = repo / config["skill"]
+    targets = repo / "shared/work-system/targets.yaml"
+    listed = targets.is_file() and "extract-records" in (yaml.safe_load(targets.read_text()) or {}).get("skills", [])
+    copies = sorted(p.parent.as_posix() for p in repo.glob("harnesses/*/skills/extract-records/SKILL.md"))
+    if skill.is_file():
+        return "run", f"{config['skill']} present"
+    if listed or copies:
+        where = "shared/work-system/targets.yaml" if listed else ", ".join(copies)
+        return "fail", f"{where} registers extract-records but {config['skill']} is missing"
+    return "skip", "extract-records is not on this branch yet (KAN-435, team-harness #20): nothing to measure"
 
 
 def markdown(result: dict) -> str:
@@ -167,7 +223,11 @@ def markdown(result: dict) -> str:
     for c in result["cases"]:
         edits = sorted({e for m in c["matched"] for e in m["edits"]})
         problems = (
-            c["limits"] + c["broken_links"] + (c["check"] or []) + ([] if c["source_filed"] else ["source not filed"])
+            [f"wrong: {w['produced']} ({w['why']})" for w in c["wrong"]]
+            + c["limits"]
+            + c["broken_links"]
+            + (c["check"] or [])
+            + ([] if c["source_filed"] else ["source not filed"])
         )
         lines.append(
             f"| {c['id']} | {'yes' if c['blind'] else 'no'} | {c['produced']} | {c['expected']} | {len(c['matched'])} | "
@@ -182,16 +242,25 @@ def markdown(result: dict) -> str:
 def run(args: argparse.Namespace) -> dict[str, Any]:
     config = yaml.safe_load((EVAL / "config.yaml").read_text())
     cases = grade.load_cases(EVAL / "cases.yaml", REPO)
+    if args.case:
+        cases = [c for c in cases if c["id"] in args.case]
+        if args.record:
+            raise SystemExit("--record replaces every recording: run all cases")
     skill = REPO / config["skill"]
     if args.live:
-        key = os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise SystemExit("live mode needs ANTHROPIC_API_KEY")
-        model = latest_model(key) if args.model == "latest" else (args.model or config["model"])
+        model = args.model or config["model"]
+        if model == "latest":
+            model = latest_model(os.environ.get("ANTHROPIC_API_KEY") or "")
         recorded = Path(tempfile.mkdtemp(prefix="extract-eval-"))
-        meta = {"skill_sha256": sha256(skill), "model": model, "extractor": f"live: {model}", "blind": {}, "tokens": {}}
+        meta = {
+            "skill_sha256": sha256(skill),
+            "model": model,
+            "extractor": f"live: {args.runner} runner, {model}",
+            "blind": {},
+            "tokens": {},
+        }
         for case in cases:
-            meta["tokens"][case["id"]] = extract_live(config, case, model, key, recorded / case["id"])
+            meta["tokens"][case["id"]] = RUNNERS[args.runner](config, case, model, recorded / case["id"])
             meta["blind"][case["id"]] = True
         (recorded / "run.json").write_text(json.dumps(meta, indent=2) + "\n")
         if args.record:
@@ -227,28 +296,36 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         stale.append(note) if args.require_fresh else print(f"warning: {note}", file=sys.stderr)
     if meta.get("model") != config["model"]:
         print(f"note: recorded with {meta.get('model')}; live runs use {config['model']}", file=sys.stderr)
-    baseline_path = EVAL / "baseline.json"
-    baseline = json.loads(baseline_path.read_text()) if baseline_path.is_file() else None
     run_meta = {k: v for k, v in meta.items() if k not in ("tokens", "blind")}
-    failures = gates(summary, config, baseline, stale)
+    failures = gates(summary, config, stale)
     return {
         "mode": "live" if args.live else "fixture",
         "run": run_meta,
         "summary": summary,
         "cases": results,
-        "baseline": baseline,
         "failures": failures,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("--live", action="store_true", help="call the model (needs ANTHROPIC_API_KEY)")
-    parser.add_argument("--model", help="model id for --live, or 'latest'; default: config.yaml's pin")
+    parser.add_argument("--live", action="store_true", help="run the model on every case")
+    parser.add_argument("--runner", choices=sorted(RUNNERS), default="claude-cli",
+                        help="live: claude-cli (your Claude Code login; default) or api (ANTHROPIC_API_KEY)")  # fmt: skip
+    parser.add_argument("--model", help="model id for --live, or 'latest' (api); default: config.yaml's model")
+    parser.add_argument("--case", action="append", help="only this case id (repeatable)")
     parser.add_argument("--record", action="store_true", help="with --live, replace the recorded proposals")
     parser.add_argument("--require-fresh", action="store_true", help="fail when the recording predates SKILL.md")
     parser.add_argument("--out", type=Path, help="write result.json and summary.md here")
+    parser.add_argument("--preflight", action="store_true", help="say whether CI can measure; exit 1 on fail")
     args = parser.parse_args(argv)
+    if args.preflight:
+        verdict, reason = preflight()
+        print(f"{verdict}: {reason}")
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                out.write(f"run={'true' if verdict == 'run' else 'false'}\nreason={reason}\n")
+        return 1 if verdict == "fail" else 0
     try:
         result = run(args)
     except FileNotFoundError as error:

@@ -94,8 +94,8 @@ def test_broken_extractor_fails_the_gates(tmp_path):
     assert result["limits"] == ["other: produced 3, allowed 0..2"]
     assert result["missed"] == ["team/actions/render-job-service-account.md"]
     summary.update(cost_usd=0.0, blind=None)
-    config = {"thresholds": {"recall_min": 0.8, "edit_or_drop_max": 0.25, "baseline_drop_max": 0.05, "cost_usd_max": 5}}
-    failures = extract_eval.gates(summary, config, {"precision": 1.0, "recall": 1.0}, [])
+    config = {"thresholds": {"recall_min": 0.8, "edit_or_drop_max": 0.25, "cost_usd_max": 5}}
+    failures = extract_eval.gates(summary, config, [])
     assert any("recall" in f for f in failures) and any("edit or deletion" in f for f in failures)
     assert any("limit failures" in f for f in failures)
 
@@ -137,7 +137,7 @@ def test_field_edits_and_broken_links_are_reported(tmp_path):
     assert result["broken_links"] == [f"{rel}: derived_from -> no-such-record does not resolve"]
 
 
-def test_matching_is_by_type_and_similar_title(tmp_path):
+def test_matching_is_by_type_and_quote(tmp_path):
     case = own_cases()["08-restated-rules"]
     rel = "team/decisions/records-in-git-wiki-rendered.md"
     text = (case["root"] / "after" / rel).read_text()
@@ -166,7 +166,7 @@ def test_live_mode_needs_a_key(monkeypatch):
         pytest.skip("the skill's example cases (KAN-435) are not on this branch")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
-        extract_eval.main(["--live"])
+        extract_eval.main(["--live", "--runner", "api"])
 
 
 def test_live_extractor_never_reads_after(tmp_path, monkeypatch):
@@ -195,8 +195,150 @@ def test_live_extractor_never_reads_after(tmp_path, monkeypatch):
 
     monkeypatch.setattr(extract_eval.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(extract_eval, "render_skill", lambda config, scope_map: "SKILL")
-    usage = extract_eval.extract_live({}, case, "m", "k", tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    usage = extract_eval.extract_api({}, case, "m", tmp_path)
     assert usage == {"input": 3, "output": 2, "estimated": False}
     assert (tmp_path / "team/x.md").read_text() == "hi\n"
     assert "raw-sources-expire-30-days" not in sent["body"] and "reviewer-merges-records-pr" not in sent["body"]
     assert "records-merge-thread" in sent["body"]
+
+
+def test_same_title_with_another_quote_is_not_a_match(tmp_path):
+    """Title only breaks ties: a record quoting another line of the Source does not pair, whatever its title."""
+    case = own_cases()["08-restated-rules"]
+    rel = "team/actions/render-job-service-account.md"
+    text = (case["root"] / "after" / rel).read_text()
+    other = text.replace(
+        "> - Prerequisite: the render job needs its own service account before go-live.",
+        "> - Agents propose records only as a draft PR that a person merges.",
+    )
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case, {rel: other}), check=no_check)
+    assert result["missed"] == [rel] and result["extra"] == [rel]
+
+
+def _meeting_case(tmp_path: Path, produced_title: str) -> tuple[dict, Path, Path]:
+    """A one-decision case built in tmp_path: the expected record says Thursdays."""
+    root = tmp_path / "case"
+    source = "[00:02:10] lead-example: Decision one: we release on Thursdays from now on."
+    record = """---
+id: release-day
+type: decision
+scope: team
+status: accepted
+date: '2026-11-10'
+owner: lead-example
+sources: []
+links: []
+title: {title}
+description: Moves releases off Tuesday
+---
+# {title}
+
+> {quote}
+"""
+    for side in ("before", "after"):
+        (root / side / "inbox").mkdir(parents=True)
+        (root / side / "inbox/sync.md").write_text(f"---\nid: sync\ntype: source\nstatus: raw\n---\n{source}\n")
+    (root / "after/team/decisions").mkdir(parents=True)
+    (root / "after/team/decisions/release-day.md").write_text(record.format(title="Release on Thursdays", quote=source))
+    out = tmp_path / "proposal/team/decisions"
+    out.mkdir(parents=True)
+    (out / "release-day.md").write_text(record.format(title=produced_title, quote=source))
+    case = {"id": "tmp", "source": "inbox/sync.md", "expect": ["team/decisions/release-day.md"]}
+    return case, root, tmp_path / "proposal"
+
+
+@pytest.mark.parametrize(
+    "title", ["Release on Fridays", "Do not release on Thursdays", "Release on Thursdays from release 2"]
+)
+def test_contradicting_claim_is_a_miss(tmp_path, title):
+    """Same quote, but the claim says another day, a negated verb or another number: wrong, not an edit."""
+    if title.endswith("2"):
+        pytest.skip("the expected title holds no number, so a number alone cannot contradict it")
+    case, root, out = _meeting_case(tmp_path, title)
+    result = grade.grade_case(case, root, out, check=no_check)
+    assert result["matched"] == [] and result["missed"] == ["team/decisions/release-day.md"]
+    assert len(result["wrong"]) == 1
+    assert grade.summarize([result])["recall"] == 0.0
+
+
+def test_reworded_title_is_an_edit_not_a_miss(tmp_path):
+    case, root, out = _meeting_case(tmp_path, "Weekly deploys move to a new weekday slot")
+    result = grade.grade_case(case, root, out, check=no_check)
+    assert [m["edits"] for m in result["matched"]] == [["title"]]
+
+
+def _repo(tmp_path: Path, *, listed: bool, skill: bool) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "evals/extract-records").mkdir(parents=True)
+    shutil.copy(EVAL / "config.yaml", repo / "evals/extract-records/config.yaml")
+    (repo / "shared/work-system").mkdir(parents=True)
+    skills = ["github-pr"] + (["extract-records"] if listed else [])
+    (repo / "shared/work-system/targets.yaml").write_text(json.dumps({"skills": skills, "harnesses": []}))
+    if skill:
+        (repo / "shared/work-system/skills/extract-records").mkdir(parents=True)
+        (repo / "shared/work-system/skills/extract-records/SKILL.md").write_text("# skill\n")
+    return repo
+
+
+def test_preflight_fails_when_the_skill_is_registered_but_missing(tmp_path):
+    verdict, reason = extract_eval.preflight(_repo(tmp_path, listed=True, skill=False))
+    assert verdict == "fail" and "targets.yaml registers extract-records" in reason
+
+
+def test_preflight_fails_when_a_harness_copy_exists_without_the_shared_skill(tmp_path):
+    repo = _repo(tmp_path, listed=False, skill=False)
+    (repo / "harnesses/suite-default/skills/extract-records").mkdir(parents=True)
+    (repo / "harnesses/suite-default/skills/extract-records/SKILL.md").write_text("# copy\n")
+    assert extract_eval.preflight(repo)[0] == "fail"
+
+
+def test_preflight_skips_with_a_reason_before_the_skill_lands(tmp_path):
+    verdict, reason = extract_eval.preflight(_repo(tmp_path, listed=False, skill=False))
+    assert verdict == "skip" and "#20" in reason
+
+
+def test_preflight_runs_when_the_skill_is_present(tmp_path):
+    assert extract_eval.preflight(_repo(tmp_path, listed=True, skill=True))[0] == "run"
+
+
+def test_preflight_cli_writes_the_skip_for_the_workflow(tmp_path, monkeypatch):
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr(extract_eval, "preflight", lambda: ("skip", "not yet"))
+    assert extract_eval.main(["--preflight"]) == 0
+    assert out.read_text() == "run=false\nreason=not yet\n"
+    monkeypatch.setattr(extract_eval, "preflight", lambda: ("fail", "missing"))
+    assert extract_eval.main(["--preflight"]) == 1
+
+
+def test_cli_runner_has_no_tools_and_sees_only_the_prompt(tmp_path, monkeypatch):
+    """Runner claude-cli: headless, every tool off, in an empty directory; the prompt holds before/ only."""
+    case = own_cases()["09-restated-unrecorded"]
+    seen = {}
+
+    def fake_run(cmd, input, capture_output, text, cwd, timeout, check):
+        seen.update(cmd=cmd, prompt=input, files=sorted(p.name for p in Path(cwd).rglob("*")))
+        result = '<file path="team/decisions/x.md">\nhi\n</file>'
+        reply = {"type": "result", "is_error": False, "result": result,
+                 "usage": {"input_tokens": 5, "cache_read_input_tokens": 7, "output_tokens": 2}}  # fmt: skip
+        return extract_eval.subprocess.CompletedProcess(cmd, 0, json.dumps(reply), "")
+
+    monkeypatch.setattr(extract_eval.subprocess, "run", fake_run)
+    monkeypatch.setattr(extract_eval, "render_skill", lambda config, scope_map: "SKILL")
+    usage = extract_eval.extract_cli({}, case, "claude-sonnet-5-5", tmp_path / "out")
+    assert usage == {"input": 12, "output": 2, "estimated": False}
+    assert (tmp_path / "out/team/decisions/x.md").read_text() == "hi\n"
+    cmd = seen["cmd"]
+    assert cmd[1:5] == ["-p", "--model", "claude-sonnet-5-5", "--output-format"]
+    assert cmd[cmd.index("--tools") + 1] == "" and "--strict-mcp-config" in cmd
+    assert seen["files"] == []
+    assert "raw-sources-expire-30-days" not in seen["prompt"] and "records-merge-thread" in seen["prompt"]
+
+
+def test_one_model_setting():
+    import yaml
+
+    config = yaml.safe_load((EVAL / "config.yaml").read_text())
+    assert config["model"] == "claude-sonnet-5-5"
+    assert "claude-sonnet-5-5" not in (ROOT / "scripts/extract_eval.py").read_text()

@@ -1,11 +1,12 @@
-# Extraction eval (KAN-464): measures the extract-records skill whenever the skill, the pinned model or the eval
-# changes. Fixture mode replays the recorded proposals: no API key, no network beyond installs. Live mode runs
-# nightly and on demand when the ANTHROPIC_API_KEY secret is set; it never commits, it uploads its result.
+# Extraction eval (KAN-464): measures the extract-records skill whenever the skill, the model setting or the eval
+# changes. Fixture mode replays the recorded proposals: no key, no model call. Live mode runs nightly and on demand
+# through the Claude Code CLI with the CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token`); it never commits.
 name: extract-eval
 on:
   pull_request:
     paths:
       - shared/work-system/skills/extract-records/**
+      - shared/work-system/targets.yaml
       - harnesses/*/skills/extract-records/**
       - tests/fixtures/extract-records/**
       - evals/extract-records/**
@@ -24,7 +25,29 @@ env:
   AI_DLC_REF: c60d9a1323c5e98bdfbb572c01d3ffdb41a6788d
 
 jobs:
+  # Fails when the skill is registered but missing; otherwise says whether there is anything to measure.
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - id: check
+        run: |
+          python scripts/extract_eval.py --preflight
+          if grep -q '^run=false' "$GITHUB_OUTPUT"; then
+            echo "::warning title=extract-eval skipped::$(sed -n 's/^reason=//p' "$GITHUB_OUTPUT")"
+          fi
+
+  # Shows as skipped, with preflight's warning as the reason, until the skill is on the branch.
   eval:
+    needs: preflight
+    if: needs.preflight.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -35,18 +58,26 @@ jobs:
         run: pip install pyyaml "ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@${AI_DLC_REF}"
       - name: Fixture mode
         if: github.event_name == 'pull_request'
-        run: |
-          if [ ! -f shared/work-system/skills/extract-records/SKILL.md ]; then
-            echo "::notice::extract-records (KAN-435) is not on this branch; nothing to measure"; exit 0
-          fi
-          python scripts/extract_eval.py --require-fresh --out eval-out
-      - name: Live mode
+        run: python scripts/extract_eval.py --require-fresh --out eval-out
+      - name: Live mode needs a token
+        id: token
         if: github.event_name != 'pull_request'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "::notice::no ANTHROPIC_API_KEY secret; live mode skipped"; exit 0; fi
-          python scripts/extract_eval.py --live --out eval-out
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::warning title=extract-eval live skipped::no CLAUDE_CODE_OAUTH_TOKEN secret (create one with claude setup-token)"
+            echo "live=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "live=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Live mode (Claude Code CLI)
+        if: steps.token.outputs.live == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          python scripts/extract_eval.py --live --runner claude-cli --out eval-out
       - uses: actions/upload-artifact@v4
         if: always()
         with:

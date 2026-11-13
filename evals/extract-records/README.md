@@ -4,18 +4,27 @@ Measures the `extract-records` skill (KAN-435) on fixed sources with expected re
 
 - **Cases:** the skill's examples in `tests/fixtures/extract-records/`, plus regression cases in `cases/`. `cases.yaml`
   adds per-case limits on how many records a run may produce.
-- **Extractor:** sees a case's `before/` tree only. `recorded/` holds one run's proposals and `run.json` says who made
-  them and against which `SKILL.md`.
-- **Grader:** `scripts/extract_grade.py`, deterministic. It pairs records by type and similar title, compares status,
-  scope, owner, date, `valid_to`, links and the source quote, and runs ai-dlc's `knowledge check` on the result.
+- **Extractor:** sees the rendered skill and a case's `before/` tree only. `recorded/` holds one run's proposals, and
+  `run.json` says who made them and against which `SKILL.md`.
+- **Grader:** `scripts/extract_grade.py`, deterministic. It pairs records of one type on their verbatim source quote;
+  the title only breaks ties. A pair whose title says another day, number or a negated verb is wrong. It counts
+  edits to title, description, status, scope, owner, date, `valid_to`, links and quote, and runs ai-dlc's
+  `knowledge check` on the result.
 - **Gates** (`config.yaml`, from north-star outcome O3): recall at least 80%; under 25% of records need an edit or
-  deletion; no limit, link or check failures; blind precision and recall within 5 points of `baseline.json`.
+  deletion; no limit, link or check failures; cost under $5 a run.
+
+## Three ways to run it
 
 ```sh
-python scripts/extract_eval.py                    # fixture mode: replays recorded/, no key needed
-python scripts/extract_eval.py --require-fresh    # CI: also fails when recorded/ predates SKILL.md
-ANTHROPIC_API_KEY=... python scripts/extract_eval.py --live --record   # rerun the model, replace recorded/
+python scripts/extract_eval.py --require-fresh             # fixture: replays recorded/, no login, no key (CI)
+python scripts/extract_eval.py --live --runner claude-cli  # live, default: Claude Code CLI on your own login
+python scripts/extract_eval.py --live --runner api         # live: Messages API with ANTHROPIC_API_KEY
 ```
 
-After changing the skill, rerun live with `--record` and commit `recorded/`. Live runs use the model pinned in
-`config.yaml`; `--model latest` asks the API for its newest.
+Both live runners use the one `model` in `config.yaml`; `--case <id>` runs one case. The CLI runner works in an
+empty temporary directory with every tool off, so it cannot read `after/`. In CI the nightly live job needs a
+`CLAUDE_CODE_OAUTH_TOKEN` secret (from `claude setup-token`); without it the job reports itself skipped.
+
+**Baseline:** `baseline.json` is a hand-made upper bound, not a gate. Re-record it from the first live run:
+`python scripts/extract_eval.py --live --runner claude-cli --record`, then commit `recorded/` and the new numbers.
+After changing the skill, record again the same way.
