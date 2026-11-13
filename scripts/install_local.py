@@ -51,8 +51,9 @@ quotes with forward slashes, built from the profile directory (`--home`) instead
 `py -3 -c` line that finds the hook through `CLAUDE_PROJECT_DIR`, so no machine path lands in a committed file.
 
 Hooks that don't start. Claude Code carries on when a hook command can't start (no `py` or `python3`, a wrong path),
-so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the
-system shell (cmd on Windows), with a harmless `git status` call on stdin; any exit but 0 fails loudly (exit 1).
+so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the shell
+Claude Code uses (`sh -c`; on Windows Git Bash, or PowerShell where Git Bash isn't installed), with a harmless
+`git status` call on stdin; any exit but 0 fails loudly (exit 1).
 
 Uninstall puts back `settings.json`, `settings.local.json`, `.gitignore` and `CLAUDE.md` byte for byte. For a settings file, as the manifest keeps the original bytes, unless you
 changed the file meanwhile in some other way: then your settings are kept and only the formatting may differ.
@@ -70,6 +71,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -850,6 +852,37 @@ def _runs_hook_file(cmd: str) -> bool:
     return ".claude/hooks/" in cmd or "'.claude','hooks'" in cmd
 
 
+def _git_bash() -> str | None:
+    """The bash.exe Claude Code runs hooks with on Windows: CLAUDE_CODE_GIT_BASH_PATH, else Git for Windows' own (found
+    beside git.exe, then in Program Files). Never C:\\Windows\\System32\\bash.exe, which is WSL."""
+    named = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if named:
+        return named if Path(named).is_file() else None
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        g = Path(git).resolve()  # <Git>/cmd/git.exe, <Git>/bin/git.exe or <Git>/mingw64/bin/git.exe
+        candidates += [g.parent.parent / "bin" / "bash.exe", g.parent.parent.parent / "bin" / "bash.exe"]
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        root = os.environ.get(var)
+        if root:
+            candidates += [Path(root) / "Git" / "bin" / "bash.exe", Path(root) / "Programs" / "Git" / "bin" / "bash.exe"]
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
+def hook_shell(cmd: str) -> list[str]:
+    """The argv Claude Code runs a shell-form hook command with: `sh -c` on macOS and Linux; on Windows Git Bash, or
+    PowerShell where Git Bash isn't installed. cmd never runs a hook, so probing through it would test the wrong
+    shell."""
+    if os.name != "nt":
+        return ["/bin/sh", "-c", cmd]
+    bash = _git_bash()
+    if bash:
+        return [bash, "-c", cmd]
+    ps = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
+    return [ps, "-NoProfile", "-NonInteractive", "-Command", cmd]
+
+
 def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[str]:
     """Run each hook command these settings entries add once, as Claude Code would, and say which didn't run."""
     root = base.parent  # the project, or the home whose .claude this is
@@ -869,7 +902,7 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
             seen.add(cmd)
             event = json.dumps({**PROBE, "hook_event_name": r["key"], "cwd": str(root)}).encode()
             try:
-                res = subprocess.run(cmd, shell=True, input=event, capture_output=True, env=env,  # noqa: S602
+                res = subprocess.run(hook_shell(cmd), input=event, capture_output=True, env=env,  # noqa: S603
                                      cwd=root if root.is_dir() else None, timeout=30, check=False)
                 rc, said = res.returncode, (res.stderr or res.stdout).decode("utf-8", "replace").strip()
             except subprocess.TimeoutExpired:

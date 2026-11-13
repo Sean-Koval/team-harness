@@ -856,14 +856,60 @@ def test_apply_fails_loudly_when_a_hook_does_not_start(tmp_path, capsys, monkeyp
 
 @pytest.mark.skipif(os.name != "nt", reason="the native Windows shell")
 def test_posix_hook_command_on_windows_is_caught(tmp_path, monkeypatch, capsys):
-    """The teammate-guide dry run: main wrote `python3 "$CLAUDE_PROJECT_DIR"/...` on Windows, cmd can't run it, and
-    Claude Code went on with the guard off. Such a command now fails --apply and --check out loud."""
+    """The teammate-guide dry run: main wrote `python3 "$CLAUDE_PROJECT_DIR"/...` on Windows, and Claude Code went on
+    with the guard off. Without Git Bash, Claude Code runs hooks in PowerShell, where `$CLAUDE_PROJECT_DIR` is an empty
+    PowerShell variable, so the command can't find its hook. Such a command now fails --apply and --check out loud."""
     monkeypatch.setattr(il, "WINDOWS", False)
+    monkeypatch.setattr(il, "_git_bash", lambda: None)
     target = tmp_path / "svc"
     assert project(WORK, target, "--apply") == 1
     assert "hook did not run, so its guard is OFF" in capsys.readouterr().err
     assert project(WORK, target, "--check") == 1
     assert "hook did not run, so its guard is OFF" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
+@pytest.mark.parametrize("shell", ["git-bash", "powershell"])
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_windows_hook_commands_run_in_both_hook_shells(tmp_path, monkeypatch, capsys, scope, shell):
+    """The commands written for Windows pass the probe in Git Bash and, where Git Bash isn't installed, PowerShell:
+    the two shells Claude Code runs shell-form hooks with on Windows."""
+    if shell == "git-bash" and il._git_bash() is None:
+        pytest.skip("no Git Bash on this machine")
+    if shell == "powershell":
+        monkeypatch.setattr(il, "_git_bash", lambda: None)
+    monkeypatch.setattr(il, "WINDOWS", True)
+    if scope == "project":
+        assert project(WORK, tmp_path / "svc", "--apply") == 0, capsys.readouterr().err
+        assert project(WORK, tmp_path / "svc", "--check") == 0, capsys.readouterr().out
+    else:
+        home = tmp_path / "home" / ".claude"
+        assert user(WORK, home, "--apply") == 0, capsys.readouterr().err
+        assert user(WORK, home, "--check") == 0, capsys.readouterr().out
+
+
+def test_hook_shell_is_sh_off_windows(monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Windows picks Git Bash or PowerShell")
+    assert il.hook_shell("echo hi") == ["/bin/sh", "-c", "echo hi"]
+
+
+def test_git_bash_honours_claude_code_s_variable_and_never_picks_wsl(tmp_path, monkeypatch):
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    bash.parent.mkdir(parents=True)
+    bash.write_bytes(b"")
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(bash))
+    assert il._git_bash() == str(bash)
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(tmp_path / "missing.exe"))
+    assert il._git_bash() is None
+    monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH")
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(il.shutil, "which", lambda name: None)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert il._git_bash() == str(bash)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "System32"))
+    assert il._git_bash() is None
 
 
 # --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------
