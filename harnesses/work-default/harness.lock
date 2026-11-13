@@ -55,8 +55,8 @@ components:
   path: skills/org-process
   source: path:skills/org-process
 - id: skill:extract-records
-  digest: sha256:79101a88a4a864003fa26a92095701986e8871cd8b693c551a89e55468225689
-  tree: sha256:701042bd47cb97cb615a8be08d90ce28478e70fa789dd6124dd9a2fc15aa5eab
+  digest: sha256:412e3e0785849f3dac12e9770a169c9dc684289b9ecfff60e75883eab01940ae
+  tree: sha256:0ad0e9302b5ea8c3059f6fdb25654b5d09b5e414db247949dee5068d315c8dc1
   path: skills/extract-records
   source: path:skills/extract-records
 - id: native:claude-code/hooks/guard_work.py

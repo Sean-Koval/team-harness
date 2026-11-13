@@ -55,7 +55,9 @@ choice and the draft picks one option. Then write both: the question, and the de
 
 ## 3. Choose records: fewer is better
 
-Every record needs a **quotable sentence** from the Source as its basis. If you cannot quote one, drop the record.
+Every record needs a **quotable sentence** from the Source as its basis. The quote is copied **character for
+character**; trimming whitespace at its ends is the only change allowed. Never paraphrase, shorten, fix or join
+sentences. If no exact sentence supports the record, drop the record.
 
 - **Decision:** a choice the Source says was made. One decision per choice. Its sub-points (what was chosen, which
   sources, adapters, folders, schedules, fields, statuses, scopes, ids) go in **its body**, even when worded "only"
@@ -122,8 +124,10 @@ Start from the type's template. Header:
 - `sources`: `{id: <Source id>, resource: <Source path>, hash: <Source hash>}`, plus any other resource the record
   rests on. Every record extracted from the Source carries this entry.
 - `links`: `derived_from: <Source id>`. It **must** target a Source record, never a ticket, URL or another record
-  type. `belongs_to` follows the scope: a `team` record gets **none**; a `project` record always gets
-  `belongs_to: <project>`, and so does a `personal` record about a project. Add `implements` (conventions) and
+  type. `belongs_to` links the record to the **work item it was made for**: a ticket, an epic or a project. When
+  the Source names that work item (`PLAT-412`), **every** record from it gets `belongs_to: <that key>`, whatever
+  its scope. A `project` record, and a `personal` record about a project, also gets `belongs_to: <project>`. A
+  `team` record gets no `belongs_to` only when the Source names no work item. Add `implements` (conventions) and
   `supersedes` (decisions) where they apply.
 - `title`: the claim in a few words. `description`: one line that adds what the title does not (the why or the
   effect). Never a copy of the title.
@@ -135,7 +139,8 @@ Start from the type's template. Header:
   a time without a zone.
 - `author`: `agent:<model id>`.
 
-Body: the type's template headings, starting with a verbatim quote from the Source and its timestamp or speaker.
+Body: the type's template headings, starting with the quote from section 3, exact to the character, and its
+timestamp or speaker.
 
 The Source record itself moves into the checked records: propose a copy with `status: processed` at
 `<scope folder>/sources/<Source id>.md`, where the scope folder is `team/`, `personal/` or `projects/<project>/` for
