@@ -151,15 +151,16 @@ RUNNERS = {"claude-cli": extract_cli, "api": extract_api}
 
 
 def gates(summary: dict, config: dict, stale: list[str]) -> list[str]:
-    """O3 gates. No baseline gate yet: the baseline is re-recorded from the first live run (README)."""
+    """O3 gates (KAN-474): recall, and substantive edits under 10%. Cosmetic and total edits are reported only."""
     t = config["thresholds"]
     out = []
     if summary["recall"] < t["recall_min"]:
         out.append(f"recall {summary['recall']:.0%} is below {t['recall_min']:.0%} (O3)")
-    if summary["edit_or_drop_rate"] >= t["edit_or_drop_max"]:
+    if summary["substantive_rate"] >= t["substantive_max"]:
+        named = "; ".join(f"{e['case']} {e['record']} ({', '.join(e['fields'])})" for e in summary["substantive_edits"])
         out.append(
-            f"{summary['edit_or_drop_rate']:.0%} of records need an edit or deletion; O3 allows under "
-            f"{t['edit_or_drop_max']:.0%}"
+            f"{summary['substantive_rate']:.0%} of records need a substantive edit or deletion; O3 allows under "
+            f"{t['substantive_max']:.0%}: {named}"
         )
     for key in ("broken_links", "limit_failures", "unfiled_sources", "check_failures"):
         if summary[key]:
@@ -167,6 +168,10 @@ def gates(summary: dict, config: dict, stale: list[str]) -> list[str]:
     if summary["cost_usd"] > t["cost_usd_max"]:
         out.append(f"cost ${summary['cost_usd']:.2f} is over ${t['cost_usd_max']:.2f} a run")
     return out + stale
+
+
+def _fields(top: list) -> str:
+    return ", ".join(f"{f} {n}" for f, n in top) or "-"
 
 
 def preflight(repo: Path = REPO) -> tuple[str, str]:
@@ -186,6 +191,7 @@ def preflight(repo: Path = REPO) -> tuple[str, str]:
 
 def markdown(result: dict) -> str:
     s, run = result["summary"], result["run"]
+    old = result.get("reported", {}).get("edit_or_drop_max", 0.25)
     lines = [
         f"# Extraction eval: {result['mode']}",
         "",
@@ -194,10 +200,15 @@ def markdown(result: dict) -> str:
             f"{run.get('extractor', run.get('model'))}."
         ),
         "",
-        "| Precision | Recall | Fields edited | Records to edit or drop | Tokens (in/out) | Cost |",
-        "| --- | --- | --- | --- | --- | --- |",
         (
-            f"| {s['precision']:.0%} | {s['recall']:.0%} | {s['field_edit_rate']:.0%} | {s['edit_or_drop_rate']:.0%} | "
+            "| Precision | Recall | Substantive (gate) | Cosmetic | Total edit or drop (old gate) | Needs human "
+            "| Top fields | Tokens (in/out) | Cost |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        (
+            f"| {s['precision']:.0%} | {s['recall']:.0%} | {s['substantive_rate']:.0%} ({s['substantive']}) | "
+            f"{s['cosmetic_rate']:.0%} ({s['cosmetic']}) | {s['edit_or_drop_rate']:.0%} (was gated under {old:.0%}) | "
+            f"{s['needs_human']} | {_fields(s['top_fields'])} | "
             f"{s['tokens_in']:,}/{s['tokens_out']:,}{' (est.)' if s['tokens_estimated'] else ''} | ${s['cost_usd']:.2f} |"
         ),
         "",
@@ -210,18 +221,19 @@ def markdown(result: dict) -> str:
             [
                 (
                     f"Blind cases only: precision {s['blind']['precision']:.0%}, recall {s['blind']['recall']:.0%}, "
-                    f"{s['blind']['edit_or_drop_rate']:.0%} to edit or drop."
+                    f"substantive {s['blind']['substantive_rate']:.0%}, cosmetic {s['blind']['cosmetic_rate']:.0%}, "
+                    f"{s['blind']['edit_or_drop_rate']:.0%} to edit or drop in total."
                 ),
                 "",
             ]
             if s.get("blind")
             else []
         ),
-        "| Case | Blind | Produced | Expected | Matched | Edits | Extra | Missed | Problems |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Case | Blind | Produced | Expected | Matched | Substantive | Cosmetic | Top fields | Extra | Missed | Problems |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for c in result["cases"]:
-        edits = sorted({e for m in c["matched"] for e in m["edits"]})
+        sc = grade.severity_counts(c)
         problems = (
             [f"wrong: {w['produced']} ({w['why']})" for w in c["wrong"]]
             + c["limits"]
@@ -231,9 +243,13 @@ def markdown(result: dict) -> str:
         )
         lines.append(
             f"| {c['id']} | {'yes' if c['blind'] else 'no'} | {c['produced']} | {c['expected']} | {len(c['matched'])} | "
-            f"{', '.join(edits) or '-'} | {', '.join(c['extra']) or '-'} | {', '.join(c['missed']) or '-'} | "
+            f"{sc['substantive_rate']:.0%} | {sc['cosmetic_rate']:.0%} | {_fields(grade.top_fields(sc['fields']))} | "
+            f"{', '.join(c['extra']) or '-'} | {', '.join(c['missed']) or '-'} | "
             f"{'; '.join(problems) or '-'} |"
         )
+    if s["substantive_edits"]:
+        lines += ["", "**Substantive edits** (case, record, fields):"]
+        lines += [f"- {e['case']} `{e['record']}`: {', '.join(e['fields'])}" for e in s["substantive_edits"]]
     if result["pending"]:
         lines += ["", f"**Pending** (no recording yet, not graded): {', '.join(result['pending'])}"]
     if result["needs_human"]:
@@ -288,6 +304,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             raise FileNotFoundError(f"no recording for {case['id']} in {recorded}")
         result = grade.grade_case(case, case["root"], proposal)
         result["blind"] = bool(meta.get("blind", {}).get(case["id"]))
+        result["needs_human"] = [n["record"] for n in meta.get("needs_human", []) if n.get("case") == case["id"]]
         usage = meta.get("tokens", {}).get(case["id"]) or estimate_tokens(config, case, proposal)
         tokens_in, tokens_out = tokens_in + usage["input"], tokens_out + usage["output"]
         estimated = estimated or usage.get("estimated", False)
@@ -317,6 +334,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "cases": results,
         "pending": waiting,
         "needs_human": meta.get("needs_human", []),
+        "reported": config.get("reported", {}),
         "failures": failures,
     }
 

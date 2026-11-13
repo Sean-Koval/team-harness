@@ -2,11 +2,28 @@
   "gate": false,
   "skill_ref": "team-harness 97929d3 (KAN-435, PR #20)",
   "extractor": "01-09: not blind (author saw case list), claude-opus-5-5 by hand at 97929d3; 10-12: blind, separate agent, opus-5-5, SKILL at 58de185",
-  "graded_by": "scripts/extract_grade.py: quote pairing; description an edit only when empty or the title; a record knowledge check refuses is an edit",
+  "graded_by": "scripts/extract_grade.py: quote pairing; title cutoff 0.6; description an edit only when empty or the title; a record knowledge check refuses is an edit; edits split by severity (KAN-474)",
   "all_cases": {
     "precision": 1.0,
     "recall": 0.9667,
-    "edit_or_drop_rate": 0.1724
+    "edit_or_drop_rate": 0.1724,
+    "substantive_rate": 0.1379,
+    "cosmetic_rate": 0.0345,
+    "needs_human": 2,
+    "top_fields": [
+      [
+        "links",
+        3
+      ],
+      [
+        "quote",
+        1
+      ],
+      [
+        "title",
+        1
+      ]
+    ]
   },
   "note": "Cases 10-12 are the trustworthy subset. Not a gate. Replace from the first live run: python scripts/extract_eval.py --live --runner claude-cli --record",
   "needs_human": [
@@ -17,6 +34,18 @@
     "precision": 1.0,
     "recall": 1.0,
     "edit_or_drop_rate": 0.2727,
-    "check_failures": 0
+    "check_failures": 0,
+    "substantive_rate": 0.2727,
+    "cosmetic_rate": 0.0,
+    "top_fields": [
+      [
+        "links",
+        2
+      ],
+      [
+        "quote",
+        1
+      ]
+    ]
   }
 }
