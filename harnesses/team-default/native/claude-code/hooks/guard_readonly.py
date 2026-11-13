@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """PreToolUse hook: keep production read-only from the agent's shell.
 
-Claude Code passes the tool call as JSON on stdin. For a Bash call, this blocks commands that would change a
+Claude Code passes the tool call as JSON on stdin. For a Bash call (or a PowerShell call, Claude Code's shell tool
+on Windows without Git Bash), this blocks commands that would change a
 cluster or print a credential, by exiting 2 with the reason on stderr (Claude Code shows it to the agent and skips
-the call). Everything else is allowed with exit 0. It reads only the command text, runs nothing and writes nothing.
+the call). Each command is also judged as it runs once PowerShell's and Windows' spellings are taken off (a quoted
+or `& 'kubectl'` program name, `kubectl.exe`, backtick escapes, a variable the call sets). A call it cannot read
+(not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is blocked. Everything else
+is allowed with exit 0. It reads only the command text, runs nothing and writes nothing.
 
 The MCP servers are read-only on their own (`--read-only`, viewer roles); this covers the shell, where an
 environment may also have `kubectl`, `helm` or `gcloud`.
@@ -14,6 +18,8 @@ from __future__ import annotations
 import json
 import re
 import sys
+
+SHELL_TOOLS = {"Bash", "PowerShell"}  # PowerShell: Claude Code's shell tool on Windows without Git Bash
 
 BLOCKED = [
     (r"\bkubectl\b(?:\s+-\S+(?:\s+\S+)?)*\s+(apply|create|replace|patch|edit|delete|scale|autoscale|annotate|label|"
@@ -32,10 +38,32 @@ BLOCKED = [
 
 
 def _commands(command: str) -> list[str]:
-    """The whole call with each line ending made a `;`, then every single command in it. Each is judged, so a
-    newline, `;`, `&&`, `||`, `|` or `&` cannot hide a command from a pattern."""
-    joined = re.sub(r"\s*\r?\n\s*", " ; ", re.sub(r"\\\r?\n", " ", command))
-    return [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
+    """The whole call with each line ending made a `;`, then every single command in it, each also as the program
+    would run it. Each is judged, so a newline, `;`, `&&`, `||`, `|` or `&` cannot hide a command from a pattern, and
+    neither can PowerShell's or Windows' spellings of it (see _plain)."""
+    out = []
+    for text in dict.fromkeys([command, _plain(command)]):
+        joined = re.sub(r"\s*\r?\n\s*", " ; ", re.sub(r"\\\r?\n", " ", text))
+        out += [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
+    return list(dict.fromkeys(out))
+
+
+def _plain(command: str) -> str:
+    """The call with the spellings that hide a program from a pattern taken off: PowerShell's backtick escapes and
+    line continuations, its call operator `& 'kubectl'`, quotes around words, a `.exe` suffix, the commas of an
+    `-ArgumentList`, and variables the call sets itself (`$c='delete'`, `c=delete`) put back where they are used.
+    `iex`, `Invoke-Expression`, `Start-Process` and `cmd /c` need no unwrapping: the patterns search the whole text."""
+    text = re.sub(r"`\r?\n", " ", command)
+    text = re.sub(r"`(.)", r"\1", text)
+    names = {}
+    for m in re.finditer(r"(?:^|[\s;&|(])\$?\{?([A-Za-z_]\w*)\}?\s*=(?!=)\s*(['\"]?)([^'\";&|\r\n]*)\2", text):
+        names[m.group(1).lower()] = m.group(3).strip()
+    if names:
+        text = re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: names.get(m.group(1).lower(), m.group(0)), text)
+    text = re.sub(r"(^|[;&|(\n]\s*)&\s*", r"\1", text)  # the call operator: & 'kubectl' delete
+    text = re.sub(r"['\"]", "", text)
+    text = re.sub(r"(?i)\.exe\b", "", text)
+    return text.replace(",", " ")
 
 
 def _read_event() -> tuple[object, str | None]:
@@ -45,12 +73,18 @@ def _read_event() -> tuple[object, str | None]:
         text = sys.stdin.buffer.read().decode("utf-8-sig")
     except UnicodeDecodeError:
         return None, "the tool call is not valid UTF-8, so it cannot be checked"
-    except OSError:
-        return None, None
+    except (OSError, AttributeError, ValueError):  # AttributeError: no stdin at all; ValueError: it is closed
+        return None, "the tool call could not be read, so it cannot be checked"
     try:
-        return json.loads(text), None
+        event = json.loads(text)
     except ValueError:
         return None, "the tool call is not valid JSON, so it cannot be checked"
+    if not isinstance(event, dict):
+        return None, "the tool call is not a JSON object, so it cannot be checked"
+    if event.get("tool_name") in SHELL_TOOLS and not (isinstance(event.get("tool_input"), dict) and
+                                                      isinstance(event["tool_input"].get("command"), str)):
+        return None, "the shell call carries no command text, so it cannot be checked"
+    return event, None
 
 
 def _block(message: str) -> int:
@@ -61,10 +95,18 @@ def _block(message: str) -> int:
 
 
 def main() -> int:
+    try:
+        return _main()
+    except Exception as e:  # noqa: BLE001 - a hook that crashes exits 1, which lets the call through: fail closed
+        return _block(f"blocked by the team harness: the hook failed ({type(e).__name__}), "
+                      "so the call cannot be checked. Diagnose read-only and propose the change in a PR.")
+
+
+def _main() -> int:
     event, problem = _read_event()
     if problem:
         return _block(f"blocked by the team harness: {problem}. Diagnose read-only and propose the change in a PR.")
-    if not isinstance(event, dict) or event.get("tool_name") != "Bash":
+    if not isinstance(event, dict) or event.get("tool_name") not in SHELL_TOOLS:
         return 0
     for command in _commands(str((event.get("tool_input") or {}).get("command") or "")):
         for pattern, why in BLOCKED:

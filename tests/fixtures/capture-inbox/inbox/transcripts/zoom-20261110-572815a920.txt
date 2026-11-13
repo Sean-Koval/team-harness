@@ -1,0 +1,5 @@
+# Platform weekly
+# Participants: Ana Ruiz, Ben Okafor
+
+[09:00:05] Ana Ruiz: Decided: runbooks live in the service repository, not the wiki.
+[09:01:10] Ben Okafor: I'll move the three runbooks by Friday the 20th.

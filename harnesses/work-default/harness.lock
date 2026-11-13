@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: work-default
-revision: 13
+revision: 14
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -80,16 +80,16 @@ components:
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: native:claude-code/hooks/guard_work.py
-  digest: sha256:316b3f24ed2c8d5d3535efb7bbd387449ad364dedea998e5329d7e5437983122
+  digest: sha256:a8067e11cf9aae444e7feee6ecaaac60718bad6e4b01c7b44b0b81e04931889c
   path: native/claude-code/hooks/guard_work.py
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:80de7c32767ca172c8316f77e0b7d835204cd9564d44bcb3beb28f3a6cea964d
+  digest: sha256:f17a022324f59011fe4a641646c9b9f599c1d46282e1e6a4d66b1e1ccffc3589
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/hooks/knowledge_session_end.py
-  digest: sha256:e871a09b2e15808c1dfae085f98d3909f00c9f188c95ab125e7deff0e34a8729
+  digest: sha256:5c021673f439e14ece3682255fb75b17cc73d579b60d0bb5db98ed149cd30350
   path: native/claude-code/hooks/knowledge_session_end.py
 - id: native:claude-code/settings.json
-  digest: sha256:64db4d19973c6b9e48d8904a05c726ec7aaf7c5b3df9507815a1cba7c3580967
+  digest: sha256:43488e6c8aa65f1cddaadad2bf1c7c73abe2338bca28c0075a3eabd7342f83fe
   path: native/claude-code/settings.json
 binding:
   mcp:
@@ -116,13 +116,13 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:437803b95e1f98f425d811cf80b37c2bcc6acab3305335e8c07a380e2c16f4c4
+    digest: sha256:0a727ace310aa23d8464411dd65be7b228f3854065233e8cac7e07794ac8e41c
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:437803b95e1f98f425d811cf80b37c2bcc6acab3305335e8c07a380e2c16f4c4
+    digest: sha256:0a727ace310aa23d8464411dd65be7b228f3854065233e8cac7e07794ac8e41c
   - event: SessionEnd
     source: environment:.claude/settings.json
-    digest: sha256:437803b95e1f98f425d811cf80b37c2bcc6acab3305335e8c07a380e2c16f4c4
+    digest: sha256:0a727ace310aa23d8464411dd65be7b228f3854065233e8cac7e07794ac8e41c
 plugins:
   autoUpdate: false
 remote: []

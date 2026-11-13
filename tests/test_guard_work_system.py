@@ -901,6 +901,76 @@ def test_harmless_graphql_on_stdin_and_defaults_pass():
     assert bash("gh ${X:-pr} view 5") == 0
 
 
+@pytest.mark.parametrize("command", [
+    "git push origin main",
+    "git push --force origin KAN-1-x",
+    "gh pr merge 12 --squash",
+    "git push -u origin KAN-315-work-system-layer",
+    "gh pr list",
+])
+def test_powershell_calls_are_judged_like_bash(command):
+    """On Windows without Git Bash, Claude Code's shell tool is PowerShell (KAN-482): the same command gets the same
+    verdict and the same reason."""
+    as_bash = run({"tool_name": "Bash", "tool_input": {"command": command}})
+    as_ps = run({"tool_name": "PowerShell", "tool_input": {"command": command}})
+    assert (as_ps.returncode, as_ps.stderr) == (as_bash.returncode, as_bash.stderr)
+    assert command.startswith(("git push origin main", "git push --force", "gh pr merge")) == (as_ps.returncode == 2)
+
+
+def _tool(tool: str, command) -> subprocess.CompletedProcess:
+    event = {"tool_name": tool, "tool_input": {"command": command}}
+    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event).encode(), capture_output=True)
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", [
+    "Start-Process gh -ArgumentList 'pr','merge','12'",
+    "Start-Process -FilePath gh -ArgumentList 'pr merge 12'",
+    "saps gh 'pr','merge','12'",
+    "iex 'gh pr merge 12'",
+    'Invoke-Expression "gh pr merge 12"',
+    'gh pr `\nmerge 12',
+    'gh pr `merge 12',
+    "$c='merge'; gh pr $c 12",
+    "$c = 'merge'; gh pr $c 12",
+    "$C = 'merge'; gh pr $c 12",
+    'cmd /c gh pr merge 5',
+    '& gh pr merge 5',
+    "& 'gh' pr merge 5",
+    'gh.exe pr merge 5',
+    'git.exe push origin HEAD:main',
+])
+def test_powershell_s_own_spellings_are_blocked(tool, command):
+    """PowerShell runs these as the plain command: iex and Invoke-Expression are eval, Start-Process and cmd /c are sh -c,
+    a backtick escapes the next character or the line end, and $c = 'x' is c=x (PR 40 review). The .exe name
+    and a quoted program name are the same program in either shell."""
+    if tool == "Bash" and "`" in command:
+        pytest.skip("a lone backtick is an unclosed substitution in bash: nothing runs")
+    r = _tool(tool, command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", ['git status', 'Get-ChildItem', 'Start-Process notepad', "Write-Output 'a`b'", '$x = 1; git log -1', 'cmd /c dir', "iex 'git status'"])
+def test_ordinary_powershell_still_passes(tool, command):
+    assert _tool(tool, command).returncode == 0, command
+
+
+@pytest.mark.parametrize("data", [b"null", b"[]", b"7", b'"x"', b'{"tool_name": "Bash"}',
+                                  b'{"tool_name": "PowerShell", "tool_input": {"command": 5}}',
+                                  b'{"tool_name": "Bash", "tool_input": []}'])
+def test_a_call_that_is_not_an_object_or_has_no_command_text_fails_closed(data):
+    r = subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True)
+    assert r.returncode == 2 and b"cannot be checked" in r.stderr, (data, r.stderr)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="closes stdin with the POSIX shell")
+def test_a_closed_stdin_fails_closed():
+    """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
+    r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
+    assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
+
+
 @pytest.mark.parametrize("name, value, ok", [
     ("mcp_bindings", '{"tracker": ["atlassian"], "ai-dlc": ["ai-dlc"]}', True),
     ("mcp_bindings", '{"tracker": "atlassian"}', False),

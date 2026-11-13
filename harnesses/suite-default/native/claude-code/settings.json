@@ -20,7 +20,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|mcp__.*",
+        "matcher": "Bash|PowerShell|mcp__.*",
         "hooks": [
           {
             "type": "command",

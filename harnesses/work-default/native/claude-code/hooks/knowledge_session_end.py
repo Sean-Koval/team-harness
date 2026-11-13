@@ -80,7 +80,9 @@ def tail(path: Path) -> list[str]:
 
 def main() -> int:
     try:
-        event = json.load(sys.stdin)
+        # bytes, not sys.stdin: on Windows its text layer decodes with the console code page, so a profile path
+        # with a non-ASCII letter (C:\\Users\\Jörg) would name no file and the reminder would never fire
+        event = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
         path = Path(str(event.get("transcript_path") or ""))
         if not path.is_file():
             return 0

@@ -48,7 +48,11 @@ Confluence writes it names. xargs and `find -exec` around a guarded command are 
 decide it are not in the call. Not covered: shell aliases and functions defined before the call, variables set
 outside it, code fetched or built at run time (`bash -c "$(curl ...)"`, base64 decoding, IFS tricks, string
 concatenation in a script), and commands build tools read from their own files (`make`, `npm run`, `just`); the PR
-check and branch protection still apply. Input that is not UTF-8 or not JSON is blocked (fail closed). Everything else is allowed with exit 0.
+check and branch protection still apply. A PowerShell call is also read as PowerShell runs it: `iex` and
+`Invoke-Expression` are judged as `eval`, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a
+backtick before a character or a line end is that character or a continuation, and `$c = 'x'` sets c as `c=x` does.
+Input that is not UTF-8, not JSON or not an object, a shell call without command text, a closed stdin and any error
+in the hook itself are blocked (fail closed). Everything else is allowed with exit 0.
 The only commands it runs are `git symbolic-ref --short HEAD`, to learn the branch, and `git config --get
 alias.<name>` for a git subcommand it does not know, both read-only; it reads the scripts a call runs and gh's config
 file, and writes nothing. The ticket key pattern is `WORK_SYSTEM_KEY` (a regex, default `[A-Z][A-Z0-9]{1,9}-[0-9]+`)
@@ -553,10 +557,45 @@ def why(event: dict) -> str | None:
         args = event.get("tool_input") or {}
         words = ["--title", str(args.get("title") or ""), "--body", str(args.get("body") or "")]
         return _pr_create(words, None)
-    if tool != "Bash":
+    if tool not in SHELL_TOOLS:
         return None
-    return _judge(str(args.get("command") or ""), _Ctx(event.get("cwd"), str(args.get("command") or "")), 0)
+    command = event["tool_input"].get("command") if isinstance(event.get("tool_input"), dict) else None
+    if not isinstance(command, str):
+        return "the shell call carries no command text, so it cannot be checked"
+    cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
+    reason = _judge(command, _Ctx(cwd, command), 0)
+    if reason or tool != "PowerShell":
+        return reason
+    ps = _powershell(command)  # PowerShell's own escapes, judged too: either reading may be how it runs
+    return _judge(ps, _Ctx(cwd, ps), 0) if ps != command else None
 
+
+def _powershell(command: str) -> str:
+    """A PowerShell line as a POSIX shell would read the same words: a backtick before a line end continues the line,
+    and before any other character is just that character (`` gh pr `merge `` runs `gh pr merge`), except inside
+    single quotes, where PowerShell keeps it."""
+    out, i, n, quote = [], 0, len(command), False
+    while i < n:
+        c = command[i]
+        if c == "'":
+            quote = not quote
+        elif c == "`" and not quote and i + 1 < n:
+            nxt = command[i + 1]
+            if nxt in "\r\n":
+                i += 3 if command.startswith("\r\n", i + 1) else 2
+                out.append(" ")
+                continue
+            out.append(nxt)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+# Claude Code's shell tools: Bash, and on Windows PowerShell (where Git Bash isn't installed). Both carry the command
+# in tool_input.command, and both are judged the same way.
+SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 
 NEVER_MERGE = "agents never merge in this harness: approvers and hangar land PRs (skill github-pr)"
 NEVER_APPROVE = ("agents never approve, auto-merge or dismiss reviews in this harness: approvers land PRs "
@@ -680,6 +719,7 @@ INTERPRETERS = re.compile(r"^(?:python[0-9.]*|py|pypy[0-9.]*|node|nodejs|deno|bu
 HTTP_CLIENTS = {"curl", "wget", "http", "https", "xh", "xhs", "invoke-restmethod", "invoke-webrequest", "irm", "iwr"}
 ATLASSIAN_CLIS = {"acli", "jira", "jira-cli"}
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
+PS_ASSIGN = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))\s*=(?!=)\s*(.*)$", re.S)
 REDIRECT = re.compile(r"^[0-9]*(?:<<<|<<-?|<>|<&|>&|&>>|&>|>>|>\||<|>)(.*)$")
 VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 PARAM_DEFAULT = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?[-=])([^{}]*)\}")
@@ -713,6 +753,7 @@ class _Ctx:
         self.aliases: dict[str, str] = {}
         self.git_aliases: dict[str, str] = {}
         self.vars: dict[str, str] = {}
+        self.ps_vars: dict[str, str] = {}  # PowerShell's, by lower-case name: its variable names ignore case
         self.stdin: str | None = None  # the heredoc body the current command reads
 
 
@@ -752,6 +793,8 @@ def _expand(segment: str, ctx: _Ctx) -> str:
     segment = PARAM_DEFAULT.sub(default, segment)
     if ctx.vars:
         segment = VAR.sub(lambda m: ctx.vars.get(m.group(1) or m.group(2), m.group(0)), segment)
+    if ctx.ps_vars:
+        segment = VAR.sub(lambda m: ctx.ps_vars.get((m.group(1) or m.group(2)).lower(), m.group(0)), segment)
     return segment
 
 
@@ -827,6 +870,12 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
     words = _words(segment)
     if words and words[0] in ("export", "declare", "typeset", "local", "readonly"):
         words = [w for w in words[1:] if not w.startswith("-")]
+    m = PS_ASSIGN.match(segment)  # PowerShell's $c = 'merge' (or $c='merge'): remembered as c=merge is
+    if m:
+        value = _words(m.group(3))
+        ctx.vars[m.group(1) or m.group(2)] = " ".join(value) if value else ""
+        ctx.ps_vars[(m.group(1) or m.group(2)).lower()] = ctx.vars[m.group(1) or m.group(2)]  # $C is $c there
+        return None
     for w in words:  # X=merge on its own (or before a command) is remembered for the rest of the call
         m = ASSIGN.match(w)
         if not m:
@@ -847,6 +896,14 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
             if m:
                 ctx.aliases[m.group(1)] = m.group(2)
         return None
+    if prog in ("iex", "invoke-expression"):  # PowerShell's eval
+        return _judge(" ".join(words[1:]), ctx, depth + 1) or \
+            (_scan(ctx.full, ctx) if re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
+    if prog == "cmd":
+        code = next((i for i, w in enumerate(words[1:], 1) if w.lower() in ("/c", "/k", "/r")), None)
+        return _judge(" ".join(words[code + 1:]), ctx, depth + 1) if code else None
+    if prog in ("start-process", "saps", "start"):
+        return _start_process(words, ctx, depth)
     if prog == "eval":
         code = " ".join(words[1:])
         return _judge(code, ctx, depth + 1) or (_scan(ctx.full, ctx) if re.search(r"\$[({A-Za-z_]|`", code) else None)
@@ -871,6 +928,31 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
     if prog not in ("git", "gh") and re.search(r"[\\/]", words[0]):
         return _program(words[0], ctx, depth)
     return _command(words, ctx)
+
+
+def _start_process(words: list[str], ctx: _Ctx, depth: int) -> str | None:
+    """PowerShell's Start-Process gh -ArgumentList 'pr','merge','5' (or -FilePath gh -Args ...): the program and its
+    argument list judged as the command they make."""
+    args, prog, rest, i = words[1:], None, [], 0
+    while i < len(args):
+        low = args[i].lower()
+        if low in ("-filepath", "-file", "-path") and i + 1 < len(args):
+            prog, i = args[i + 1], i + 2
+        elif low in ("-argumentlist", "-args", "-arguments") and i + 1 < len(args):
+            j = i + 1
+            while j < len(args) and not args[j].startswith("-"):
+                rest += [a for a in re.split(r"[,\s]+", args[j]) if a]
+                j += 1
+            i = j
+        elif low.startswith("-"):
+            i += 2 if low in ("-workingdirectory", "-verb", "-windowstyle", "-redirectstandardoutput",
+                              "-redirectstandarderror", "-redirectstandardinput", "-credential") else 1
+        elif prog is None:
+            prog, i = args[i], i + 1
+        else:
+            rest += [a for a in re.split(r"[,\s]+", args[i]) if a]  # positional: the argument list
+            i += 1
+    return _judge(shlex.join([prog] + rest), ctx, depth + 1) if prog else None
 
 
 def _program(word: str, ctx: _Ctx, depth: int) -> str | None:
@@ -1287,18 +1369,27 @@ def _gh_api(args: list[str], ctx: _Ctx) -> str | None:
 
 def main() -> int:
     try:
+        return _main()
+    except Exception as e:  # noqa: BLE001 - a hook that crashes exits 1, which lets the call through: fail closed
+        return _block(f"the hook failed ({type(e).__name__}), so the call cannot be checked")
+
+
+def _main() -> int:
+    try:
         # bytes, not sys.stdin: on Windows its text layer decodes with the console code page, not UTF-8
         data = sys.stdin.buffer.read()
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return _block("the tool call is not valid UTF-8, so it cannot be checked")  # fail closed
-    except OSError:
-        return 0
+    except (OSError, AttributeError, ValueError):  # AttributeError: no stdin at all; ValueError: it is closed
+        return _block("the tool call could not be read, so it cannot be checked")  # fail closed
     try:
         event = json.loads(text)
     except ValueError:
         return _block("the tool call is not valid JSON, so it cannot be checked")  # fail closed
-    reason = why(event) if isinstance(event, dict) else None
+    if not isinstance(event, dict):
+        return _block("the tool call is not a JSON object, so it cannot be checked")  # fail closed
+    reason = why(event)
     return _block(reason) if reason else 0
 
 
