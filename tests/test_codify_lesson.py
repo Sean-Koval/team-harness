@@ -1,9 +1,10 @@
 """The codify-lesson skill (KAN-470): its rules, and its three example lessons.
 
-tests/fixtures/codify-lesson/ holds one lesson per outcome: a convention (a), a harness change (b) and not codifiable
-(c). These tests hold each case to the skill's rules: one outcome, the convention cites the lesson and is never wider
-than it, the harness PR cites the lesson and changes only shared files, a customer-bound lesson stays in its project,
-and the follow-up only marks the lesson codified. Every tree passes `ai-dlc knowledge check` when ai-dlc is importable
+tests/fixtures/codify-lesson/ holds five lessons: a convention no accepted decision covers (a draft) and one an accepted
+decision delegates (active), a harness change (b), and two not codifiable (c): customer-bound, and guard-relaxing.
+These tests hold each case to the skill's rules: the convention cites the lesson, is never wider than it, and is
+active only under an accepted decision; the harness PR cites the lesson and changes only shared files; a
+not-codifiable lesson gains only its reason; and the follow-up only marks the lesson codified. Every tree passes `ai-dlc knowledge check` when ai-dlc is importable
 or its CLI is on PATH.
 """
 
@@ -25,7 +26,7 @@ TARGETS = yaml.safe_load((SHARED / "targets.yaml").read_text())
 # Tracker, wiki and vendor tools the skill must not name: it calls ai-dlc roles only.
 VENDORS = re.compile(
     r"jira|confluence|atlassian|mcp__|github\.com|\bgh\b|zoom|google meet|symphony|slack|notion"
-    r"|createJiraIssue|transitionJiraIssue|executeWrite",
+    r"|createJiraIssue|transitionJiraIssue|execute(Read|Write|Destructive)",
     re.I,
 )
 
@@ -87,9 +88,10 @@ def test_skill_keeps_its_rules():
         "ai-dlc knowledge records get", "ai-dlc knowledge check", "ai-dlc knowledge records propose",
         "untrusted data", "status: open", "exactly one", "never wider", "boundary: customer",
         "`not-codifiable`", "## Codification", "status: codified", "codified_as", "never merge",
-        "implements: <decision id>", "github-pr", "left for review", "Lesson: <lesson id>", "{{wall}}", "{{owner}}",
+        "implements: <decision id>", "github-pr", "Lesson: <lesson id>", "{{wall}}", "{{owner}}",
         "decision-ticket", "never file it yourself", "With no ticket, open nothing", "only when it has no `label`",
-        "would relax the guard hook", "else `draft`",
+        "would relax the guard hook", "else `draft`", "**accepted** decision", "only shares the subject does not count",
+        "Request review from {{owner}}", "## Follow-up", "only once it is `active`",
     ):  # fmt: skip
         assert rule in text, rule
     assert re.search(r"Never\s+`derived_from`", text)
@@ -101,7 +103,7 @@ def test_skill_keeps_its_rules():
 def test_tree_passes_knowledge_check(case, side):
     tree = CASES / case["id"] / side
     if not tree.is_dir():
-        assert side == "followup" and case["outcome"] == "not-codifiable"
+        assert side == "followup" and (case["outcome"] == "not-codifiable" or case.get("status") == "draft")
         return
     assert knowledge_check(tree) == []
 
@@ -121,15 +123,24 @@ def test_pr_writes_only_what_its_outcome_allows(case):
     assert changed == sorted(case["writes"])
 
 
-def test_convention_cites_the_lesson_and_is_no_wider():
-    case = next(c for c in MANIFEST if c["outcome"] == "convention")
+CONVENTIONS = [c for c in MANIFEST if c["outcome"] == "convention"]
+
+
+@pytest.mark.parametrize("case", CONVENTIONS, ids=[c["id"] for c in CONVENTIONS])
+def test_convention_cites_the_lesson_and_is_no_wider(case):
     tree = CASES / case["id"] / "after"
     lesson, _ = records(tree)[lesson_path(case, tree)]
     head, body = records(tree)[case["writes"][0]]
-    assert head["type"] == "convention" and head["status"] == "active"
+    assert head["type"] == "convention" and head["status"] == case["status"]
     assert head["sources"][0] == {"id": case["lesson"], "resource": lesson_path(case, tree)}, "sources[0] is the lesson"
     assert head["scope"] == lesson["scope"] and head.get("domain") == lesson.get("domain")
-    assert {"type": "implements", "target": case["governing_decision"]} in head["links"]
+    implements = [link["target"] for link in head["links"] if link["type"] == "implements"]
+    if case["status"] == "active":
+        assert implements == [case["governing_decision"]], "an active convention implements its decision"
+        decision = next(h for h, _ in records(tree).values() if h["id"] == case["governing_decision"])
+        assert decision["type"] == "decision" and decision["status"] == "accepted", "only an accepted decision"
+    else:
+        assert implements == [] and case["governing_decision"] is None, "a draft links no decision it doesn't have"
     assert all(link["type"] != "derived_from" for link in head["links"])
     assert re.findall(r"^## (.+)$", body, flags=re.M) == ["Rule", "Why", "Examples"]
     assert case["lesson"] in body.split("## Why", 1)[1], "Why cites the lesson"
@@ -143,20 +154,23 @@ def test_harness_change_cites_the_lesson_and_touches_only_shared_files():
     key = re.match(r"^([A-Z][A-Z0-9]{1,9}-[0-9]+): ", head["title"]).group(1)
     assert re.search(rf"(?m)^Jira: {key}$", body), "the PR body links the same ticket (github-pr)"
     assert re.search(rf"(?m)^Lesson: {case['lesson']}$", body), "the PR body cites the lesson"
+    assert head["review_requested_from"] == "owner", "a person reviews a change shaped by lesson text"
+    assert "\n## Follow-up\n" in body and case["lesson"] in body.split("## Follow-up", 1)[1], "the follow-up survives"
     assert head["files"]
     for path in head["files"]:
         assert path.startswith("shared/work-system/"), path
         assert (ROOT / path).is_file(), path
 
 
-def test_customer_bound_lesson_stays_in_its_project():
-    case = next(c for c in MANIFEST if c["outcome"] == "not-codifiable")
+NOT_CODIFIABLE = [c for c in MANIFEST if c["outcome"] == "not-codifiable"]
+
+
+@pytest.mark.parametrize("case", NOT_CODIFIABLE, ids=[c["id"] for c in NOT_CODIFIABLE])
+def test_not_codifiable_lesson_gains_only_its_reason(case):
     before, after = (CASES / case["id"] / s for s in ("before", "after"))
     path = lesson_path(case, after)
-    old, _ = records(before)[path]
+    old, old_body = records(before)[path]
     new, body = records(after)[path]
-    assert old["boundary"] == "customer"
-    _, old_body = records(before)[path]
     assert set(records(after)) == set(records(before)), "the PR adds no record, inside the project or out"
     assert new["status"] == "open"
     assert new["tags"] == [*(old.get("tags") or []), "not-codifiable"], "tags only gain not-codifiable"
@@ -165,7 +179,16 @@ def test_customer_bound_lesson_stays_in_its_project():
     assert body[len(old_body.rstrip()) :].lstrip().startswith("## Codification\n\nNot codifiable: ")
 
 
-@pytest.mark.parametrize("case", [c for c in MANIFEST if c["outcome"] != "not-codifiable"], ids=lambda c: c["id"])
+FOLLOWUPS = [c for c in MANIFEST if (CASES / c["id"] / "followup").is_dir()]
+
+
+def test_followups_exist_where_the_skill_drafts_them():
+    assert {c["id"] for c in FOLLOWUPS} == {
+        c["id"] for c in MANIFEST if c["outcome"] == "harness-change" or c.get("status") == "active"
+    }
+
+
+@pytest.mark.parametrize("case", FOLLOWUPS, ids=[c["id"] for c in FOLLOWUPS])
 def test_followup_only_marks_the_lesson_codified(case):
     after, followup = (CASES / case["id"] / s for s in ("after", "followup"))
     path = lesson_path(case, followup)
@@ -188,6 +211,14 @@ def test_followup_only_marks_the_lesson_codified(case):
     assert others == {p: r for p, r in records(after).items() if r[0]["type"] not in ("lesson", "convention")}
 
 
-def test_cases_cover_each_outcome_once():
-    assert sorted(c["outcome"] for c in MANIFEST) == ["convention", "harness-change", "not-codifiable"]
+def test_customer_bound_lesson_stays_in_its_project():
+    case = next(c for c in MANIFEST if c["id"] == "03-customer-boundary")
+    after = records(CASES / case["id"] / "after")
+    assert after[lesson_path(case, CASES / case["id"] / "after")][0]["boundary"] == "customer"
+    assert all(p.startswith("projects/harbor-portal/") for p in after), "nothing leaves the project"
+
+
+def test_cases_cover_each_outcome():
+    assert {c["outcome"] for c in MANIFEST} == {"convention", "harness-change", "not-codifiable"}
+    assert {c["status"] for c in CONVENTIONS} == {"active", "draft"}, "both sides of the accepted-decision rule"
     assert json.dumps(MANIFEST)  # plain data

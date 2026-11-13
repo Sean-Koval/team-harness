@@ -3,6 +3,7 @@ title: "ENG-90: codify LES-0011, the guard hook's push refusal says what to do i
 files:
   - shared/work-system/hooks/guard_work_system.py
 lesson: LES-0011
+review_requested_from: owner
 ---
 Jira: ENG-90
 Docs: none (the hook's refusal message only)
@@ -13,3 +14,9 @@ Lesson: LES-0011
 
 The refusal message for a push to the default branch now names the next step. No records change in this PR; the
 lesson is marked codified by a follow-up records PR once this one merges.
+
+## Follow-up
+
+Once this merges, `team/lessons/LES-0011.md` gets `status: codified` and the link
+`{type: codified_as, target: <this PR's merged URL>}`, nothing else changed (drafted in
+`.ai-dlc/local/codify-lesson/LES-0011/LES-0011.md`).

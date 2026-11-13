@@ -2,14 +2,13 @@
 id: skill-md-under-150-lines
 type: convention
 scope: team
-status: active
+status: draft
 date: '2026-11-13'
 owner: lead-example
 sources:
   - {id: LES-0004, resource: team/lessons/LES-0004.md}
   - {resource: 'https://traces.example.invalid/review/2026-11-02'}
-links:
-  - {type: implements, target: DEC-0031}
+links: []
 title: A skill's SKILL.md stays under 150 lines
 description: Every session pays for a skill's full length, so examples and tables live in files it names
 domain: harness

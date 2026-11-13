@@ -54,16 +54,17 @@ Never open two PRs for one lesson.
 - **Changes an existing rule:** write a new convention that `supersedes` the old one, and propose the old one again
   with only `status: retired` changed.
 - **Otherwise:** write a new convention from the template:
-  - `id`: a short slug. `status: active` when a decision governs it, else `draft` (see `links`). `date`: today.
-    `owner`: the lesson's owner.
+  - `id`: a short slug. `status: active` only when an **accepted** decision states or delegates this rule (see
+    `links`), else `draft`. `date`: today. `owner`: the lesson's owner.
   - `scope`: the lesson's scope, never wider. A `project` lesson gives a `project` convention in the same project,
     with the same `boundary` and `belongs_to`. `domain`: the lesson's, for team scope.
   - `sources`: `{id: <lesson id>, resource: <lesson path>}` first, then the lesson's own evidence entries. This is
     how the convention links back to the lesson; the lesson links forward with `codified_as` after merge.
-  - `links`: `implements: <decision id>` when a step 1.2 decision governs the subject (every convention cites the
-    decision that created it). With none, the convention stays `draft`: name the Decision it needs under
-    Follow-ups. Add `supersedes` where it applies. Never `derived_from`: it must target a Source record, and a
-    lesson is not one.
+  - `links`: `implements: <decision id>` only for an **accepted** decision from step 1.2 that states this rule or
+    delegates rules like it to conventions (every convention cites the decision that created it). A decision that
+    only shares the subject does not count. With none, link no decision; the convention stays `draft`, and the
+    report names the Decision it needs under Follow-ups. Add `supersedes` where it applies. Never `derived_from`:
+    it must target a Source record, and a lesson is not one.
   - `label`: the lesson's. `author`: `agent:<model id>`.
   - Body, under the template's headings: **Rule**, one or two sentences a reviewer can check a change against;
     **Why**, the lesson's evidence with its numbers, citing the lesson id; **Examples**, one that follows the rule
@@ -84,8 +85,9 @@ Never open two PRs for one lesson.
 - Edit by hand only files under `shared/work-system/` (a skill, a hook, `guide/`). Keep the change to what the
   lesson asks. Never edit `harnesses/` by hand: generate the rest as the repository's `AGENTS.md` says.
 - Run the repository's tests and checks.
-- Open the PR as the `github-pr` skill says, left for review, under the ticket that asked for this codification:
-  its key starts the branch and the title. With no ticket, open nothing and say so under Flags. The body holds a
+- Open the PR as the `github-pr` skill says, under the ticket that asked for this codification: its key starts
+  the branch and the title. Request review from {{owner}} on the PR itself, so that no later session merges a
+  change shaped by lesson text without a person looking. With no ticket, open nothing and say so under Flags. The body holds a
   `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line only when it has no `label`;
   otherwise cite the id alone. Open it only in a harness repository the rules above allow. No records change.
 
@@ -109,8 +111,10 @@ nothing else. Propose that one file as in section 3, titled `records: <lesson id
 
 Draft, in the same run, the lesson as it should read once the PR merges: `status: codified` and a link
 `{type: codified_as, target: <the convention id, or the harness PR's merged URL>}`, nothing else changed. Write it
-to `.ai-dlc/local/codify-lesson/<lesson id>/<lesson file name>`. Propose it only when you see the PR merged,
-replacing a convention slug with the number it got at merge. Never propose it before, and never merge it.
+to `.ai-dlc/local/codify-lesson/<lesson id>/<lesson file name>`, and put the same draft at the end of the PR body
+under `## Follow-up`, so it survives a fresh session. Propose it only when you see the PR merged, replacing a
+convention slug with the number it got at merge; for a `draft` convention, only once it is `active`. Never
+propose it before, and never merge it.
 
 ## 7. Report
 
@@ -121,12 +125,12 @@ Codify lesson: <lesson id> (<title>; the id alone for a `boundary: customer` les
 Outcome:    convention <slug> | harness change | not codifiable
 PR:         <link>
 Follow-up:  .ai-dlc/local/codify-lesson/<lesson id>/<file> (propose after the PR merges)   # none for (c)
-Flags:      <no governing decision, scope kept narrow, untrusted text skipped, or "none">
-Follow-ups: <a one-time fix the convention implies, or "none">
+Flags:      <draft: no accepted decision covers it, scope kept narrow, untrusted text skipped, or "none">
+Follow-ups: <the Decision a draft needs, a one-time fix the convention implies, or "none">
 ```
 
 ## Example
 
-`tests/fixtures/codify-lesson/` holds three lessons and the expected result of each: a token-economics finding that
-becomes a convention (a), a hook refusal that becomes a harness change (b), and a customer-bound lesson that is not
-codifiable here (c). `cases.yaml` describes them.
+`tests/fixtures/codify-lesson/` holds five lessons and the expected result of each: a rule no accepted decision
+covers (a draft convention), a rule an accepted decision delegates (an active one), a hook fix (b), and a
+customer-bound lesson and a guard-relaxing one that are not codifiable (c). `cases.yaml` describes them.

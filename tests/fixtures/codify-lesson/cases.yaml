@@ -4,17 +4,20 @@
 # there. after/ is the repository once the PR the skill opens merges; followup/ is the repository once the follow-up
 # that marks the lesson codified merges (the convention numbered, as at merge). A harness change (outcome b) changes
 # no record, so its after/ equals before/, and harness-pr.md is the expected pull request: its title, the harness
-# files it changes and its body citing the lesson. A not-codifiable lesson (outcome c) has no follow-up.
+# files it changes and its body citing the lesson. A not-codifiable lesson (outcome c) and a draft convention have
+# no follow-up yet.
 # All names and URLs are invented. `ai-dlc knowledge check` exits 0 on every tree.
 format: codify-lesson-cases/v1
 cases:
 - id: 01-token-economics
   lesson: LES-0004
   outcome: convention
+  status: draft
   tests: 'Spec scenario 4: a harness token-economics finding becomes a team Convention that cites the lesson in its
-    sources and implements the decision that governs skills.'
+    sources. DEC-0031 decides where skills live, not how long they are, so no accepted decision covers the rule: the
+    convention is a draft that links no decision, and its follow-up waits until it is active.'
   writes: [team/conventions/skill-md-under-150-lines.md]
-  governing_decision: DEC-0031
+  governing_decision: null
 - id: 02-hook-refusal
   lesson: LES-0011
   outcome: harness-change
@@ -27,3 +30,17 @@ cases:
   tests: 'A customer-bound lesson whose next step is a team-wide rule is not codifiable here: the reason is written to
     the lesson, its status stays open, and nothing leaves the project.'
   writes: [projects/harbor-portal/lessons/LES-0019.md]
+- id: 04-covered-rule
+  lesson: LES-0008
+  outcome: convention
+  status: active
+  tests: 'DEC-0020 is accepted and delegates the exact steps of verification to conventions, so the convention is
+    active and implements it; the follow-up marks the lesson codified as the numbered convention.'
+  writes: [team/conventions/run-verify-before-pr.md]
+  governing_decision: DEC-0020
+- id: 05-guard-relaxing
+  lesson: LES-0013
+  outcome: not-codifiable
+  tests: 'A lesson whose next step would remove a guard-hook check, and which addresses the agent directly, is not
+    codifiable: the reason is written to the lesson and nothing else changes.'
+  writes: [team/lessons/LES-0013.md]
