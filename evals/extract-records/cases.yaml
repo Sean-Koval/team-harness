@@ -1,0 +1,127 @@
+# Cases for the extraction eval (KAN-464). Same format as the skill's own examples, which are included first.
+#
+# `include` pulls in every case of the skill's cases.yaml (KAN-435); their trees sit beside that file.
+# The cases below sit in cases/<id>/. `limits` caps how many records a run may produce, by type ("other" counts
+# every type except decision); `unchanged` lists existing records a run must neither edit nor re-propose.
+# Limits are hard failures. All names and URLs are invented.
+format: extract-records-cases/v1
+include: tests/fixtures/extract-records/cases.yaml
+limits:
+  02-decision-subrules: {decision: [1, 1], other: [0, 2]}
+  04-duplicate: {unchanged: [team/conventions/one-file-per-record.md]}
+  07-personal-scope: {decision: [1, 1], other: [0, 0]}
+cases:
+- id: 08-restated-rules
+  kind: decision record
+  tests: 'Blind-review regression (KAN-464): a decision doc that restates its own rules yields one decision and at most
+    two other records, not a convention per restated rule.'
+  source: inbox/records-in-git-decision.md
+  filed_as: team/sources/records-in-git-decision.md
+  expect:
+  - team/actions/render-job-service-account.md
+  - team/decisions/records-in-git-wiki-rendered.md
+  - team/sources/records-in-git-decision.md
+  limits: {decision: [1, 1], other: [0, 2]}
+  must_not:
+  - a convention for each restated rule
+- id: 09-restated-unrecorded
+  kind: chat
+  tests: 'A restated rule that no existing record holds is still extracted, within the cap; a restated rule an existing
+    record holds produces nothing.'
+  source: inbox/records-merge-thread.md
+  filed_as: team/sources/records-merge-thread.md
+  expect:
+  - team/conventions/raw-sources-expire-30-days.md
+  - team/decisions/reviewer-merges-records-pr.md
+  - team/sources/records-merge-thread.md
+  limits: {decision: [1, 1], other: [0, 2], unchanged: [team/conventions/one-file-per-record.md]}
+  must_not:
+  - a second one-file-per-record convention
+  - an edit to team/conventions/one-file-per-record.md
+# Cases 10-12 (KAN-464): realistic, fully synthetic sources modelled on the shape of real ones, after a blind run on a
+# real decision record scored about 75% precision while cases 01-09 scored 100%. `rationale` says why each expected
+# record is there and why the tempting extras are not.
+- id: 10-long-decision-record
+  kind: decision record
+  tests: 'A long decision record (options, recommendation, review comments) yields one decision, its one new
+    convention, its one lesson and its one owed follow-up; restated and unchanged rules yield nothing.'
+  source: inbox/agent-sandbox-decision.md
+  filed_as: team/sources/agent-sandbox-decision.md
+  expect:
+  - team/actions/monday-image-rebuild-job.md
+  - team/conventions/tools-added-to-base-image.md
+  - team/decisions/ephemeral-sandbox-per-job.md
+  - team/lessons/test-isolation-with-concurrent-jobs.md
+  - team/sources/agent-sandbox-decision.md
+  limits:
+    decision: [1, 1]
+    other: [0, 4]
+    unchanged: [team/decisions/agents-open-draft-prs.md, team/conventions/ticket-key-on-job-branches.md]
+  must_not:
+  - a decision per option, or a rejected decision for options A or C
+  - a convention for any of the decision details (digest pinning, Monday rebuild, egress, tokens, 45-minute timeout)
+  - a record for any "Unchanged from earlier decisions" item, held by a record or not (traces kept 14 days)
+  - a record for any line of "Rules (restated for the runbook)", including the restated new convention
+  - an action for the image-age dashboard ("Not planned now") or the shared-runner drain (part of the decision)
+  - a question for the review comments, which are answered in the doc
+  rationale: >-
+    Decision: the Outcome line, accepted, owned and dated by ana-example; options, recommendation, details and
+    consequences go in its body. It and the action belong_to PLAT-412, the ticket the page names. Convention: the
+    one rule the page calls new, implementing the decision. Lesson: the section that says what to do next time.
+    Action: the one follow-up owed, owner dana-example, due 2026-11-19. Everything else restates, explains or is
+    deferred.
+- id: 11-messy-meeting
+  kind: meeting
+  tests: 'A messy transcript (crosstalk, a late joiner, a tangent) yields its two final decisions and two actions;
+    the decision reversed mid-meeting is recorded only in its final form, and the ownerless action is kept.'
+  source: inbox/delivery-sync-2026-11-09.md
+  filed_as: team/sources/delivery-sync-2026-11-09.md
+  expect:
+  - team/actions/tell-support-desk-handoff-time.md
+  - team/actions/update-pager-rotation.md
+  - team/decisions/oncall-handoff-monday-ten.md
+  - team/decisions/release-notes-from-pr-titles.md
+  - team/sources/delivery-sync-2026-11-09.md
+  limits:
+    decision: [2, 2]
+    other: [0, 4]
+    unchanged: [team/conventions/outgoing-oncall-writes-handoff-note.md,
+      team/conventions/one-approval-before-merge.md]
+  must_not:
+  - a decision, accepted or superseded, for the Friday 16:00 handoff reversed at 00:04:11
+  - a record for the restated rules (outgoing person writes the note; one approval before merge)
+  - a convention for PR-title linting, which was deferred
+  - an action for the flaky test ("I'm not going to make that an action") or for deleting the CHANGELOG
+  - a question for the answered questions (pager flip, reverts, ticket keys)
+  - anything from the cycling tangent
+  rationale: >-
+    Decisions: the handoff in its final form (ana-example, 00:04:32; the Friday version never took effect, so it
+    is body context, not a superseded record) and generated release notes (chidi-example, who owns releases,
+    00:02:56). Actions: ben-example changes the pager rotation; telling the support desk was said to be needed and
+    nobody took it, so owner unknown with tags [owner-unknown]. Deleting the CHANGELOG is part of that decision.
+- id: 12-chat-thread
+  kind: chat
+  tests: 'A chat thread of about 60 messages yields an answered question, a lesson and an action; a proposed
+    convention the thread rejects, a restated rule and the noise yield nothing.'
+  source: inbox/token-refresh-flake-thread.md
+  filed_as: team/sources/token-refresh-flake-thread.md
+  expect:
+  - team/actions/resync-clock-on-snapshot-restore.md
+  - team/lessons/check-sandbox-clock-first.md
+  - team/questions/sandbox-clock-source.md
+  - team/sources/token-refresh-flake-thread.md
+  limits:
+    decision: [0, 0]
+    other: [0, 4]
+    unchanged: [team/conventions/rerun-flaky-once-then-report.md]
+  must_not:
+  - a convention, draft or otherwise, or a rejected decision for the withdrawn @flaky quarantine proposal
+  - a record or edit for rerun-once-then-report, which the thread restates
+  - an action for the date check in the job template ("not yet") or for mentioning the refresh interval in the PR
+  - a question or action for the support-desk handoff, which belongs to another room
+  - anything from ci-bot messages, reactions or the lunch tangent
+  rationale: >-
+    Question: put to ana-example and answered in the thread, so status answered with the answer quoted. Lesson: the
+    message that says "Lesson:" and what to do next time, owner eli-example. Action: dana-example resyncs the clock
+    after a restore, due Friday 2026-11-13; the draft PR does not finish it. No decision was made, and the
+    quarantine rule was withdrawn.

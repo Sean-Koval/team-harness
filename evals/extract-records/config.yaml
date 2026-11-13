@@ -1,0 +1,11 @@
+# Extraction eval settings (KAN-464). A change here, to the skill or to the eval, runs the eval in CI.
+skill: shared/work-system/skills/extract-records/SKILL.md
+profile: shared/work-system/profiles/suite-default.yaml   # fills the skill's {{placeholders}} for live runs
+# The one model setting: live runs (either runner) use it unless --model is given.
+model: claude-sonnet-5-5
+price_usd_per_mtok: {input: 2, output: 10}               # list price of that model, for the cost estimate
+# O3 of the north star (Confluence 7307265): 8 of 10 expected records correct; reviewers edit or drop under 25%.
+thresholds:
+  recall_min: 0.80
+  edit_or_drop_max: 0.25
+  cost_usd_max: 5.0
