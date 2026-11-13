@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -206,6 +207,34 @@ def test_a_hand_edited_copy_fails(tmp_path):
     assert _run(repo, "scripts/build_generated.py").returncode == 0
     r = _run(repo, "scripts/build_generated.py", "--drift", "main")
     assert r.returncode == 0, r.stderr
+
+
+def test_stable_env_changes_only_with_a_promotion(tmp_path):
+    """ac72dd6: generated.yml built main from a depth-1 clone, where render_envs can't find the commit that added
+    stable's release copy, so it rendered suite-default's stable environment with main's bindings: a dependency added
+    after the release reached stable with no promotion. The build now refuses that, and still writes stable's
+    environment after a promotion."""
+    pytest.importorskip("hangar")
+    full = _clone(tmp_path)
+    env = "harnesses/suite-default/env.stable.yaml"
+    b = full / "bindings/suite-default.yaml"
+    data = yaml.safe_load(b.read_text())
+    data.setdefault("dependencies", {}).setdefault("pip", []).append("example-tool==1.0")
+    b.write_text(yaml.safe_dump(data, sort_keys=False))
+    _build_and_commit(full, "KAN-1: a dependency")  # full history: stable keeps the bindings of its release
+    stable = (full / env).read_text()
+    assert "example-tool" not in stable
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{full}", str(shallow)], check=True,
+                   capture_output=True)
+    r = _run(shallow, "scripts/build_generated.py", "--note", "shallow")
+    assert r.returncode != 0 and f"{env}: the build would change stable's environment" in r.stderr, r.stderr
+    assert (shallow / env).read_text() == stable
+    # a promotion moves stable, and its environment with it
+    r = _run(full, "scripts/promote.py", "harnesses/suite-default")
+    assert r.returncode == 0, r.stderr
+    _build_and_commit(full, "KAN-2: promote")
+    assert "example-tool==1.0" in (full / env).read_text()
 
 
 def test_guard_refuses_a_changelog_edit_but_not_its_creation(tmp_path):
