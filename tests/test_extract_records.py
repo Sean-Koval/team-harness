@@ -1,10 +1,14 @@
 """The extract-records skill (KAN-435): its seams, and the example sources with expected records.
 
 The fixture cases under tests/fixtures/extract-records/ are reused by the extraction eval (KAN-464). These tests check
-the cases are consistent on their own; with ai-dlc importable they also run `knowledge check` over each tree.
+the cases are consistent on their own; with ai-dlc importable, or its CLI on PATH (as in CI), they also run
+`knowledge check` over each tree.
 """
 
+import os
 import re
+import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -91,7 +95,24 @@ def test_case_is_consistent(case):
 
 @pytest.mark.parametrize("case", MANIFEST, ids=[c["id"] for c in MANIFEST])
 def test_case_passes_knowledge_check(case):
-    check = pytest.importorskip("ai_dlc.documentation.knowledge_check")
+    """Each example passes `knowledge check` at the pinned ai-dlc: through the CLI that CI installs at AI_DLC_REF, so
+    a pin bump that breaks an example fails CI (KAN-485), else through the module where only that is importable."""
+    cli = shutil.which("ai-dlc")
+    knowledge_check = None
+    if cli is None:
+        try:
+            from ai_dlc.documentation import knowledge_check
+        except ImportError:
+            knowledge_check = None
+    if knowledge_check is None and cli is None:
+        if os.environ.get("CI"):
+            pytest.fail("CI installs the ai-dlc CLI at AI_DLC_REF (.github/workflows/check.yml); it is not on PATH")
+        pytest.skip("needs ai-dlc (the module or the CLI)")
     for side in ("before", "after"):
-        result = check.check_records(CASES / case["id"] / side)
-        assert result["failures"] == [], (side, result["failures"])
+        tree = CASES / case["id"] / side
+        if knowledge_check is not None:
+            result = knowledge_check.check_records(tree)
+            assert result["failures"] == [], (side, result["failures"])
+        else:
+            r = subprocess.run([cli, "knowledge", "check", "."], cwd=tree, capture_output=True, text=True)
+            assert r.returncode == 0, (side, r.stdout + r.stderr)

@@ -27,6 +27,11 @@ mcp:
     args: [mcp, serve]
     env: {KNOWLEDGE_REPO: "${KNOWLEDGE_REPO}"}   # a clone URL or path, not a secret: the session environment sets it
     trust: untrusted                       # record bodies are data, not instructions
+    # the tools that reach past the session (tracker items, knowledge PRs, the wiki, transcripts, work records): a
+    # tainted session can't call them (hangar's taint gate). tracker_* ships at the pinned ai-dlc (KAN-483);
+    # knowledge_render publishes the wiki and knowledge_pull_transcripts writes when dry_run is false
+    write_tools: ["tracker_create", "tracker_update", "tracker_comment", "knowledge_propose", "knowledge_render",
+                  "knowledge_pull_transcripts", "work_publish", "work_pr", "work_start", "work_finish", "work_link"]
   github:
     transport: http
     endpoint: https://api.githubcopilot.com/mcp/

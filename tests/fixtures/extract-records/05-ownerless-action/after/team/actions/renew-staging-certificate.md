@@ -9,6 +9,9 @@ sources:
 - id: staging-cert-thread
   resource: team/sources/staging-cert-thread.md
   hash: sha256:cb1faa7591daadc0d09f3b568195200649d37a61297692ae7966dd5961f92174
+  quote: 'someone needs to renew it before then.'
+  speaker: lead-example
+  at: '2026-11-12T14:03:00+00:00'
 links:
 - type: derived_from
   target: staging-cert-thread

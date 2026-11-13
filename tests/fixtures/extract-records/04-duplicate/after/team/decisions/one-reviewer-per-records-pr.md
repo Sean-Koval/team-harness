@@ -9,6 +9,9 @@ sources:
 - id: records-thread-2026-11-12
   resource: team/sources/records-thread-2026-11-12.md
   hash: sha256:6db1dbf93f0a602ceb589ec0ed56f08d695fb872287ff7510afc86ee11940b6d
+  quote: 'Also decided: a records PR needs one reviewer, not two.'
+  speaker: lead-example
+  at: '2026-11-12T09:14:00+00:00'
 links:
 - type: derived_from
   target: records-thread-2026-11-12

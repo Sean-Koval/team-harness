@@ -89,6 +89,14 @@ def test_skill_and_examples_name_no_vendor_tool():
         assert not found, f"{path.relative_to(ROOT)}: {found}"
 
 
+def test_skill_files_nothing_itself():
+    """ai-dlc's tracker_create arrives with the pinned ai-dlc (KAN-483); it takes no type, epic or links and files in
+    the current repository's tracker role, so the skill keeps drafting and a person files."""
+    text = SKILL.read_text()
+    assert "## Tools: drafts only" in text and "Don't file with ai-dlc's `tracker_create`" in text
+    assert "file each draft with `tracker_create`" not in text
+
+
 def test_skill_keeps_its_rules():
     text = SKILL.read_text()
     for rule in ("`tracker` role", "ai-dlc knowledge records get", "Never `exec:agent`", "never set `exec:agent`",

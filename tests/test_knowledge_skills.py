@@ -255,6 +255,9 @@ def test_skill_says_it_uses_the_cli_and_stops_without_ai_dlc(name):
     text = skill_text(name)
     assert "**Today this skill uses the `ai-dlc knowledge records` CLI.**" in text
     assert "ai-dlc knowledge records --help" in text and "**stop**" in text
+    # ai-dlc's knowledge tools read the knowledge role of the repository the session is in, not KNOWLEDGE_REPO, so
+    # their arriving with the pinned ai-dlc (KAN-483) must not switch the skill over to them
+    assert "Use it even where ai-dlc's MCP server lists" in text and "once it does, use those tools" not in text
 
 
 def test_fresh_session_with_only_the_environment_queries_a_record(tmp_path):

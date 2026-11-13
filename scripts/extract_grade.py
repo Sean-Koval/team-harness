@@ -202,11 +202,25 @@ def _quote_core(line: str) -> str:
     return hit.group("text").strip() if hit else line
 
 
+def _evidence(rec: dict) -> list[dict]:
+    """The `sources` entries carrying evidence (quote, speaker, at or permalink) for a `derived_from` Source, which
+    outlive its payload. An entry for any other resource the record rests on (a ticket, a doc) is not graded."""
+    sources = {str(link.get("target")) for link in rec["head"].get("links") or []
+               if isinstance(link, dict) and link.get("type") == "derived_from"}
+    return [e for e in rec["head"].get("sources") or []
+            if isinstance(e, dict) and e.get("quote") and str(e.get("id")) in sources]
+
+
 def _quoted_from(rec: dict, source_text: str) -> bool:
-    """Every quote line is verbatim from the Source (whitespace folded; quote marks and attribution set aside)."""
-    quotes = _quotes(rec)
+    """Every quote line, and every `sources` entry's quote, is verbatim from the Source (whitespace folded; quote marks
+    and attribution set aside). ai-dlc's knowledge check sees only that the evidence is there, not that it is true."""
+    quotes = _quotes(rec) + [str(e["quote"]) for e in _evidence(rec)]
     folded = " ".join(source_text.split())
-    return bool(quotes) and all(_quote_core(q) in folded for q in quotes)
+    return bool(_quotes(rec)) and all(_quote_core(q) in folded for q in quotes)
+
+
+def _speakers(rec: dict) -> set[str]:
+    return {_norm(e.get("speaker")) for e in _evidence(rec)}
 
 
 def compare(got: dict, want: dict, rename: dict[str, str], source_text: str | None) -> list[str]:
@@ -225,6 +239,8 @@ def compare(got: dict, want: dict, rename: dict[str, str], source_text: str | No
         edits.append("links")
     if source_text is not None and _quotes(want) and not _quoted_from(got, source_text):
         edits.append("quote")
+    elif _evidence(want) and _speakers(got) != _speakers(want):
+        edits.append("quote")  # the evidence names someone other than the person who said it
     return edits
 
 
