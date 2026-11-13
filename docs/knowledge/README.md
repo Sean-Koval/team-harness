@@ -11,8 +11,9 @@ has never used it.
 | [review.md](review.md) | How do I review a records PR in under 5 minutes? |
 | [find.md](find.md) | How do I find out why we decided something? |
 
-Every page gives macOS and Windows commands. The Windows commands have not been run on Windows yet: each one is
-marked **untested on Windows**.
+Every page gives macOS and Windows commands. CI on Windows parses every PowerShell block in these pages and runs the
+sample copy from quickstart step 3 (`tests/test_guide_powershell.py`). Nobody has followed the guide end to end on
+Windows yet (KAN-451), so each Windows block is still marked **untested on Windows**.
 
 ## Fill in before you share these pages
 
@@ -34,9 +35,7 @@ Some steps rely on work that is still open. Each such step says so where it appe
 | Work | What changes for you when it lands |
 | --- | --- |
 | KAN-433, one install | One command installs ai-dlc, the harness and the knowledge clone, and `ai-dlc doctor` checks them. Until then, quickstart steps 1 to 3 do it by hand |
-| team-harness #32 (KAN-431) | Adds the `knowledge-context`, `query-knowledge` and `whats-next` skills. Until then, use the `ai-dlc knowledge records` commands directly |
-| ai-dlc #266 (KAN-466) | Adds `ai-dlc knowledge why`, and makes each record's evidence carry its quote, speaker and time |
 | ai-dlc #172 | Supports installing ai-dlc natively on Windows. Until then, ai-dlc on Windows is unsupported, and every Windows step that runs `ai-dlc` may fail |
-| KAN-457, KAN-458 | Meeting transcripts arrive in the inbox by themselves, and a nightly batch opens the records PRs |
+| KAN-458 | A nightly batch pulls meeting transcripts into the inbox and opens the records PRs. The pull itself is on ai-dlc main (`ai-dlc knowledge pull-transcripts`, KAN-457) but not yet tried against a live meeting account |
 | KAN-450 | Written sign-off on what may be stored, and on how a meeting opts out |
 | KAN-475 | Creates a separate knowledge repository for a customer |

@@ -44,8 +44,10 @@ py -3 "$th\scripts\install_local.py" "$th\harnesses\work-default" --scope projec
 `--check` prints `clean`. Use `--channel candidate` because `stable` (r3) does not have `extract-records` yet. Drop
 the flag once a promotion moves `stable` past r6.
 
-**Windows:** the hooks run natively on Windows (#16). Still open (KAN-460, installer half): the installer writing `py -3`
-into `settings.json` and checking that the hook starts. If it cannot start, the guard is off, so do step 2's test.
+**Windows:** the hooks run natively on Windows (#16). The installer writes `py -3` into `.claude/settings.local.json` and its
+`--check` starts each hook once; a hook that cannot start fails the check with `its guard is OFF` (#33). Still open
+(KAN-460): the probe starts hooks through cmd, while Claude Code runs them in Git Bash or PowerShell. So do step 2's
+test even when `--check` is clean.
 
 ## 2. Point your shell at the knowledge repository
 
@@ -110,8 +112,9 @@ gives the same records.
 The skill reads the meeting, writes the records into a scratch copy, runs `ai-dlc knowledge check` and opens a
 **draft** PR. Allow the writes it asks for in the scratch directory. It reports the PR link.
 
-If it stops because it cannot find ai-dlc's record templates, tell it where they are: `agents/templates/knowledge/`
-in an ai-dlc checkout. An ai-dlc command that prints them is open work (ai-dlc #264).
+If it stops because it cannot find ai-dlc's record templates, tell it to print them:
+`ai-dlc knowledge records template --list` names the types, and `ai-dlc knowledge records template decision` prints
+one. If ai-dlc does not know `template`, update it.
 
 ## 5. Review the PR
 

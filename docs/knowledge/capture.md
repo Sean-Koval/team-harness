@@ -9,7 +9,7 @@ proposes records from each one as a pull request. Nothing becomes a record until
 | --- | --- | --- |
 | Lines you mark with `>>` in your work notes | `work-copilot export` writes them as one Source per day | On main |
 | Rooms you picked in Work Copilot | Work Copilot's collector reads only allow-listed rooms; export writes them | Collector not yet qualified against the live chat server (KAN-462) |
-| Recorded meetings | A transcript provider lands the transcript (KAN-457); a nightly batch proposes records (KAN-458) | Not built. Until then, a person places a transcript by hand |
+| Recorded meetings | `ai-dlc knowledge pull-transcripts` lands the transcript (KAN-457); a nightly batch proposes records (KAN-458) | The pull is built but not tried against a live meeting account; the batch is not built. Until then, a person places a transcript by hand |
 
 Everything else stays out: unmarked note lines, rooms you did not pick, meetings nobody recorded, and direct
 messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days. The Source record and the records

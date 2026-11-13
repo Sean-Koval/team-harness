@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 11
+revision: 12
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -64,6 +64,11 @@ components:
   tree: sha256:cd5bbda9256eb5604ed6a1dfc9805d90cc5185eab5906ae7723c9da391b8ad84
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
+- id: skill:knowledge-howto
+  digest: sha256:671a40bbf8c06c88157795073f776254f9fa612759268d380b26f96e9e9dc00b
+  tree: sha256:f11146eb1fbb7ffcebdc26e243e8d98d3e5ba506d508b92b8380b4ce4f940ed9
+  path: skills/knowledge-howto
+  source: path:skills/knowledge-howto
 - id: native:claude-code/hooks/guard_work_system.py
   digest: sha256:c72175093607680d8833866cc12569bee38ab4992af7c462132acb1b6bef9e1a
   path: native/claude-code/hooks/guard_work_system.py

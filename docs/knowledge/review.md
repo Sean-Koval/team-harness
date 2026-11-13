@@ -40,8 +40,9 @@ Open the processed Source in the PR beside each record and ask:
 4. **Evidence.** The quote appears in the Source character for character, and it supports the claim on its own.
 5. **Owner and date.** The owner is who decided, owes or must answer. A due date sits in `stale_after`.
 
-From ai-dlc #266 on, each `sources` entry also carries `quote`, `speaker` and `at`. The check then fails a record
-without them, so you no longer check that by eye.
+A record made from a meeting or chat Source also carries `quote`, `speaker` and `at` (or a `permalink`) in its
+`sources` entry, because the raw payload expires. The check fails a record without them, so you don't check that by
+eye.
 
 ## Fix, drop or mark a duplicate
 
