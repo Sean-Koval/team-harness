@@ -1,4 +1,7 @@
-# What the agents run with and what gates them: changes here need the owner's review.
+# What the agents run with and what gates them: changes here ask for the owner's review.
+# "Require review from Code Owners" is deliberately off: the only owner authors his own PRs, so it would block him.
+# Enable it in branch protection once a second approver or an App author exists.
+/.github/ @Sean-Koval
 /shared/work-system/profiles/ @Sean-Koval
 /shared/work-system/hooks/ @Sean-Koval
 /channels.yaml @Sean-Koval
