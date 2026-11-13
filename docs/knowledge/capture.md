@@ -37,7 +37,7 @@ Run these from your project, with this harness cloned where the [quickstart](qui
 ```sh
 python3 ~/src/team-harness/scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO" --dry-run   # writes nothing
 python3 ~/src/team-harness/scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO"
-python3 ~/src/team-harness/scripts/capture_batch.py process-now <source id> --repo "$KNOWLEDGE_REPO"
+python3 ~/src/team-harness/scripts/capture_batch.py process-now SOURCE-ID --repo "$KNOWLEDGE_REPO"
 ```
 
 Windows (untested):
@@ -45,11 +45,11 @@ Windows (untested):
 ```powershell
 py -3 $HOME\src\team-harness\scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO --dry-run
 py -3 $HOME\src\team-harness\scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO
-py -3 $HOME\src\team-harness\scripts\capture_batch.py process-now <source id> --repo $env:KNOWLEDGE_REPO
+py -3 $HOME\src\team-harness\scripts\capture_batch.py process-now SOURCE-ID --repo $env:KNOWLEDGE_REPO
 ```
 
 Your project is the ai-dlc project that configures the knowledge and transcripts roles, with the harness installed
-at project scope; pass `--project <dir>` to run from elsewhere. `process-now` extracts one Source at once, including
+at project scope; pass `--project <dir>` to run from elsewhere. `process-now` extracts one Source at once (`SOURCE-ID` is its `id`), including
 a thread the filter set aside. Schedule `run` nightly with cron, launchd or Task Scheduler, on a machine signed in to Claude Code and
 GitHub.
 
