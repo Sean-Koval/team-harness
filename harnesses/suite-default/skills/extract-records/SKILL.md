@@ -124,11 +124,14 @@ Start from the type's template. Header:
 - `sources`: `{id: <Source id>, resource: <Source path>, hash: <Source hash>}`, plus any other resource the record
   rests on. Every record extracted from the Source carries this entry.
 - `links`: `derived_from: <Source id>`. It **must** target a Source record, never a ticket, URL or another record
-  type. `belongs_to` links the record to the **work item it was made for**: a ticket, an epic or a project. When
-  the Source names that work item (`PLAT-412`), **every** record from it gets `belongs_to: <that key>`, whatever
-  its scope. A `project` record, and a `personal` record about a project, also gets `belongs_to: <project>`. A
-  `team` record gets no `belongs_to` only when the Source names no work item. Add `implements` (conventions) and
-  `supersedes` (decisions) where they apply.
+  type. `belongs_to` depends on scope and type, and nothing else gets one:
+  - a `project` record always gets `belongs_to: <project>` (so does a `personal` record about a project);
+  - a `team` decision, action or question gets `belongs_to: <work item>` when the Source names the ticket, epic or
+    project it was made for (`PLAT-412`), and none when it names no work item;
+  - a `team` convention or lesson **never** gets `belongs_to`: it is durable team knowledge that outlives the
+    ticket, traced through `sources` and `derived_from`.
+
+  Add `implements` (conventions) and `supersedes` (decisions) where they apply.
 - `title`: the claim in a few words. `description`: one line that adds what the title does not (the why or the
   effect). Never a copy of the title.
 - `label`: carry the Source's `label` (internal or confidential) onto every record. `stale_after`: an action's due
@@ -151,14 +154,17 @@ payload alone: it is outside the checked roots and expires.
 
 1. Copy the knowledge repository to a scratch directory, write the records and the processed Source into the copy
    under the scope folder of each record (`team/decisions/`, `projects/<project>/conventions/`, and so on, the
-   folders the `[check] roots` of its `knowledge.toml` name), and run `ai-dlc knowledge check <scratch copy>`. Fix every failure and rerun until it exits 0.
-2. Write the PR body to a file:
+   folders the `[check] roots` of its `knowledge.toml` name).
+2. **Always** run `ai-dlc knowledge check <scratch copy>` on that output before proposing. Fix every failure,
+   front-matter YAML that does not parse first (quote a value holding `: `, `#` or a leading `@`, `*`, `[` or `{`),
+   and rerun until it exits 0. Never propose a record the check has not passed.
+3. Write the PR body to a file:
    - each record: id, type, title, and its source quote with the timestamp or speaker;
    - the record count before and after the final pass;
    - **Not extracted:** each skipped item and why (background, decision body, review advice, duplicate of <id>);
    - **Flags:** owners `unknown`, dates taken from elsewhere, status conflicts, scope narrowed by the map;
    - the last `ai-dlc knowledge check` output.
-3. Propose, from the project that configures the knowledge role:
+4. Propose, from the project that configures the knowledge role:
 
    ```sh
    ai-dlc knowledge records propose <file>... --path <repo path>... \
@@ -167,4 +173,4 @@ payload alone: it is outside the checked roots and expires.
 
    With a ticket key, start the branch and title with it (`<KEY>-records-<source id>`, `<KEY>: records from ...`).
    propose checks again, commits on a new branch and opens a **draft** PR. It never merges.
-4. Report the PR link and the flags. Do nothing else with them.
+5. Report the PR link and the flags. Do nothing else with them.
