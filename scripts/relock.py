@@ -29,9 +29,11 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -64,6 +66,47 @@ def _hooks(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 MCP_SHAPE = {"http": ("endpoint",), "stdio": ("command", "args")}  # what the lock pins of each transport
+MCP_KEYS = {"transport", "endpoint", "command", "args", "headers", "env", "trust", "write_tools"}
+SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:@+=-]+$")  # a command or an arg: one word, no quoting or spaces
+SECRET_WORD = re.compile(r"(?i)token|secret|passw|bearer|basic |authorization|api_?key|\$\{")
+
+
+def _shape_problems(name: str, s: dict[str, Any]) -> list[str]:
+    """Why a declared server can't become lock entries: the lock is committed and pinned by digest, so it may hold
+    names and plain values only. A value (a token, a `${VAR}`) belongs under `headers` or `env`, whose names alone
+    reach the lock, and never in the endpoint, the command or the args."""
+    out = []
+    if not SERVER_NAME.match(str(name)):
+        out.append(f"mcp.{name}: a server name is letters, digits, - and _")
+    if extra := sorted(set(s) - MCP_KEYS):
+        out.append(f"mcp.{name}: unknown keys {', '.join(map(str, extra))} (allowed: {', '.join(sorted(MCP_KEYS))})")
+    for key, pattern in (("headers", HEADER_NAME), ("env", ENV_NAME)):
+        if key not in s:
+            continue
+        if not isinstance(s[key], dict):
+            out.append(f"mcp.{name}.{key}: a mapping of name to `${{VAR}}`, not a {type(s[key]).__name__}")
+        elif bad := [str(k) for k in s[key] if not pattern.match(str(k))]:
+            out.append(f"mcp.{name}.{key}: not a {key[:-1] if key == 'headers' else 'variable'} name: "
+                       f"{len(bad)} key(s); a value goes after the colon, not in the name")
+    if s.get("transport") == "http" and "endpoint" in s:
+        e = s["endpoint"]
+        u = urlsplit(e) if isinstance(e, str) else None
+        if u is None or u.scheme != "https" or not u.hostname or u.username or u.password or u.query or u.fragment \
+                or SECRET_WORD.search(e):
+            out.append(f"mcp.{name}.endpoint: an https URL with no user, password, query or fragment, and no token "
+                       "or `${...}`; put credentials under headers")
+    if s.get("transport") == "stdio":
+        words = [s.get("command")] + (s["args"] if isinstance(s.get("args"), list) else [None])
+        if "args" in s and not isinstance(s["args"], list):
+            out.append(f"mcp.{name}.args: a list of words")
+        if any(not isinstance(w, str) or not PLAIN_WORD.match(w) or SECRET_WORD.search(w) for w in words
+               if w is not None):
+            out.append(f"mcp.{name}: command and args are plain words with no token or `${{...}}`; put a value under "
+                       "env")
+    return out
 
 
 def bindings_file(root: Path, name: str) -> Path | None:
@@ -86,6 +129,8 @@ def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
     if declared != set(servers):
         raise SystemExit(f"{f}: give every mcp server a transport, or none (missing: "
                          f"{', '.join(sorted(set(servers) - declared))})")
+    if problems := [p for n in sorted(servers, key=str) for p in _shape_problems(n, servers[n])]:
+        raise SystemExit(f"{f}: " + "; ".join(problems))
     out = []
     for name in sorted(servers):
         s = servers[name]

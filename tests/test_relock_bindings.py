@@ -97,3 +97,31 @@ def test_rekey_refuses_a_binding_change(tmp_path):
     _edit(b, lambda mcp: mcp.update({"tracker": mcp.pop("atlassian")}))
     with pytest.raises(SystemExit, match="--rekey keeps the binding"):
         relock.relock(h, rekey=True)
+
+
+TOKEN = "ghp_EXAMPLEnotarealtoken0000"
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda mcp: mcp["github"].update({"headers": [f"Authorization: Bearer {TOKEN}"]}), "headers: a mapping"),
+    (lambda mcp: mcp["github"].update({"headers": {f"Authorization: Bearer {TOKEN}": None}}), "not a header name"),
+    (lambda mcp: mcp["ai-dlc"].update({"env": [f"KNOWLEDGE_REPO={TOKEN}"]}), "env: a mapping"),
+    (lambda mcp: mcp["ai-dlc"].update({"env": {f"GH_TOKEN={TOKEN}": None}}), "not a variable name"),
+    (lambda mcp: mcp["github"].update({"endpoint": f"https://x:{TOKEN}@api.githubcopilot.com/mcp/"}), "endpoint"),
+    (lambda mcp: mcp["github"].update({"endpoint": f"https://api.githubcopilot.com/mcp/?token={TOKEN}"}), "endpoint"),
+    (lambda mcp: mcp["github"].update({"endpoint": "https://api.githubcopilot.com/mcp/#${GITHUB_TOKEN}"}), "endpoint"),
+    (lambda mcp: mcp["github"].update({"endpoint": f"https://api.githubcopilot.com/{TOKEN}/token"}), "endpoint"),
+    (lambda mcp: mcp["github"].update({"endpoint": "http://api.githubcopilot.com/mcp/"}), "endpoint"),
+    (lambda mcp: mcp["ai-dlc"].update({"args": ["mcp", "serve", f"--token={TOKEN}"]}), "plain words"),
+    (lambda mcp: mcp["ai-dlc"].update({"args": ["mcp", "serve", "${KNOWLEDGE_TOKEN}"]}), "plain words"),
+    (lambda mcp: mcp["ai-dlc"].update({"command": f"ai-dlc --token {TOKEN}"}), "plain words"),
+    (lambda mcp: mcp["ai-dlc"].update({"args": "mcp serve"}), "args: a list"),
+    (lambda mcp: mcp["github"].update({"token": TOKEN}), "unknown keys token"),
+])
+def test_a_misshapen_binding_never_puts_a_value_in_the_lock(tmp_path, change, message):
+    """The lock is committed: only names and plain values reach it, and the refusal never echoes the value (R2)."""
+    h, b = _repo(tmp_path, "work-default")
+    _edit(b, change)
+    with pytest.raises(SystemExit, match=message) as e:
+        relock.relock(h)
+    assert TOKEN not in str(e.value) and "${" not in str(e.value).replace("`${VAR}`", "").replace("`${...}`", "")
