@@ -10,6 +10,9 @@ stop. Ask one question per ticket, so each one can close.
 
 ## Filing one
 
+Use the tools `jira-ticket` names. A Decision needs its work type, fields and a link, which ai-dlc's
+`tracker_create` doesn't set yet: file it on the tracker server, and comment with `tracker_comment` or that server.
+
 {{decision_filing}}
 
 | Field | What goes in it |

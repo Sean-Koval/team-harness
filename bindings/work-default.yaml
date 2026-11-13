@@ -13,11 +13,11 @@
 # (https://api.atlassian.com/ex/jira/{cloudId}); that route is not used by this file.
 #
 # At work no static Jira credential is used today (KAN-369): the session's own Atlassian MCP login does the Jira work,
-# and that login neither supplies nor replaces a lifecycle credential. `jira-mcp` stays declared so the lock's binding
-# renders; leave it unset until a Jira credential method is approved.
+# and that login neither supplies nor replaces a lifecycle credential. `atlassian-mcp` stays declared so the lock's
+# binding renders; leave it unset until a Jira credential method is approved.
 secrets:                                   # ENV_VAR: hangar credential name
   GITHUB_MCP_AUTHORIZATION: github-mcp     # "Bearer <token>": read access to the service repos; hangar opens the PRs
-  JIRA_MCP_AUTHORIZATION: jira-mcp         # "Basic <base64 email:scoped-api-token>"; unused (KAN-369)
+  ATLASSIAN_MCP_AUTHORIZATION: atlassian-mcp   # "Basic <base64 email:scoped-api-token>"; unused (KAN-369)
 mcp:
   ai-dlc:                                  # `ai-dlc mcp serve` (stdio): the knowledge, work and docs roles (KAN-431)
     env: {KNOWLEDGE_REPO: "${KNOWLEDGE_REPO}"}   # a clone URL or path, not a secret: the session environment sets it
@@ -26,7 +26,7 @@ mcp:
     headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}
     trust: untrusted                       # issue and PR text: anyone can write it
     write_tools: ["create_*", "update_*", "push_*", "merge_*", "add_*", "delete_*"]
-  jira:
-    headers: {Authorization: "${JIRA_MCP_AUTHORIZATION}"}
+  atlassian:                               # the same name in every work-system harness (KAN-459)
+    headers: {Authorization: "${ATLASSIAN_MCP_AUTHORIZATION}"}
     trust: untrusted
-    write_tools: ["create*", "edit*", "transition*", "add*", "update*"]
+    write_tools: ["create*", "edit*", "transition*", "add*", "update*", "executeWrite", "executeDestructive"]

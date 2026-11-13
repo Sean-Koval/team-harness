@@ -14,7 +14,7 @@ scope: turn
 applies_when: {source: [job, experiment]}
 assert:
   order:
-    - {tool: {kind: mcp, mcp: {server: jira}}}
+    - {tool: {kind: mcp, mcp: {server: {in: [atlassian, jira]}}}}   # atlassian since KAN-459; jira in r3 and older
     - {tool: {kind: edit}}
 ---
 id: work-never-edits-the-deploy-checkout

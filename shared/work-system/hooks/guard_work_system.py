@@ -15,7 +15,9 @@ agent and skips the call) for:
   whose verb the hook does not recognise as a read or an ordinary write (fail closed): statuses move by Jira
   automation, hangar and people (skill `jira-ticket`). Roles are read from the profile's `mcp_bindings`, rendered
   below, so a different Jira server is guarded the same; a server named like Atlassian, Jira or Confluence counts as
-  tracker and wiki even when unbound;
+  tracker and wiki even when unbound, and so does a server under any other name whose tool is named for Jira,
+  Confluence or Atlassian or is a dispatcher naming such an operation or carrying a `cloudId`. A binding only adds
+  roles: it never takes these away;
 - on a server bound to the wiki role, and for ai-dlc's wiki tools, every page or other wiki write: the render job publishes, sessions propose
   records. The profile's `wiki_write_allow` may allow site and space pairs; a write must name both to use one;
 - `gh pr merge` with `--admin`, always; and when the harness's merge rule is `never` (skill `github-pr`), every
@@ -82,6 +84,16 @@ ROLES = ("tracker", "wiki", "ai-dlc")
 BINDINGS_RENDERED = r"""{{mcp_bindings}}"""
 ATLASSIAN_HINT = r"atlassian|jira|confluence"  # one server holds both: a name alone cannot tell which it serves
 SERVER_HINTS = {"tracker": ATLASSIAN_HINT, "wiki": ATLASSIAN_HINT, "ai-dlc": r"^ai_?dlc$"}  # on normalised names
+# An Atlassian server bound to nothing, under a name with no hint ("corp", "tickets2"), is still Atlassian's when its
+# tools say so: Atlassian names its tools for the product (createJiraIssue, updateConfluencePage) and its dispatchers
+# executeRead, executeWrite and executeDestructive, which take any operation, with or without the site's cloudId. A
+# generic dispatcher of another server (`run`, `call_tool`) counts when the operation it names is Atlassian's, or when
+# it carries an Atlassian site: a cloudId that is a UUID or a *.atlassian.net host.
+ATLASSIAN_TOKENS = {"jira", "confluence", "atlassian"}
+ATLASSIAN_DISPATCHERS = {"executeread", "executewrite", "executedestructive"}
+DISPATCH_WORDS = {"tool", "tools", "operation", "op", "action", "command"}  # `call_tool`, `run_operation`
+ATLASSIAN_SITE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|(^|[./])atlassian\.net\b",
+                            re.IGNORECASE)
 MCP_TOOL = re.compile(r"^mcp__(.+?)__(.+)$")
 DISPATCH = {"execute", "call", "invoke", "run"}  # a generic tool whose operation is named in its input
 READ = {"get", "list", "search", "fetch", "read", "lookup", "find", "query", "discover", "describe", "show", "view",
@@ -270,11 +282,45 @@ def _norm(server: str) -> str:
     return server.lower().replace("-", "_")
 
 
-def _roles(server: str) -> set[str]:
-    """The roles an MCP server holds: by binding, else by the hints in its name."""
+def _roles(server: str, tool: str = "", args: dict | None = None) -> set[str]:
+    """The roles an MCP server holds: its bindings, plus the roles the hints in its name give, plus tracker and wiki
+    when the call itself looks like Atlassian's. A binding only adds roles, so binding an Atlassian-named server to
+    another role (WORK_SYSTEM_MCP_BINDINGS included) never takes its guard away."""
     n = _norm(server)
-    bound = {role for role, names in _bindings().items() if n in names}
-    return bound or {role for role, hint in SERVER_HINTS.items() if re.search(hint, n)}
+    roles = {role for role, names in _bindings().items() if n in names}
+    roles |= {role for role, hint in SERVER_HINTS.items() if re.search(hint, n)}
+    if _atlassian_call(tool, args or {}):
+        roles |= {"tracker", "wiki"}
+    return roles
+
+
+def _atlassian_call(tool: str, args: dict) -> bool:
+    """A call to Atlassian's MCP server under any server name: a tool named for Jira, Confluence or Atlassian, one of
+    its execute dispatchers, or another server's generic dispatcher naming an Atlassian operation or site."""
+    tokens = _tokens(tool)
+    if ATLASSIAN_TOKENS & set(tokens) or _norm(tool).replace("_", "") in ATLASSIAN_DISPATCHERS:
+        return True
+    if not tokens or tokens[0] not in DISPATCH or not set(tokens[1:]) <= DISPATCH_WORDS:
+        return False  # `run_workflow`, `call_api`: a tool of its own, judged by its own server's rules
+    for key in ("name", "operation", "tool", "op", "action"):
+        op = args.get(key)
+        if isinstance(op, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", op) and ATLASSIAN_TOKENS & set(_tokens(op)):
+            return True
+    return any(ATLASSIAN_SITE.search(v) for v in _site_values(args))
+
+
+def _site_values(value, depth: int = 0) -> list[str]:
+    """Every string under a cloudId-like key (any case, `cloud_id` too), at any depth of the call's input."""
+    out: list[str] = []
+    if depth > 8:
+        return out
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+    for k, v in items:
+        if isinstance(k, str) and re.sub(r"[^a-z]", "", k.lower()) == "cloudid" and isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, (dict, list)):
+            out += _site_values(v, depth + 1)
+    return out
 
 
 def _tokens(name: str) -> list[str]:
@@ -301,7 +347,7 @@ def _mcp(tool: str, args: dict) -> str | None:
     m = MCP_TOOL.match(tool)
     if not m:
         return None
-    roles = _roles(m.group(1))
+    roles = _roles(m.group(1), m.group(2), args)
     if not roles:
         return None
     name = m.group(2)

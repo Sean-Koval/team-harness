@@ -7,14 +7,14 @@ description: Use at the start of any coding task that has no ticket key yet (a r
 
 Nothing is edited before the work has a ticket key. If you were given a key, skip to step 3.
 
-1. **Find the ticket.** Search {{tracker}} with JQL through the Atlassian MCP server. Look in the project's epic for
-   an open ticket that already covers the request:
+1. **Find the ticket.** Search {{tracker}} with `tracker_search`, or with JQL on the tracker server (tools: see
+   `jira-ticket`). Look in the project's epic for an open ticket that already covers the request:
 
    `project = <KEY> AND statusCategory != Done AND text ~ "<words>"`
 
    If one matches, use it and say which.
-2. **Otherwise file one.** Shape it like the ticket template (`ticket-template.md` in the
-   `jira-ticket` skill):
+2. **Otherwise file one,** with `tracker_create`, or with the tracker server when it needs the epic or work type
+   below. Shape it like the ticket template (`ticket-template.md` in the `jira-ticket` skill):
    - **Work type:** Story (a user-visible change), Task, or Bug.
    - **Parent:** the project's epic, which is its lane. Find it with
      `project = <KEY> AND issuetype = Epic AND labels = roadmap`, matched by the repo.

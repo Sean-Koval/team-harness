@@ -101,14 +101,14 @@ binding:
     - serve
     env_names:
     - KNOWLEDGE_REPO
+  - name: atlassian
+    transport: http
+    endpoint: https://mcp.atlassian.com/v1/mcp
+    header_names:
+    - Authorization
   - name: github
     transport: http
     endpoint: https://api.githubcopilot.com/mcp/
-    header_names:
-    - Authorization
-  - name: jira
-    transport: http
-    endpoint: https://mcp.atlassian.com/v1/mcp
     header_names:
     - Authorization
   permissions:

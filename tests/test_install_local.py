@@ -424,8 +424,8 @@ def test_project_scope(tmp_path):
 def test_mcp_commands_use_placeholders_only(tmp_path, capsys):
     assert user(WORK, tmp_path) == 0
     out = capsys.readouterr().out
-    var = "$env:JIRA_MCP_AUTHORIZATION" if il.WINDOWS else "$JIRA_MCP_AUTHORIZATION"
-    assert ('claude mcp add --scope user --transport http jira https://mcp.atlassian.com/v1/mcp '
+    var = "$env:ATLASSIAN_MCP_AUTHORIZATION" if il.WINDOWS else "$ATLASSIAN_MCP_AUTHORIZATION"
+    assert ('claude mcp add --scope user --transport http atlassian https://mcp.atlassian.com/v1/mcp '
             f'--header "Authorization: {var}"') in out
     assert project(SUITE, tmp_path / "p") == 0
     out = capsys.readouterr().out
