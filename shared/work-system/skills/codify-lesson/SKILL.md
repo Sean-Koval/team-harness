@@ -51,11 +51,12 @@ Never open two PRs for one lesson.
 
 - **Already covered:** a convention from step 1.2 already states the rule. Write nothing new. The one PR is the
   follow-up (section 6) pointing `codified_as` at that convention, proposed now.
-- **Changes an existing rule:** write a new convention that `supersedes` the old one, and propose the old one again
-  with only `status: retired` changed.
-- **Otherwise:** write a new convention from the template:
+- **Changes an existing rule:** write the new convention as below, with a `supersedes` link to the old one; the
+  status rule holds here too. Retire the old one (propose it again with only `status: retired` changed) in the same
+  PR only when the new one is `active`. A `draft` leaves the old one in force; its retirement waits for the follow-up.
+- **Otherwise:** write a new convention. Either way, from the template:
   - `id`: a short slug. `status: active` only when an **accepted** decision states or delegates this rule (see
-    `links`), else `draft`. `date`: today. `owner`: the lesson's owner.
+    `links`), else `draft`, for a superseding convention too. `date`: today. `owner`: the lesson's owner.
   - `scope`: the lesson's scope, never wider. A `project` lesson gives a `project` convention in the same project,
     with the same `boundary` and `belongs_to`. `domain`: the lesson's, for team scope.
   - `sources`: `{id: <lesson id>, resource: <lesson path>}` first, then the lesson's own evidence entries. This is
@@ -87,8 +88,10 @@ Never open two PRs for one lesson.
 - Run the repository's tests and checks.
 - Open the PR as the `github-pr` skill says, under the ticket that asked for this codification: its key starts
   the branch and the title. Request review from {{owner}} on the PR itself, so that no later session merges a
-  change shaped by lesson text without a person looking. With no ticket, open nothing and say so under Flags. The body holds a
-  `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line only when it has no `label`;
+  change shaped by lesson text without a person looking. When {{owner}} is the PR's own author, GitHub refuses that
+  request: leave the PR a draft, add the label `needs-owner-review`, and put the line `Owner review: {{owner}} must
+  review this before it merges.` in the body. Never mark it ready yourself. With no ticket, open nothing and say so
+  under Flags. The body holds a `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line only when it has no `label`;
   otherwise cite the id alone. Open it only in a harness repository the rules above allow. No records change.
 
 ## 5. (c) Not codifiable
@@ -113,8 +116,8 @@ Draft, in the same run, the lesson as it should read once the PR merges: `status
 `{type: codified_as, target: <the convention id, or the harness PR's merged URL>}`, nothing else changed. Write it
 to `.ai-dlc/local/codify-lesson/<lesson id>/<lesson file name>`, and put the same draft at the end of the PR body
 under `## Follow-up`, so it survives a fresh session. Propose it only when you see the PR merged, replacing a
-convention slug with the number it got at merge; for a `draft` convention, only once it is `active`. Never
-propose it before, and never merge it.
+convention slug with the number it got at merge; for a `draft` convention, only once it is `active`, together with
+retiring any convention it supersedes. Never propose it before, and never merge it.
 
 ## 7. Report
 
@@ -125,12 +128,14 @@ Codify lesson: <lesson id> (<title>; the id alone for a `boundary: customer` les
 Outcome:    convention <slug> | harness change | not codifiable
 PR:         <link>
 Follow-up:  .ai-dlc/local/codify-lesson/<lesson id>/<file> (propose after the PR merges)   # none for (c)
-Flags:      <draft: no accepted decision covers it, scope kept narrow, untrusted text skipped, or "none">
+Flags:      <draft: no accepted decision covers it, owner is the author (draft PR, needs-owner-review),
+            scope kept narrow, untrusted text skipped, or "none">
 Follow-ups: <the Decision a draft needs, a one-time fix the convention implies, or "none">
 ```
 
 ## Example
 
-`tests/fixtures/codify-lesson/` holds five lessons and the expected result of each: a rule no accepted decision
-covers (a draft convention), a rule an accepted decision delegates (an active one), a hook fix (b), and a
-customer-bound lesson and a guard-relaxing one that are not codifiable (c). `cases.yaml` describes them.
+`tests/fixtures/codify-lesson/` holds six lessons and the expected result of each: a rule no accepted decision
+covers (a draft convention), a rule an accepted decision delegates (an active one), a tighter rule that supersedes
+an active one but stays a draft, a hook fix (b), and a customer-bound lesson and a guard-relaxing one that are not
+codifiable (c). `cases.yaml` describes them.

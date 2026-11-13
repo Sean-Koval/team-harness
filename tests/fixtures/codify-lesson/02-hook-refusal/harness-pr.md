@@ -3,6 +3,8 @@ title: "ENG-90: codify LES-0011, the guard hook's push refusal says what to do i
 files:
   - shared/work-system/hooks/guard_work_system.py
 lesson: LES-0011
+draft: false
+labels: []
 review_requested_from: owner
 ---
 Jira: ENG-90

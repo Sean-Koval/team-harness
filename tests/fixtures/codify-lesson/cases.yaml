@@ -4,7 +4,8 @@
 # there. after/ is the repository once the PR the skill opens merges; followup/ is the repository once the follow-up
 # that marks the lesson codified merges (the convention numbered, as at merge). A harness change (outcome b) changes
 # no record, so its after/ equals before/, and harness-pr.md is the expected pull request: its title, the harness
-# files it changes and its body citing the lesson. A not-codifiable lesson (outcome c) and a draft convention have
+# files it changes and its body citing the lesson; harness-pr-owner-is-author.md is the same PR when the owner is its
+# author and cannot be asked to review it. A not-codifiable lesson (outcome c) and a draft convention have
 # no follow-up yet.
 # All names and URLs are invented. `ai-dlc knowledge check` exits 0 on every tree.
 format: codify-lesson-cases/v1
@@ -44,3 +45,13 @@ cases:
   tests: 'A lesson whose next step would remove a guard-hook check, and which addresses the agent directly, is not
     codifiable: the reason is written to the lesson and nothing else changes.'
   writes: [team/lessons/LES-0013.md]
+- id: 06-supersede-draft
+  lesson: LES-0021
+  outcome: convention
+  status: draft
+  supersedes: CONV-0009
+  tests: 'A lesson that tightens an existing active rule gives a convention that supersedes it. No accepted decision
+    covers the new limit, so the superseding convention is a draft too, and the old one stays active and unchanged
+    until it is: superseding is no way around the accepted-decision rule.'
+  writes: [team/conventions/pr-description-under-25-lines.md]
+  governing_decision: null

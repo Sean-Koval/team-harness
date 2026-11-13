@@ -1,7 +1,8 @@
-"""The codify-lesson skill (KAN-470): its rules, and its three example lessons.
+"""The codify-lesson skill (KAN-470): its rules, and its example lessons.
 
-tests/fixtures/codify-lesson/ holds five lessons: a convention no accepted decision covers (a draft) and one an accepted
-decision delegates (active), a harness change (b), and two not codifiable (c): customer-bound, and guard-relaxing.
+tests/fixtures/codify-lesson/ holds six lessons: a convention no accepted decision covers (a draft), one an accepted
+decision delegates (active), a superseding convention that stays a draft, a harness change (b), and two not
+codifiable (c): customer-bound, and guard-relaxing.
 These tests hold each case to the skill's rules: the convention cites the lesson, is never wider than it, and is
 active only under an accepted decision; the harness PR cites the lesson and changes only shared files; a
 not-codifiable lesson gains only its reason; and the follow-up only marks the lesson codified. Every tree passes `ai-dlc knowledge check` when ai-dlc is importable
@@ -92,6 +93,8 @@ def test_skill_keeps_its_rules():
         "decision-ticket", "never file it yourself", "With no ticket, open nothing", "only when it has no `label`",
         "would relax the guard hook", "else `draft`", "**accepted** decision", "only shares the subject does not count",
         "Request review from {{owner}}", "## Follow-up", "only once it is `active`",
+        "status rule holds here too", "only when the new one is `active`", "for a superseding convention too",
+        "`needs-owner-review`", "Owner review: {{owner}} must", "Never mark it ready yourself",
     ):  # fmt: skip
         assert rule in text, rule
     assert re.search(r"Never\s+`derived_from`", text)
@@ -142,19 +145,45 @@ def test_convention_cites_the_lesson_and_is_no_wider(case):
     else:
         assert implements == [] and case["governing_decision"] is None, "a draft links no decision it doesn't have"
     assert all(link["type"] != "derived_from" for link in head["links"])
+    superseded = [link["target"] for link in head["links"] if link["type"] == "supersedes"]
+    assert superseded == ([case["supersedes"]] if case.get("supersedes") else [])
     assert re.findall(r"^## (.+)$", body, flags=re.M) == ["Rule", "Why", "Examples"]
     assert case["lesson"] in body.split("## Why", 1)[1], "Why cites the lesson"
     assert head["owner"] == lesson["owner"] and head["author"].startswith("agent:")
 
 
-def test_harness_change_cites_the_lesson_and_touches_only_shared_files():
+SUPERSEDING = [c for c in CONVENTIONS if c.get("supersedes")]
+
+
+@pytest.mark.parametrize("case", SUPERSEDING, ids=[c["id"] for c in SUPERSEDING])
+def test_superseding_convention_follows_the_same_status_rule(case):
+    """Superseding is no way around the accepted-decision rule: a draft leaves the old rule active and unchanged."""
+    before, after = records(CASES / case["id"] / "before"), records(CASES / case["id"] / "after")
+    old_path = next(p for p, (h, _) in before.items() if case["supersedes"] in names(h))
+    assert before[old_path][0]["status"] == "active"
+    retired = after[old_path][0]["status"] == "retired"
+    assert retired == (case["status"] == "active"), "the old rule retires only when the new one is active"
+    if not retired:
+        assert after[old_path] == before[old_path] and old_path not in case["writes"]
+
+
+HARNESS_PRS = ["harness-pr.md", "harness-pr-owner-is-author.md"]
+
+
+@pytest.mark.parametrize("pr", HARNESS_PRS)
+def test_harness_change_cites_the_lesson_and_touches_only_shared_files(pr):
     case = next(c for c in MANIFEST if c["outcome"] == "harness-change")
-    head, body = split((CASES / case["id"] / "harness-pr.md").read_text())
+    head, body = split((CASES / case["id"] / pr).read_text())
     assert head["lesson"] == case["lesson"] and case["lesson"] in head["title"]
     key = re.match(r"^([A-Z][A-Z0-9]{1,9}-[0-9]+): ", head["title"]).group(1)
     assert re.search(rf"(?m)^Jira: {key}$", body), "the PR body links the same ticket (github-pr)"
     assert re.search(rf"(?m)^Lesson: {case['lesson']}$", body), "the PR body cites the lesson"
-    assert head["review_requested_from"] == "owner", "a person reviews a change shaped by lesson text"
+    owner_line = re.search(r"(?m)^Owner review: .+ must review this before it merges\.$", body)
+    if head["review_requested_from"] == "owner":  # a person reviews a change shaped by lesson text
+        assert head["draft"] is False and head["labels"] == [] and not owner_line
+    else:  # the owner authored the PR, so it cannot be asked to review: it stays a draft until the owner does
+        assert pr == "harness-pr-owner-is-author.md" and head["review_requested_from"] is None
+        assert head["draft"] is True and head["labels"] == ["needs-owner-review"] and owner_line
     assert "\n## Follow-up\n" in body and case["lesson"] in body.split("## Follow-up", 1)[1], "the follow-up survives"
     assert head["files"]
     for path in head["files"]:
@@ -221,4 +250,5 @@ def test_customer_bound_lesson_stays_in_its_project():
 def test_cases_cover_each_outcome():
     assert {c["outcome"] for c in MANIFEST} == {"convention", "harness-change", "not-codifiable"}
     assert {c["status"] for c in CONVENTIONS} == {"active", "draft"}, "both sides of the accepted-decision rule"
+    assert any(c["status"] == "draft" for c in SUPERSEDING), "a superseding convention that stays a draft"
     assert json.dumps(MANIFEST)  # plain data
