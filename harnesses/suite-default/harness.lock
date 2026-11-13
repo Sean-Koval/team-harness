@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 8
+revision: 10
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -50,7 +50,7 @@ components:
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: native:claude-code/hooks/guard_work_system.py
-  digest: sha256:7ad9479475b0b0770a6e06fd479000348e866866ca5c051bc0348527aa71e0ea
+  digest: sha256:c72175093607680d8833866cc12569bee38ab4992af7c462132acb1b6bef9e1a
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
   digest: sha256:1ff6ae47b07545c4d147d3aa349a451694a6f3ca1a35ab8402db17c28a58fb84
@@ -72,10 +72,10 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:021809c41bcf933e433ee375929d4e9cb004319037cf884c23d647d0ac1c69bc
+    digest: sha256:4cfeed69ccff0c2be010125e28774ae565307fbb8741a75617c72740832d052d
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:021809c41bcf933e433ee375929d4e9cb004319037cf884c23d647d0ac1c69bc
+    digest: sha256:4cfeed69ccff0c2be010125e28774ae565307fbb8741a75617c72740832d052d
 plugins:
   autoUpdate: false
 remote: []
