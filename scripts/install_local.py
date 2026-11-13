@@ -16,10 +16,13 @@ holds. When the checkout's lock is that channel's digest it installs from the ch
 commit's harness directory. `--channel checkout` installs the checkout as it is (for trying a change).
 
 Scopes. `user` writes under `<home>/.claude/` (`--home`, default your home): skills to `skills/<name>/`, hooks to
-`hooks/`. Its hooks and deny rules then apply to every Claude Code session on the machine, so a work harness, whose
-guards are written for hangar's sandbox, belongs in `project` scope in each work repository. `project` writes the
-same under `<target>/.claude/` (`--target`, default the current directory) and rewrites hook commands from
-`$HOME/.claude/hooks/...` to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/...`. The guide always goes to
+`hooks/`. Its hooks and deny rules then apply to every Claude Code session on the machine; nothing is committed, so
+it is the team default. `project` writes the same under `<target>/.claude/` (`--target`, default the current
+directory) and rewrites hook commands from `$HOME/.claude/hooks/...` to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/...`.
+Its skills, guide and deny rules (`settings.json`) can be committed. Its hooks go to `settings.local.json`, and their
+manifest entries to `team-harness.local.json`, as a hook command differs by OS: a team of Macs and Windows machines
+then commits the same bytes. It adds `.claude/*.local.json` to the project's `.gitignore` unless git already ignores
+both files, and takes the line out again on `--uninstall`. The guide always goes to
 `team-harness/<harness>.md`, and one `@team-harness/<harness>.md` line is added to `CLAUDE.md` beside it (and removed on
 `--uninstall`), so edits to your `CLAUDE.md` never block an upgrade.
 
@@ -42,12 +45,25 @@ commit, the settings entries added and the SHA-256 of every file written. `--che
 a removed settings entry or `@import` line, or that the channel has moved to another revision. `--uninstall` removes only files whose digest
 still matches, leaving an edited file in place with a warning.
 
+Windows (KAN-460). It runs natively, without WSL2, under PowerShell or cmd: `py -3 scripts\\install_local.py ...`.
+Hook commands are written for Windows: `py -3` instead of `python3`; in user scope the hook's absolute path, in double
+quotes with forward slashes, built from the profile directory (`--home`) instead of `$HOME`; in project scope a
+`py -3 -c` line that finds the hook through `CLAUDE_PROJECT_DIR`, so no machine path lands in a committed file.
+
+Hooks that don't start. Claude Code carries on when a hook command can't start (no `py` or `python3`, a wrong path),
+so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the
+system shell (cmd on Windows), with a harmless `git status` call on stdin; any exit but 0 fails loudly (exit 1).
+
+Uninstall puts back `settings.json`, `settings.local.json`, `.gitignore` and `CLAUDE.md` byte for byte. For a settings file, as the manifest keeps the original bytes, unless you
+changed the file meanwhile in some other way: then your settings are kept and only the formatting may differ.
+
 Exit codes: 0 done or clean, 1 refused or drift, 2 bad input. Needs Python 3.10+ and PyYAML.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -66,12 +82,19 @@ import yaml
 
 SCHEMA = "team-harness.install/v1"
 MANIFEST = "team-harness.json"
+MANIFEST_LOCAL = "team-harness.local.json"  # this machine's settings.local.json entries: never committed
 RUNTIME = "claude-code"
 NATIVE = f"native:{RUNTIME}/"
 SETTINGS = "settings.json"
+SETTINGS_LOCAL = "settings.local.json"  # per machine and gitignored: project-scope hooks, whose command is per OS
+SECTION = {SETTINGS: "settings", SETTINGS_LOCAL: "settings_local"}  # each file's block in the manifest
+LOCAL_IGNORE = ".claude/*.local.json"  # settings.local.json and team-harness.local.json
 _MCP_FIELDS = (("endpoint", "url"), ("header_names", "headers"), ("env_names", "env"), ("command", "command"),
                ("args", "args"))
 _HOME_HOOK = re.compile(r'"?(?:\$HOME|\$\{HOME\}|~)/\.claude/hooks/([^"\s]+)"?')
+# the one hook shape the harnesses use: python3 "$HOME/.claude/hooks/<file>.py", rewritten for Windows
+_PY_HOOK = re.compile(r'\s*python3?\s+"?(?:\$HOME|\$\{HOME\}|~)/\.claude/hooks/([A-Za-z0-9_.-]+\.py)"?\s*')
+WINDOWS = os.name == "nt"  # tests set it to check the Windows commands on any OS
 
 
 class Refused(Exception):
@@ -152,12 +175,13 @@ class Harness:
     settings: dict[str, Any] = field(default_factory=dict)
     source: dict[str, Any] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)  # where the checkout differs from the lock
+    scope: str = "user"
 
 
 def _git(root: Path, *args: str) -> str | None:
     try:
-        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=10,
-                           check=False)
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 else None
@@ -168,10 +192,11 @@ def _rel_ok(rel: str) -> bool:
     return bool(rel) and not p.is_absolute() and ".." not in p.parts
 
 
-def load_harness(root: Path, scope: str) -> Harness:
+def load_harness(root: Path, scope: str, base: Path | None = None) -> Harness:
+    """The harness at `root`; `base` is the .claude directory it goes into (Windows hook paths are built from it)."""
     lock_file = root / "harness.lock"
     try:
-        lock = yaml.safe_load(lock_file.read_text())
+        lock = yaml.safe_load(lock_file.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
         raise Refused(f"{lock_file}: {e}") from None
     if not isinstance(lock, dict) or lock.get("schema") != "hangar.harness-lock/v1":
@@ -179,7 +204,8 @@ def load_harness(root: Path, scope: str) -> Harness:
     if (lock.get("runtime") or {}).get("harness") != RUNTIME:
         raise Refused(f"{lock_file}: runtime is {lock.get('runtime', {}).get('harness')!r}; only {RUNTIME} "
                       "harnesses install locally")
-    h = Harness(root=root, lock=lock, name=lock["name"], revision=int(lock["revision"]), digest=harness_digest(lock))
+    h = Harness(root=root, lock=lock, name=lock["name"], revision=int(lock["revision"]), digest=harness_digest(lock),
+                scope=scope)
 
     for c in lock.get("components") or []:
         cid, rel = c["id"], c.get("path")
@@ -207,7 +233,7 @@ def load_harness(root: Path, scope: str) -> Harness:
                     raise Refused(f"{src}: {e}") from None
             else:
                 h.files[cid[len(NATIVE):]] = (data, src.stat().st_mode & 0o777 if src.is_file() else 0o644)
-    h.settings = _scoped_settings(h.settings, scope, src=root / "native" / RUNTIME / SETTINGS)
+    h.settings = _scoped_settings(h.settings, scope, src=root / "native" / RUNTIME / SETTINGS, base=base)
 
     commit = _git(root, "rev-parse", "HEAD")
     dirty = _git(root, "status", "--porcelain", "--", ".", f"../../bindings/{h.name}.yaml")
@@ -224,7 +250,7 @@ def _lock_at(root: Path) -> dict[str, Any]:
     if not f.is_file():
         raise Refused(f"{root} is not a harness directory: {f} is missing")
     try:
-        lock = yaml.safe_load(f.read_text())
+        lock = yaml.safe_load(f.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
         raise Refused(f"{f}: {e}") from None
     if not isinstance(lock, dict) or not lock.get("name"):
@@ -235,7 +261,7 @@ def _lock_at(root: Path) -> dict[str, Any]:
 def channel_digest(root: Path, name: str, channel: str) -> str:
     f = root.parent.parent / "channels.yaml"
     try:
-        chans = ((yaml.safe_load(f.read_text()) or {}).get(name) or {}) if f.is_file() else {}
+        chans = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get(name) or {}) if f.is_file() else {}
     except (OSError, yaml.YAMLError) as e:
         raise Refused(f"{f}: {e}") from None
     if channel not in chans:
@@ -286,8 +312,9 @@ def _extract(top: Path, commit: str, rel: str, name: str, scratch: Path) -> Path
         paths.append(binding)
     tar = scratch / "harness.tar"
     with tar.open("wb") as fh:
-        r = subprocess.run(["git", "-C", str(top), "archive", "--format=tar", commit, "--", *paths], stdout=fh,
-                           check=False)
+        # the committed bytes the lock pins: no autocrlf conversion on the way out (Git for Windows turns it on)
+        r = subprocess.run(["git", "-C", str(top), "-c", "core.autocrlf=false", "archive", "--format=tar", commit,
+                            "--", *paths], stdout=fh, check=False)
     if r.returncode != 0:
         raise Refused(f"git archive {commit} {rel} failed")
     with tarfile.open(tar) as t:
@@ -298,7 +325,7 @@ def _extract(top: Path, commit: str, rel: str, name: str, scratch: Path) -> Path
     return scratch / "repo" / rel
 
 
-def _scoped_settings(s: dict[str, Any], scope: str, src: Path) -> dict[str, Any]:
+def _scoped_settings(s: dict[str, Any], scope: str, src: Path, base: Path | None = None) -> dict[str, Any]:
     """The harness's settings with only what this script merges, hook commands rewritten for the scope."""
     s = {k: v for k, v in s.items() if k != "$schema"}
     extra = set(s) - {"hooks", "permissions"}
@@ -307,14 +334,36 @@ def _scoped_settings(s: dict[str, Any], scope: str, src: Path) -> dict[str, Any]
     for k, v in (s.get("permissions") or {}).items():
         if not isinstance(v, list):
             raise Refused(f"{src}: permissions.{k} is not a list of rules; install_local.py can't merge it")
-    if scope == "project":
+    if scope == "project" or WINDOWS:
         s = copy.deepcopy(s)
         for groups in (s.get("hooks") or {}).values():
             for g in groups:
                 for hk in g.get("hooks") or []:
                     if isinstance(hk.get("command"), str):
-                        hk["command"] = _HOME_HOOK.sub(r'"$CLAUDE_PROJECT_DIR"/.claude/hooks/\1', hk["command"])
+                        hk["command"] = _hook_command(hk["command"], scope, src, base)
     return s
+
+
+def _hook_command(cmd: str, scope: str, src: Path, base: Path | None) -> str:
+    """A harness hook command as this machine runs it: unchanged for user scope on macOS and Linux."""
+    if not WINDOWS:
+        return _HOME_HOOK.sub(r'"$CLAUDE_PROJECT_DIR"/.claude/hooks/\1', cmd) if scope == "project" else cmd
+    m = _PY_HOOK.fullmatch(cmd)
+    if m is None:
+        if _HOME_HOOK.search(cmd):
+            raise Refused(f"{src}: the hook command {cmd!r} has no native Windows form; install_local.py rewrites "
+                          'only python3 "$HOME/.claude/hooks/<file>.py"')
+        return cmd  # an echo and the like: no path, no interpreter
+    name = m.group(1)
+    if scope == "project":
+        # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for PowerShell, cmd and Git Bash alike
+        return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
+                f"'.claude','hooks','{name}'),run_name='__main__')\"")
+    path = Path(os.path.abspath(base or Path.home() / ".claude")).joinpath("hooks", name).as_posix()
+    if any(c in path for c in '"$%`'):
+        raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both PowerShell and cmd; '
+                      "install with --home pointing elsewhere, or use --scope project")
+    return f'py -3 "{path}"'
 
 
 # --- settings.json merge ----------------------------------------------------------------------------------------
@@ -365,16 +414,30 @@ def _describe(e: tuple[str, str, Any]) -> str:
 # --- plan, apply ------------------------------------------------------------------------------------------------
 
 @dataclass
+class SettingsPlan:
+    """One settings file: what this install adds to it and how to put it back."""
+    name: str
+    lines: list[str] = field(default_factory=list)
+    settings: dict[str, Any] | None = None  # the merged settings, None when unchanged
+    records: list[dict[str, Any]] = field(default_factory=list)
+    created: bool = False
+    old_records: list[dict[str, Any]] = field(default_factory=list)  # the previous install's entries in this file
+    original: str | None = None  # base64 of the file before this script first changed it
+
+    def block(self, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"created": self.created, "entries": entries,
+                **({"original": self.original} if self.original is not None else {})}
+
+
+@dataclass
 class Plan:
     base: Path
     files: list[tuple[str, str]] = field(default_factory=list)  # (action, path) write|update|adopt|keep|remove
     left: list[str] = field(default_factory=list)  # managed files edited since: left alone
     conflicts: list[str] = field(default_factory=list)
-    settings_lines: list[str] = field(default_factory=list)
-    settings: dict[str, Any] | None = None  # the merged settings, None when unchanged
-    records: list[dict[str, Any]] = field(default_factory=list)
-    settings_created: bool = False
-    old_records: list[dict[str, Any]] = field(default_factory=list)  # the previous install's settings entries
+    sfiles: dict[str, SettingsPlan] = field(default_factory=dict)  # settings.json, and settings.local.json
+    gitignore: dict[str, Any] | None = None  # the line this install keeps in the project's .gitignore
+    gitignore_add: bool = False  # ... and it is not there yet
     old_files: dict[str, str] = field(default_factory=dict)
     guide_rel: str | None = None
     guide_import: str | None = None  # the line CLAUDE.md needs, when it doesn't have it yet
@@ -386,29 +449,60 @@ def base_dir(scope: str, home: Path, target: Path) -> Path:
 
 
 def read_manifest(base: Path) -> dict[str, Any] | None:
+    """The manifest, with this machine's settings.local.json block from team-harness.local.json when there is one."""
     f = base / MANIFEST
     if not f.is_file():
         return None
     try:
-        m = json.loads(f.read_text())
+        m = json.loads(f.read_text(encoding="utf-8"))
+        loc = json.loads((base / MANIFEST_LOCAL).read_text(encoding="utf-8")) \
+            if (base / MANIFEST_LOCAL).is_file() else {}
     except ValueError as e:
         raise Refused(f"{f}: {e}") from None
-    if m.get("schema") != SCHEMA:
+    if m.get("schema") != SCHEMA or (loc and loc.get("schema") != SCHEMA):
         raise Refused(f"{f}: not a {SCHEMA} manifest")
+    if loc.get("settings_local"):
+        m["settings_local"] = loc["settings_local"]
     return m
 
 
-def _read_settings(base: Path) -> dict[str, Any] | None:
-    f = base / SETTINGS
+def _write_manifest(base: Path, m: dict[str, Any]) -> None:
+    """The committed manifest holds what every machine shares; the per-OS hook entries go beside it, gitignored."""
+    m = dict(m)
+    local = m.pop("settings_local", None)
+    if local:
+        _write(base / MANIFEST_LOCAL, (json.dumps({"schema": SCHEMA, "settings_local": local}, indent=2) + "\n")
+               .encode(), 0o644)
+    elif (base / MANIFEST_LOCAL).is_file():
+        (base / MANIFEST_LOCAL).unlink()
+    _write(base / MANIFEST, (json.dumps(m, indent=2) + "\n").encode(), 0o644)
+
+
+def _read_settings(base: Path, name: str = SETTINGS) -> dict[str, Any] | None:
+    f = base / name
     if not f.exists():
         return None
     try:
-        s = json.loads(f.read_text() or "{}")
+        s = _parse_settings(f.read_bytes())
     except ValueError as e:
         raise Refused(f"{f}: not valid JSON ({e}); fix it first, nothing is merged into a file that can't be read")
     if not isinstance(s, dict):
         raise Refused(f"{f}: not a JSON object")
     return s
+
+
+def split_settings(s: dict[str, Any], scope: str) -> dict[str, dict[str, Any]]:
+    """Which file each part goes to. Project scope: hooks to settings.local.json (per machine, gitignored), as their
+    command differs by OS; deny rules stay in the committed settings.json. User scope: all of it in settings.json."""
+    if scope != "project":
+        return {SETTINGS: s, SETTINGS_LOCAL: {}}
+    return {SETTINGS: {k: v for k, v in s.items() if k != "hooks"},
+            SETTINGS_LOCAL: {"hooks": s["hooks"]} if s.get("hooks") else {}}
+
+
+def _parse_settings(data: bytes) -> Any:
+    """settings.json as Claude Code reads it: UTF-8, a byte-order mark allowed (Windows editors write one)."""
+    return json.loads(data.decode("utf-8-sig") or "{}")
 
 
 def _inside(base: Path, rel: str) -> bool:
@@ -465,29 +559,63 @@ def plan_install(h: Harness, base: Path) -> Plan:
             p.left.append(rel)
 
     # settings: drop what we added that the harness no longer has, add what is new, keep the rest where it is
-    cur_s = _read_settings(base)
-    p.settings_created = cur_s is None if old is None else bool((old.get("settings") or {}).get("created"))
+    for name, part in split_settings(h.settings, h.scope).items():
+        p.sfiles[name] = _plan_settings(base, name, part, ((old or {}).get(SECTION[name]) or {}), p.notes)
+
+    # project scope: settings.local.json must stay out of git, or one OS's hook commands get committed for all
+    if h.scope == "project" and p.sfiles[SETTINGS_LOCAL].records:
+        gi = (old or {}).get("gitignore") or {}
+        ignore = base.parent / ".gitignore"
+        if gi.get("line") and _imports(ignore, gi["line"]):
+            p.gitignore = gi
+        elif not all(_git_ignores(base.parent, f".claude/{n}") for n in (SETTINGS_LOCAL, MANIFEST_LOCAL)):
+            p.gitignore = {"file": ".gitignore", "line": LOCAL_IGNORE,
+                           "created": bool(gi.get("created")) or not ignore.exists()}
+            p.gitignore_add = True
+    return p
+
+
+def _plan_settings(base: Path, name: str, part: dict[str, Any], old: dict[str, Any], notes: list[str]) -> SettingsPlan:
+    sp = SettingsPlan(name=name)
+    cur_s = _read_settings(base, name)
+    sp.old_records = list(old.get("entries") or [])
+    # created: as recorded while this script has entries in the file; else as the file stands now
+    sp.created = bool(old.get("created")) if sp.old_records else cur_s is None
+    # the bytes to put back on uninstall: kept from the install that first changed the file; taken now only while
+    # the file holds nothing of ours (an install from before KAN-460 left no copy, and its file has our entries)
+    sp.original = old.get("original")
+    if sp.original is None and cur_s is not None and not sp.old_records:
+        sp.original = base64.b64encode((base / name).read_bytes()).decode()
     s = copy.deepcopy(cur_s or {})
-    p.old_records = list(((old or {}).get("settings") or {}).get("entries") or [])
-    ours = [_unrecord(r) for r in p.old_records]
-    new = _entries(h.settings)
+    ours = [_unrecord(r) for r in sp.old_records]
+    new = _entries(part)
     for e in ours:
         if e not in new and _remove(s, e):
-            p.settings_lines.append(f"- {_describe(e)}")
+            sp.lines.append(f"- {_describe(e)}")
     for e in new:
         if e in ours and _has(s, e):
-            p.records.append(_record(e))
+            sp.records.append(_record(e))
         elif e not in ours and _has(s, e):
-            p.notes.append(f"settings.json already has {_describe(e)}; it stays yours")
+            notes.append(f"{name} already has {_describe(e)}; it stays yours")
         elif e in ours and e[0] == "hooks" and _edited_group(s, e):
-            p.notes.append(f"settings.json: you edited {_describe(e)}; it is yours now and is not added again")
+            notes.append(f"{name}: you edited {_describe(e)}; it is yours now and is not added again")
         else:
             _add(s, e)
-            p.records.append(_record(e))
-            p.settings_lines.append(f"+ {_describe(e)}")
+            sp.records.append(_record(e))
+            sp.lines.append(f"+ {_describe(e)}")
     if s != (cur_s or {}) or (cur_s is None and s):
-        p.settings = s
-    return p
+        sp.settings = s
+    return sp
+
+
+def _git_ignores(project: Path, rel: str) -> bool:
+    """Whether git already ignores `rel` in the project (a .gitignore pattern, info/exclude, a global excludes file)."""
+    try:
+        r = subprocess.run(["git", "-C", str(project), "check-ignore", "-q", "--no-index", rel], capture_output=True,
+                           timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
 
 
 def _commands(group: Any) -> set[str]:
@@ -506,27 +634,34 @@ def _import_line(name: str) -> str:
 
 
 def _imports(claude_md: Path, line: str) -> bool:
-    return claude_md.is_file() and line in claude_md.read_text(errors="replace").splitlines()
+    return claude_md.is_file() and line.encode() in claude_md.read_bytes().splitlines()
 
 
-def _add_import(claude_md: Path, line: str) -> None:
-    text = claude_md.read_text() if claude_md.is_file() else ""
-    if text and not text.endswith("\n"):
-        text += "\n"
-    _write(claude_md, (text + line + "\n").encode())
+def _add_import(claude_md: Path, line: str) -> bool:
+    """Append the line in the file's own line ending (CRLF from a Windows editor stays CRLF), bytes otherwise kept.
+    True when the file had no final newline, so one was added before the line (removal takes it away again)."""
+    data = claude_md.read_bytes() if claude_md.is_file() else b""
+    eol = b"\r\n" if b"\r\n" in data else b"\n"
+    joined = bool(data) and not data.endswith(b"\n")
+    if joined:
+        data += eol
+    _write(claude_md, data + line.encode() + eol)
+    return joined
 
 
-def _remove_import(claude_md: Path, line: str, created: bool) -> bool:
+def _remove_import(claude_md: Path, line: str, created: bool, joined: bool = False) -> bool:
     if not claude_md.is_file():
         return False
-    lines = claude_md.read_text().splitlines(keepends=True)
-    keep = [x for x in lines if x.rstrip("\r\n") != line]
+    lines = claude_md.read_bytes().splitlines(keepends=True)
+    keep = [x for x in lines if x.rstrip(b"\r\n") != line.encode()]
     if keep == lines:
         return False
-    if created and not "".join(keep).strip():
+    if joined and keep and lines[-1].rstrip(b"\r\n") == line.encode():
+        keep[-1] = keep[-1].rstrip(b"\r\n")  # the newline added before the line, when it was last
+    if created and not b"".join(keep).strip():
         claude_md.unlink()
     else:
-        _write(claude_md, "".join(keep).encode())
+        _write(claude_md, b"".join(keep))
     return True
 
 
@@ -579,34 +714,43 @@ def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") ->
         claude_md = p.base / "CLAUDE.md"
         guide_import = {"file": "CLAUDE.md", "line": p.guide_import,
                         "created": bool(guide_import.get("created")) or not claude_md.exists()}
-        _add_import(claude_md, p.guide_import)
+        if _add_import(claude_md, p.guide_import):
+            guide_import["joined"] = True
 
-    def manifest(entries: list[dict[str, Any]], files: dict[str, str]) -> bytes:
+    def manifest(entries: dict[str, list[dict[str, Any]]], files: dict[str, str]) -> dict[str, Any]:
         m = {
             "schema": SCHEMA, "harness": h.name, "channel": channel, "revision": h.revision,
             "harness_digest": h.digest, "scope": scope, "source": h.source, "guide": p.guide_rel,
             "guide_import": guide_import or None,
-            "settings": {"created": p.settings_created, "entries": entries},
+            **{SECTION[n]: sp.block(entries[n]) for n, sp in p.sfiles.items()
+               if n == SETTINGS or sp.records or sp.old_records or sp.original is not None},
+            **({"gitignore": p.gitignore} if p.gitignore else {}),
             "files": dict(sorted(files.items())),
         }
-        return (json.dumps(m, indent=2) + "\n").encode()
+        return json.loads(json.dumps(m))  # as read back
 
-    if p.settings is not None:
-        # name every entry, old and new, before settings.json changes: a failure between the two writes then leaves
+    final = {n: sp.records for n, sp in p.sfiles.items()}
+    if any(sp.settings is not None for sp in p.sfiles.values()) or p.gitignore_add:
+        # name every entry, old and new, before a settings file changes: a failure between the writes then leaves
         # entries the manifest still claims, so a re-run or --uninstall removes them instead of taking them as yours
-        pending = p.old_records + [r for r in p.records if r not in p.old_records]
-        _write(p.base / MANIFEST, manifest(pending, {**p.old_files, **digests}), 0o644)
-        _write(p.base / SETTINGS, _settings_bytes(p.settings))
-    data = manifest(p.records, digests)
-    if not (p.base / MANIFEST).is_file() or _strip_source(p.base / MANIFEST) != _strip_source(data):
-        _write(p.base / MANIFEST, data, 0o644)
+        pending = {n: sp.old_records + [r for r in sp.records if r not in sp.old_records] for n, sp in p.sfiles.items()}
+        _write_manifest(p.base, manifest(pending, {**p.old_files, **digests}))
+        if p.gitignore_add and p.gitignore:  # before the hooks land in settings.local.json
+            if _add_import(p.base.parent / p.gitignore["file"], p.gitignore["line"]):
+                p.gitignore["joined"] = True
+            _write_manifest(p.base, manifest(pending, {**p.old_files, **digests}))
+        for n, sp in p.sfiles.items():
+            if sp.settings is not None:
+                _write(p.base / n, _settings_bytes(sp.settings))
+    data = manifest(final, digests)
+    cur = read_manifest(p.base)
+    if cur is None or _strip_source(cur) != _strip_source(data):
+        _write_manifest(p.base, data)
 
 
-def _strip_source(x: Path | bytes) -> Any:
+def _strip_source(m: dict[str, Any]) -> dict[str, Any]:
     """A manifest without its source block, so a re-run from another commit of the same lock writes nothing."""
-    m = json.loads(x.read_bytes() if isinstance(x, Path) else x)
-    m.pop("source", None)
-    return m
+    return {k: v for k, v in m.items() if k != "source"}
 
 
 # --- printed, never run: MCP servers and plugins ----------------------------------------------------------------
@@ -622,8 +766,11 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
     binding = (yaml.safe_load(bfile.read_text()) or {}) if bfile.is_file() else {}
     # user scope: your shell fills $VAR when you run the command, so the value lands only in your own ~/.claude.json;
     # project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never commit a token)
+    # on Windows the user-scope line is for PowerShell, which reads an environment variable as $env:NAME
     def quoted(text: str, var: str) -> str:
-        return f'"{text}${var}"' if scope == "user" else f"'{text}${{{var}}}'"
+        if scope == "user":
+            return f'"{text}$env:{var}"' if WINDOWS else f'"{text}${var}"'
+        return f"'{text}${{{var}}}'"
 
     out = []
     for m in (h.lock.get("binding") or {}).get("mcp") or []:
@@ -647,7 +794,9 @@ def plugin_commands(h: Harness, scope: str) -> list[str]:
             name, _, mkt = c["id"][7:].rpartition("@")
             if mkt not in seen:
                 seen.add(mkt)
-                out.append(f"claude plugin marketplace add {shlex.quote(str(h.root.resolve() / 'plugins' / mkt))}")
+                where = str(h.root.resolve() / "plugins" / mkt)
+                quote = subprocess.list2cmdline([where]) if WINDOWS else shlex.quote(where)
+                out.append(f"claude plugin marketplace add {quote}")
             out.append(f"claude plugin install {name}@{mkt} --scope {scope}")
     return out
 
@@ -671,16 +820,67 @@ def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base
             drift.append(f"missing: {rel}")
         elif sha(f.read_bytes()) != dg:
             drift.append(f"edited: {rel}")
-    s = _read_settings(base) or {}
-    for r in (m.get("settings") or {}).get("entries") or []:
-        if not _has(s, _unrecord(r)):
-            drift.append(f"settings.json no longer has {_describe(_unrecord(r))}")
+    present = []
+    for name, sec in SECTION.items():
+        s = _read_settings(base, name) or {}
+        for r in (m.get(sec) or {}).get("entries") or []:
+            if not _has(s, _unrecord(r)):
+                drift.append(f"{name} no longer has {_describe(_unrecord(r))}")
+            else:
+                present.append(r)
+    ig = m.get("gitignore") or {}
+    if ig.get("line") and not _imports(base.parent / ig.get("file", ".gitignore"), ig["line"]):
+        drift.append(f"{ig.get('file', '.gitignore')} no longer has the line {ig['line']}, so {SETTINGS_LOCAL} "
+                     "(this machine's hook commands) may be committed")
+    drift += probe_hooks(base, m.get("scope") or "user", present)
     if lock_digest and lock_digest != m["harness_digest"]:
         newer = lock_rev is not None and lock_rev > int(m["revision"])
         where = f"on the {channel} channel" if channel and channel != "checkout" else "in the checkout"
         drift.append(f"{'newer harness revision' if newer else 'the harness changed'}: r{lock_rev} {lock_digest} "
                      f"{where}, r{m['revision']} {m['harness_digest']} installed; run --apply to upgrade")
     return drift
+
+
+# a call every guard lets through: a hook that doesn't exit 0 on it either didn't start or is broken
+PROBE = {"session_id": "team-harness-probe", "tool_name": "Bash", "tool_input": {"command": "git status"}}
+
+
+def _runs_hook_file(cmd: str) -> bool:
+    """A guard: a command that runs a script from .claude/hooks (an echo reminder is not a guard)."""
+    return ".claude/hooks/" in cmd or "'.claude','hooks'" in cmd
+
+
+def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[str]:
+    """Run each hook command these settings entries add once, as Claude Code would, and say which didn't run."""
+    root = base.parent  # the project, or the home whose .claude this is
+    env = dict(os.environ)
+    if scope == "project":
+        env["CLAUDE_PROJECT_DIR"] = str(root)
+    elif not WINDOWS:
+        env["HOME"] = str(root)  # the --home the commands were installed for
+    out, seen = [], set()
+    for r in entries:
+        if r.get("section") != "hooks" or not isinstance(r.get("value"), dict):
+            continue
+        for hk in r["value"].get("hooks") or []:
+            cmd = hk.get("command") if isinstance(hk, dict) and hk.get("type", "command") == "command" else None
+            if not isinstance(cmd, str) or cmd in seen or not _runs_hook_file(cmd):
+                continue
+            seen.add(cmd)
+            event = json.dumps({**PROBE, "hook_event_name": r["key"], "cwd": str(root)}).encode()
+            try:
+                res = subprocess.run(cmd, shell=True, input=event, capture_output=True, env=env,  # noqa: S602
+                                     cwd=root if root.is_dir() else None, timeout=30, check=False)
+                rc, said = res.returncode, (res.stderr or res.stdout).decode("utf-8", "replace").strip()
+            except subprocess.TimeoutExpired:
+                rc, said = None, "timed out after 30s"
+            except OSError as e:
+                rc, said = None, str(e)
+            if rc != 0:
+                first = said.splitlines()[0] if said else "no output"
+                out.append(f"hook did not run, so its guard is OFF: {r['key']} {cmd!r} "
+                           f"({'exit ' + str(rc) if rc is not None else 'error'}: {first[:200]})")
+    return out
 
 
 def uninstall(base: Path) -> tuple[list[str], list[str]]:
@@ -699,23 +899,54 @@ def uninstall(base: Path) -> tuple[list[str], list[str]]:
             removed.append(rel)
         else:
             left.append(f"{rel}: edited since it was installed, so it is yours now")
-    cur = _read_settings(base)
-    if cur is not None:
-        s = copy.deepcopy(cur)
-        for r in (m.get("settings") or {}).get("entries") or []:
-            if _remove(s, _unrecord(r)):
-                removed.append(f"settings.json: {_describe(_unrecord(r))}")
-            else:
-                left.append(f"settings.json: {_describe(_unrecord(r))}: changed or already gone")
-        if not s and (m.get("settings") or {}).get("created"):
-            (base / SETTINGS).unlink()
-        elif s != cur:
-            _write(base / SETTINGS, _settings_bytes(s))
+    for name, sec in SECTION.items():
+        _uninstall_settings(base, name, m.get(sec) or {}, removed, left)
+    ig = m.get("gitignore") or {}
+    if ig.get("line") and _remove_import(base.parent / ig.get("file", ".gitignore"), ig["line"],
+                                         bool(ig.get("created")), bool(ig.get("joined"))):
+        removed.append(f"{ig.get('file', '.gitignore')}: the line {ig['line']}")
     gi = m.get("guide_import") or {}
-    if gi.get("line") and _remove_import(base / gi.get("file", "CLAUDE.md"), gi["line"], bool(gi.get("created"))):
+    if gi.get("line") and _remove_import(base / gi.get("file", "CLAUDE.md"), gi["line"], bool(gi.get("created")),
+                                         bool(gi.get("joined"))):
         removed.append(f"{gi.get('file', 'CLAUDE.md')}: the line {gi['line']}")
+    (base / MANIFEST_LOCAL).unlink(missing_ok=True)
     (base / MANIFEST).unlink()
     return removed, left
+
+
+def _uninstall_settings(base: Path, name: str, block: dict[str, Any], removed: list[str], left: list[str]) -> None:
+    cur = _read_settings(base, name)
+    if cur is None or not block:
+        return
+    s = copy.deepcopy(cur)
+    for r in block.get("entries") or []:
+        if _remove(s, _unrecord(r)):
+            removed.append(f"{name}: {_describe(_unrecord(r))}")
+        else:
+            left.append(f"{name}: {_describe(_unrecord(r))}: changed or already gone")
+    original = _original(block)
+    if not s and block.get("created"):
+        (base / name).unlink()
+    elif original is not None and _same_settings(original, s):
+        if (base / name).read_bytes() != original:
+            _write(base / name, original)  # the person's own bytes: indentation, key order, BOM, CRLF
+    elif s != cur:
+        _write(base / name, _settings_bytes(s))
+
+
+def _original(block: dict[str, Any]) -> bytes | None:
+    b64 = block.get("original")
+    try:
+        return base64.b64decode(b64, validate=True) if isinstance(b64, str) else None
+    except ValueError:
+        return None
+
+
+def _same_settings(original: bytes, s: dict[str, Any]) -> bool:
+    try:
+        return _parse_settings(original) == s
+    except ValueError:
+        return False
 
 
 # --- CLI --------------------------------------------------------------------------------------------------------
@@ -778,7 +1009,7 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         channel = a.channel or (m or {}).get("channel") or "stable"
         src = resolve(a.harness, channel, scratch)
         try:
-            h: Harness | None = load_harness(src.root, a.scope)
+            h: Harness | None = load_harness(src.root, a.scope, base)
         except Refused:
             h = None
         drift = check(h, src.digest, src.revision, base, channel)
@@ -790,7 +1021,7 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         return 1 if drift else 0
 
     src = resolve(a.harness, a.channel or "stable", scratch)
-    h = load_harness(src.root, a.scope)
+    h = load_harness(src.root, a.scope, base)
     if src.commit:
         h.source = {"commit": src.commit, "dirty": False}
         if a.scope == "user":
@@ -812,15 +1043,18 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         print(f"  keep    {kept} file(s) unchanged")
     if p.guide_import:
         print(f"  CLAUDE.md + {p.guide_import}")
-    for line in p.settings_lines:
-        print(f"  settings.json {line}")
+    for sp in p.sfiles.values():
+        for line in sp.lines:
+            print(f"  {sp.name} {line}")
+    if p.gitignore_add and p.gitignore:
+        print(f"  {p.gitignore['file']} + {p.gitignore['line']}")
     for rel in p.left:
         print(f"  warning: {rel} is no longer in the harness but was edited; left in place", file=sys.stderr)
     for n in p.notes:
         print(f"  note: {n}")
     if a.scope == "user" and (h.settings.get("hooks") or h.settings.get("permissions")):
         print("  note: user scope applies these hooks and deny rules to every Claude Code session on this machine; "
-              "a work harness belongs in --scope project in each work repository")
+              "--scope project limits them to one repository")
     if p.conflicts:
         print("refused, nothing written:", file=sys.stderr)
         for c in p.conflicts:
@@ -841,14 +1075,20 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         for c in plugins:
             print(f"  {c}")
     m = read_manifest(base)
-    changes = (any(x != "keep" for x, _ in p.files) or p.settings is not None or p.guide_import is not None
-               or m is None or m.get("channel") != src.channel)
+    changes = (any(x != "keep" for x, _ in p.files) or any(sp.settings is not None for sp in p.sfiles.values())
+               or p.guide_import is not None or p.gitignore_add or m is None or m.get("channel") != src.channel)
     if not a.apply:
         print("dry run: nothing written; run again with --apply" if changes else "up to date")
         return 0
     apply_install(h, p, a.scope, src.channel)
     print(f"installed {h.name}@{src.channel} r{h.revision} into {base}" if changes else "up to date")
-    return 0
+    dead = probe_hooks(base, a.scope, [r for sp in p.sfiles.values() for r in sp.records])
+    for d in dead:
+        print(f"error: {d}", file=sys.stderr)
+    if dead:
+        print("installed, but Claude Code skips a hook that can't start: fix the interpreter or path, then run "
+              "--check", file=sys.stderr)
+    return 1 if dead else 0
 
 
 if __name__ == "__main__":

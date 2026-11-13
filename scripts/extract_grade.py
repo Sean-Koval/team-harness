@@ -9,6 +9,10 @@ A produced record is a proposed file, not of type source, whose bytes differ fro
 record edited). Expected records are the case's `expect` files that are not of type source. Records pair by id when
 both sides edit the same existing record, otherwise by type plus fuzzy title or id similarity. Validity comes from
 ai-dlc's `knowledge check` on before/ with the proposal laid over it; this module does not restate the schema.
+
+Each edit is classified by severity (KAN-474): substantive when it makes the record wrong, cosmetic when it only
+costs the reviewer wording. `classify_pr_edit` applies the same rules to one proposed and one merged record, for
+`knowledge stats` on live records PRs.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -28,7 +33,12 @@ import yaml
 
 QUOTE_MIN = 0.6  # share of the shorter quote that must appear verbatim in the other
 TITLE_MIN = 0.6  # below this title similarity, a reviewer rewrites the title
-FIELDS = ("title", "statement", "status", "scope", "owner", "date", "valid_to", "links", "quote")
+FIELDS = ("type", "title", "statement", "status", "scope", "boundary", "owner", "date", "valid_to", "links", "quote")
+# Severity of an edited field (KAN-474). Anything not cosmetic is substantive, so a new field fails safe.
+# `check`: knowledge check refuses the record; `contradiction`: it claims another day, number or a negated verb;
+# `drop`: the reviewer deletes it. Whether a description gives the why is `needs_human` (run.json), never graded here.
+COSMETIC = frozenset({"title", "statement"})
+SEVERITIES = ("substantive", "cosmetic", "needs_human")
 TICKET = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 Check = Callable[[Path], "list[str] | None"]
 
@@ -199,21 +209,58 @@ def _quoted_from(rec: dict, source_text: str) -> bool:
     return bool(quotes) and all(_quote_core(q) in folded for q in quotes)
 
 
-def compare(got: dict, want: dict, rename: dict[str, str], source_text: str) -> list[str]:
-    """Fields of `got` a reviewer would edit to reach `want`."""
+def compare(got: dict, want: dict, rename: dict[str, str], source_text: str | None) -> list[str]:
+    """Fields of `got` a reviewer would edit to reach `want`. Without `source_text` the quote is not graded."""
     edits = []
+    if str(got["head"].get("type") or "") != str(want["head"].get("type") or ""):
+        edits.append("type")
     if _ratio(got["head"].get("title"), want["head"].get("title")) < TITLE_MIN:
         edits.append("title")
     if _bad_statement(got):
         edits.append("statement")
-    for field in ("status", "scope", "owner", "date", "valid_to"):
+    for field in ("status", "scope", "boundary", "owner", "date", "valid_to"):
         if str(got["head"].get(field) or "") != str(want["head"].get(field) or ""):
             edits.append(field)
     if _links(got, {}) != _links(want, rename):
         edits.append("links")
-    if _quotes(want) and not _quoted_from(got, source_text):
+    if source_text is not None and _quotes(want) and not _quoted_from(got, source_text):
         edits.append("quote")
     return edits
+
+
+def severity(field: str) -> str:
+    """`cosmetic` for title or description wording; `substantive` for every other field."""
+    return "cosmetic" if field in COSMETIC else "substantive"
+
+
+def classify(edits: list[str]) -> dict[str, list[str]]:
+    """Edited fields split by severity, in their original order."""
+    out: dict[str, list[str]] = {"substantive": [], "cosmetic": []}
+    for field in edits:
+        out[severity(field)].append(field)
+    return out
+
+
+def record_severity(edits: list[str], needs_human: bool = False) -> str | None:
+    """One record's class: substantive wins over cosmetic; needs_human only when nothing gradable was edited."""
+    split = classify(edits)
+    if split["substantive"]:
+        return "substantive"
+    if split["cosmetic"]:
+        return "cosmetic"
+    return "needs_human" if needs_human else None
+
+
+def classify_pr_edit(proposed: str, merged: str, source_text: str | None = None) -> list[dict[str, str]]:
+    """Edits a reviewer made to one record in a records PR: [{field, severity}], for `knowledge stats`.
+
+    `proposed` is the file as the extractor opened it, `merged` as it merged; `source_text` grades the quote.
+    A record the reviewer deleted is `classify_pr_edit(proposed, "")`: one substantive `drop`.
+    """
+    if not merged.strip():
+        return [{"field": "drop", "severity": "substantive"}]
+    got, want = ({"head": header(t), "body": body(t)} for t in (proposed, merged))
+    return [{"field": f, "severity": severity(f)} for f in compare(got, want, {}, source_text)]
 
 
 def _bad_statement(rec: dict) -> bool:
@@ -240,18 +287,27 @@ def broken_links(produced: dict[str, dict], known: dict[str, dict]) -> list[str]
     return out
 
 
+def _ai_dlc() -> str | None:
+    """The `ai-dlc` executable: on PATH, or beside the running interpreter (a virtualenv not on PATH)."""
+    beside = Path(sys.executable).with_name("ai-dlc")
+    return shutil.which("ai-dlc") or (str(beside) if beside.is_file() else None)
+
+
 def knowledge_check(tree: Path) -> list[str] | None:
-    """ai-dlc's knowledge check on a records tree: failure lines, or None when ai-dlc is not available."""
-    try:
-        from ai_dlc.documentation import knowledge_check as kc  # type: ignore[import-not-found]
-    except ImportError:
-        exe = shutil.which("ai-dlc")
-        if not exe:
-            return None
-        run = subprocess.run([exe, "knowledge", "check", str(tree)], capture_output=True, text=True, check=False)
-        lines = [ln for ln in run.stdout.splitlines() if ln and not ln.startswith("knowledge check:")]
-        return lines if run.returncode else []
-    return list(kc.failure_lines(kc.check_records(tree)))
+    """`ai-dlc knowledge check` on a records tree: failure lines, or None when ai-dlc is not installed.
+
+    It calls the CLI, the knowledge role's contract, never an ai-dlc module path. It runs inside the tree on `.`, so
+    each failure line starts with the record's path relative to the tree. Exit 0 is clean and 1 lists failures;
+    anything else means the check did not run, and that is an error, not a pass.
+    """
+    exe = _ai_dlc()
+    if not exe:
+        return None
+    run = subprocess.run([exe, "knowledge", "check", "."], cwd=tree, capture_output=True, text=True, check=False)
+    if run.returncode not in (0, 1):
+        raise RuntimeError(f"ai-dlc knowledge check exited {run.returncode}: {(run.stderr or run.stdout).strip()}")
+    lines = [ln.removeprefix("./") for ln in run.stdout.splitlines() if ln and not ln.startswith("knowledge check:")]
+    return lines if run.returncode else []
 
 
 def limits_broken(produced: dict[str, dict], limits: dict[str, Any]) -> list[str]:
@@ -277,6 +333,10 @@ def grade_case(case: dict, root: Path, proposal: Path, check: Check | None = kno
     before, after, proposed = files(root / "before"), files(root / "after"), files(proposal)
     changed = {p: b for p, b in proposed.items() if before.get(p) != b}
     produced = {p: r for p, r in records(changed).items() if r["head"].get("type") != "source"}
+    # A proposed record whose header does not parse is still a record the reviewer must fix: produced, never matched.
+    unreadable = sorted(
+        p for p, b in changed.items() if p.endswith(".md") and b.startswith(b"---\n") and p not in records(changed)
+    )
     expected = {p: r for p, r in records(after).items() if p in case["expect"] and r["head"].get("type") != "source"}
     source_text = (root / "before" / case["source"]).read_text()
     pairs, wrong = pair(produced, expected)
@@ -296,19 +356,61 @@ def grade_case(case: dict, root: Path, proposal: Path, check: Check | None = kno
     for m in matched:  # a record knowledge check refuses needs an edit, whatever else matches
         if any(line.startswith(f"{m['produced']}:") for line in validity or []):
             m["edits"].append("check")
+    wrong_by = {w["produced"]: w for w in wrong}
+    missed = sorted(set(expected) - {m["expected"] for m in matched})
+    record_edits = [{"record": m["produced"], "fields": list(m["edits"])} for m in matched if m["edits"]]
+    for path in sorted(set(produced) - {m["produced"] for m in matched}):
+        if path in wrong_by:
+            fields = ["contradiction"]
+        else:  # the right claim filed as another type is a type edit; anything else is deleted
+            kind = produced[path]["head"].get("type")
+            retyped = any(
+                expected[x]["head"].get("type") != kind and quote_overlap(produced[path], expected[x]) >= QUOTE_MIN
+                for x in missed
+            )
+            fields = ["type"] if retyped else ["drop"]
+        record_edits.append({"record": path, "fields": fields})
+    record_edits += [{"record": path, "fields": ["check"]} for path in unreadable]
+    for item in record_edits:
+        item["severity"] = record_severity(item["fields"])
     return {
         "id": case["id"],
-        "produced": len(produced),
+        "produced": len(produced) + len(unreadable),
         "expected": len(expected),
         "matched": matched,
         "wrong": wrong,
-        "extra": sorted(set(produced) - {m["produced"] for m in matched}),
-        "missed": sorted(set(expected) - {m["expected"] for m in matched}),
+        "extra": sorted((set(produced) - {m["produced"] for m in matched}) | set(unreadable)),
+        "missed": missed,
+        "edits": sorted(record_edits, key=lambda e: e["record"]),
         "source_filed": filed.get("type") == "source" and filed.get("status") == "processed",
         "broken_links": broken_links(produced, merged),
         "limits": limits_broken(produced, case.get("limits") or {}),
         "check": validity,
     }
+
+
+def severity_counts(case: dict[str, Any]) -> dict[str, Any]:
+    """One case's records by severity class, with `needs_human` records (run.json) that have no graded edit."""
+    edited = {e["record"]: e for e in case.get("edits", [])}
+    counts = {k: 0 for k in SEVERITIES}
+    for e in edited.values():
+        counts[e["severity"]] += 1
+    counts["needs_human"] += sum(1 for r in case.get("needs_human", []) if r not in edited)
+    fields: dict[str, int] = {}
+    for e in edited.values():
+        for f in e["fields"]:
+            fields[f] = fields.get(f, 0) + 1
+    produced = case["produced"]
+    return {
+        **counts,
+        "substantive_rate": round(counts["substantive"] / produced, 4) if produced else 0.0,
+        "cosmetic_rate": round(counts["cosmetic"] / produced, 4) if produced else 0.0,
+        "fields": fields,
+    }
+
+
+def top_fields(fields: dict[str, int], n: int = 3) -> list[list[Any]]:
+    return [[f, c] for f, c in sorted(fields.items(), key=lambda t: (-t[1], t[0]))[:n]]
 
 
 def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
@@ -318,6 +420,13 @@ def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
     edited = sum(1 for m in matched if m["edits"])
     fields = len(matched) * len(FIELDS)
     check_ran = [c for c in cases if c["check"] is not None]
+    per_case = [severity_counts(c) for c in cases]
+    fields_total: dict[str, int] = {}
+    for sc in per_case:
+        for f, n in sc["fields"].items():
+            fields_total[f] = fields_total.get(f, 0) + n
+    substantive = sum(sc["substantive"] for sc in per_case)
+    cosmetic = sum(sc["cosmetic"] for sc in per_case)
     return {
         "produced": produced,
         "expected": expected,
@@ -326,6 +435,18 @@ def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "recall": round(len(matched) / expected, 4) if expected else 0.0,
         "field_edit_rate": round(sum(len(m["edits"]) for m in matched) / fields, 4) if fields else 0.0,
         "edit_or_drop_rate": round((produced - len(matched) + edited) / produced, 4) if produced else 0.0,
+        "substantive": substantive,
+        "cosmetic": cosmetic,
+        "needs_human": sum(sc["needs_human"] for sc in per_case),
+        "substantive_rate": round(substantive / produced, 4) if produced else 0.0,
+        "cosmetic_rate": round(cosmetic / produced, 4) if produced else 0.0,
+        "top_fields": top_fields(fields_total),
+        "substantive_edits": [
+            {"case": c["id"], "record": e["record"], "fields": classify(e["fields"])["substantive"]}
+            for c in cases
+            for e in c.get("edits", [])
+            if e["severity"] == "substantive"
+        ],
         "wrong": sum(len(c["wrong"]) for c in cases),
         "broken_links": sum(len(c["broken_links"]) for c in cases),
         "limit_failures": sum(len(c["limits"]) for c in cases),

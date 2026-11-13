@@ -155,6 +155,8 @@ Where each record goes, and the Jira filters and automation that keep it tidy, a
 [docs/jira-confluence-organization.md](docs/jira-confluence-organization.md). How to build that Jira project and
 Confluence space, field by field and rule by rule, is in [docs/jira-confluence-setup.md](docs/jira-confluence-setup.md). Running `work-default` on a company
 laptop, with flightdeck measuring each session, is in [docs/work-laptop-runbook.md](docs/work-laptop-runbook.md).
+A teammate's guide to the knowledge system (first record, capture, review, finding a decision) is in
+[docs/knowledge/](docs/knowledge/README.md).
 
 To adopt the PR check in another repository, follow [its README](actions/work-system-pr/README.md) and copy
 [`templates/pull_request_template.md`](templates/pull_request_template.md).

@@ -572,3 +572,169 @@ def test_ai_dlc_wiki_writes_are_walled(tool):
 @pytest.mark.parametrize("tool", ["mcp__ai-dlc__wiki_get", "mcp__ai-dlc__wiki_search", "mcp__ai-dlc__knowledge_append"])
 def test_ai_dlc_wiki_reads_and_knowledge_writes_pass(tool):
     assert run({"tool_name": tool, "tool_input": {"query": "x"}}).returncode == 0
+
+
+# The remaining bypasses (KAN-371): the merge routes around `gh pr merge`, scripts, xargs, source, aliases,
+# interpreters, heredocs and HTTP writes to Jira or Confluence, and look-alike labels (comment 10526).
+
+MERGE_ROUTES = [
+    "gh -R o/r pr merge 5",
+    "gh --repo=o/r pr merge 5 --auto",
+    "gh pr review 5 --approve",
+    "gh -R o/r pr review 5 -a",
+    "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }'",
+    "gh api repos/o/r/pulls/5/reviews -f event=APPROVE",
+    "gh api -X PUT repos/o/r/pulls/5/reviews/9/dismissals -f message=x",
+    "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge",
+    "bash -c 'gh -R o/r pr merge 5'",
+]
+
+
+@pytest.mark.parametrize("command", MERGE_ROUTES)
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_every_merge_route_is_refused_at_work(hook, command):
+    r = run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": command}})
+    assert r.returncode == 2, command
+
+
+def test_suite_default_still_merges_with_a_repo_flag():
+    for command in ("gh -R o/r pr merge 5 --squash", "gh pr review 5 --approve"):
+        assert run_hook(SUITE_HOOK, {"tool_name": "Bash", "tool_input": {"command": command}}).returncode == 0
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__github__enable_pr_auto_merge", {"pullNumber": 5}),
+    ("mcp__github__pull_request_review_write", {"method": "create", "event": "APPROVE"}),
+    ("mcp__github__create_pull_request_review", {"event": "approve"}),
+])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_mcp_auto_merge_and_approval_are_refused_at_work(hook, tool, args):
+    assert run_hook(hook, {"tool_name": tool, "tool_input": args}).returncode == 2
+    assert run_hook(SUITE_HOOK, {"tool_name": tool, "tool_input": args}).returncode == 0
+
+
+def test_mcp_comment_review_passes():
+    args = {"method": "create", "event": "COMMENT", "body": "looks fine"}
+    assert run({"tool_name": "mcp__github__pull_request_review_write", "tool_input": args}).returncode == 0
+
+
+@pytest.fixture
+def scripts(tmp_path):
+    def write(name: str, text: str, executable: bool = False) -> None:
+        p = tmp_path / name
+        p.write_text(text, encoding="utf-8")
+        if executable:
+            p.chmod(0o755)
+    write("merge.sh", "#!/bin/sh\necho ok\ngh pr merge 5\n", executable=True)
+    write("merge.py", "import subprocess\nsubprocess.run([\"gh\", \"pr\", \"merge\", \"5\"])\n")
+    write("ok.sh", "#!/bin/sh\necho ok\n", executable=True)
+    write("notes.txt", "gh pr merge 5\n")
+    return tmp_path
+
+
+@pytest.mark.parametrize("command", [
+    "bash merge.sh",
+    "sh ./merge.sh",
+    "./merge.sh",
+    "source merge.sh",
+    ". merge.sh",
+    "python3 merge.py",
+    "printf 'gh pr merge 5' > new.sh && chmod +x new.sh && ./new.sh",
+    "cat > new.sh <<'EOF'\ngh pr merge 5\nEOF\nbash new.sh",
+    "echo 5 | xargs gh pr merge",
+    "echo main | xargs git push origin",
+    "echo 5 | xargs -I{} sh -c 'gh pr merge {}'",
+    "find . -name x -exec gh pr merge 5 \;",
+    "alias m='gh pr merge'; m 5",
+    "alias p='git push origin main'\np",
+    "f() { gh pr merge 5; }; f",
+    "X=merge; gh pr $X 5",
+    "P='git push origin main'; $P",
+    "$'\\x67h' pr merge 5",
+    "git -c alias.p='push --force' p origin KAN-1-x",
+    "git config alias.p 'push origin main'",
+    "gh alias set mm 'pr merge'",
+    "eval \"$(printf 'gh pr merge 5')\"",
+    "watch -n 5 'gh pr merge 5'",
+    "nohup setsid gh pr merge 5",
+    "python3 -c 'import os; os.system(\"gh pr merge 5\")'",
+    "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\", \"--force\", \"origin\", \"x\"])'",
+    "node -e 'require(\"child_process\").execSync(\"gh pr merge 5\")'",
+    "perl -e 'system(\"git push origin main\")'",
+    "pwsh -Command 'gh pr merge 5'",
+    "awk 'BEGIN { system(\"gh pr merge 5\") }'",
+    "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['gh', 'pr', 'merge', '5'])\nPY",
+    "bash <<'SH'\ngit push origin main\nSH",
+    "cat <<'SH' | bash\ngh pr merge 5\nSH",
+    "echo 'gh pr merge 5' | bash",
+    "bash <<< 'gh pr merge 5'",
+    "curl -X POST https://x.atlassian.net/rest/api/3/issue/KAN-1/transitions -d '{\"transition\": {\"id\": \"31\"}}'",
+    "curl -sS -u u:t -H 'Content-Type: application/json' --data '{}' https://x.atlassian.net/wiki/api/v2/pages",
+    "http PUT https://x.atlassian.net/rest/api/3/issue/KAN-1 labels:='[\"exec:agent\"]'",
+    "python3 -c 'import requests; requests.post(\"https://x.atlassian.net/rest/api/3/issue/K-1/transitions\")'",
+    "acli jira workitem transition --key KAN-1 --status Done",
+])
+def test_scripts_interpreters_and_http_writes_are_judged(scripts, command):
+    r = run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(scripts)})
+    assert r.returncode == 2, command
+
+
+@pytest.mark.parametrize("command", [
+    "bash ok.sh",
+    "./ok.sh",
+    "bash -euo pipefail ok.sh",
+    "cat notes.txt",
+    "python3 -m pytest -q",
+    "python3 -c 'print(1)'",
+    "python3 - <<'PY'\nprint('hi')\nPY",
+    "cat > notes.md <<'EOF'\ngit push origin main\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nKAN-1: fix\n\nnotes.txt mentions gh pr merge 5; it's prose\nEOF\n)\" --dry-run",
+    "echo 5 | xargs gh pr view",
+    "ls | xargs wc -l",
+    "find . -name '*.py' -exec grep -l x {} \;",
+    "curl -sS https://x.atlassian.net/rest/api/3/issue/KAN-1",
+    "curl -fsSL https://example.com -o out",
+    "curl -H 'Accept: application/json' https://api.github.com/repos/o/r/pulls/5",
+    "gh pr view 5 -R o/r",
+    "gh pr review 5 --comment -b 'looks fine'",
+])
+def test_ordinary_scripts_and_reads_pass(scripts, command):
+    r = run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(scripts)})
+    assert r.returncode == 0, (command, r.stderr)
+
+
+@pytest.mark.parametrize("label", ["exec​:agent", "exec：agent", "ｅxec:ａgent", "exec:⁠agent",
+                                   "lane﹕agent"])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_look_alike_execution_labels_are_normalised(hook, label):
+    args = {"projectKey": "KAN", "summary": "x", "labels": [label]}
+    r = run_hook(hook, {"tool_name": "mcp__jira__createJiraIssue", "tool_input": args})
+    assert r.returncode == 2 and "exec:agent" in r.stderr
+    edit = {"issueIdOrKey": "KAN-1", "fields": {"labels": [label.replace("agent", "pair")]}}
+    assert run_hook(hook, {"tool_name": "mcp__jira__editJiraIssue", "tool_input": edit}).returncode == 2
+
+
+# Coordinator follow-ups on #35: parameter defaults, and GraphQL piped in on stdin.
+
+@pytest.mark.parametrize("command", ["gh ${X:-pr} merge 5", "gh ${X:=pr} merge 5", "X=pr; gh ${X:-issue} merge 5",
+                                     "git push origin ${B:-main}"])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_parameter_defaults_are_expanded(hook, command):
+    assert run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": command}}).returncode == 2
+
+
+@pytest.mark.parametrize("command", [
+    "echo '{\"query\": \"mutation { mergePullRequest(input: {}) { clientMutationId } }\"}' | gh api graphql --input -",
+    "printf 'mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }' | gh api graphql -F query=@-",
+    "cat <<'Q' | gh api graphql --input -\n{\"query\": \"mutation { addPullRequestReview(input: {event: APPROVE}) { clientMutationId } }\"}\nQ",
+    "echo '{\"query\": \"mutation { mergePullRequest(input: {}) { x } }\"}' | curl -sS --data-binary @- https://api.github.com/graphql",
+])
+@pytest.mark.parametrize("hook", [HOOK, WORK_HOOK])
+def test_graphql_on_stdin_is_judged(hook, command):
+    assert run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": command}}).returncode == 2
+
+
+def test_harmless_graphql_on_stdin_and_defaults_pass():
+    assert bash("echo '{\"query\": \"{ viewer { login } }\"}' | gh api graphql --input -") == 0
+    assert bash("gh ${X:-pr} view 5") == 0

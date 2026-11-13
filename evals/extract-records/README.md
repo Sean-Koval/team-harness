@@ -12,8 +12,13 @@ Measures the `extract-records` skill (KAN-435) on fixed sources with expected re
   copies the title, and any record `knowledge check` refuses. Whether a description gives the why needs a person: `run.json`'s `needs_human` lists those.
   Cases in `run.json`'s `pending` have no recording yet and are reported, not graded. It runs ai-dlc's
   `knowledge check` on the result.
-- **Gates** (`config.yaml`, from north-star outcome O3): recall at least 80%; under 25% of records need an edit or
-  deletion; no limit, link or check failures; cost under $5 a run.
+- **Severity** (KAN-474): each edited or dropped record is substantive or cosmetic. Substantive: a wrong type, scope,
+  boundary, status, owner, date, `valid_to` or link; a quote that is not verbatim; a record the check refuses; a
+  contradicting claim; a deletion. Cosmetic: title or description wording. A `needs_human` record is its own class.
+  `classify_pr_edit` applies the same rules to a live records PR, for `knowledge stats` (KAN-467).
+- **Gates** (`config.yaml`, from north-star outcome O3): recall at least 80%; under 10% of records need a substantive
+  edit or deletion; no limit, link or check failures; cost under $5 a run. Cosmetic edits and the old 25% total figure
+  are reported beside the gate and never fail a run. The report names the case and field of every substantive edit.
 
 ## Three ways to run it
 
@@ -29,10 +34,12 @@ empty temporary directory with every tool off, so it cannot read `after/`. In CI
 
 ## Current numbers
 
-The trustworthy subset is cases 10–12, extracted blind by a separate agent: precision 100%, recall 100%, and 27% of
-records to edit or drop, just over the 25% gate. All of it comes from case 10: two records lack `belongs_to` the
-ticket the Source names, and one quote is not verbatim. A skill fix for both is in flight (KAN-435). Cases 01–09 are
-not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
+Cases 10–12 are run 4: blind, by a separate agent, with the skill from #30 at abb5fe1, which sets `belongs_to` by
+type. Precision and recall are 100%, and no record needs an edit. Over all cases, 3% are substantive and 3% cosmetic
+(7% total), so the 10% gate passes.
+
+The one substantive edit is case 07's missing `belongs_to` link; the cosmetic one is case 08's reworded title. Cases
+01–09 are not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
 
 ## Next step for Sean
 
