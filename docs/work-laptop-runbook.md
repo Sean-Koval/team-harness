@@ -58,8 +58,10 @@ in `org.yaml`. The Jira and Confluence structure the flow needs is in [jira-conf
 
 - The work laptop is a Mac, so everything below runs natively (KAN-370). Install the Xcode Command Line Tools
   first; the plugin hooks call `python3`.
-- Coworkers on Windows run ai-dlc in WSL2 where policy allows. Work Copilot's Windows keyring fix (three OAuth
-  storage tests fail on Windows CI) stays in scope for them.
+- Coworkers on Windows install and run the team-harness hooks natively, in PowerShell or cmd, with the Python
+  launcher (`py -3`); CI runs those tests on Windows (KAN-460). WSL2 is a fallback only, for when the launcher isn't
+  allowed. ai-dlc itself has no native Windows install yet (ai-dlc #172), so Step 1 still needs WSL2 there. Work
+  Copilot's Windows keyring fix (three OAuth storage tests fail on Windows CI) stays in scope for them.
 - Behind a company proxy, set `HTTPS_PROXY`, and `SSL_CERT_FILE` if the proxy inspects TLS.
 - Run `gh auth login` against the company GitHub host.
 - Pick the model route first. Use a company-approved login, not a personal plan.
@@ -85,6 +87,9 @@ python3 scripts/install_local.py harnesses/work-default --scope project --target
 python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo> --apply
 python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo> --check
 ```
+
+On Windows, run the same lines with `py -3` in place of `python3`, and `$HOME\src\<work-repo>` as the target. The
+installed hooks run with `py -3` as well, and `--uninstall` leaves `settings.json` byte for byte as it was, unless you changed it since.
 
 Use project scope, one repo at a time, until KAN-367 lands; user scope puts the guards on every session. Run the two
 `claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
@@ -199,7 +204,7 @@ Each was a Decision ticket in KAN, now decided. The picks:
 | --- | --- | --- |
 | KAN-375 | Where the org overlay and process skill live | The laptop-only overlay first; then the company repo pins this one as upstream once teammates join |
 | KAN-355 | When a change needs the ESS review step | A gate a person files, triggered by a ticket label named in the private overlay |
-| KAN-370 | Laptop OS | Native on macOS (the work laptop is a Mac); WSL2 on Windows where policy allows |
+| KAN-370 | Laptop OS | Native on macOS (the work laptop is a Mac); native on Windows for the harness (KAN-460), WSL2 only as a fallback |
 | KAN-369 | Which Jira credential work allows | None for now; the Atlassian MCP in the session does the Jira work |
 | KAN-368 | CI evidence for `ai-dlc work finish` | Finish on spec-current and PR-merged for the trial; company branch protection enforces CI |
 | KAN-362 | Which flightdeck paths run before sign-off | Local only; GitHub ingest once a read-only work token is allowed |
