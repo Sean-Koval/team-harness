@@ -1,6 +1,7 @@
 """scripts/install_local.py: a harness on a laptop, in user and project scope, pinned and never clobbering."""
 
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -64,6 +65,9 @@ def copy_harness(tmp_path: Path, src: Path = SUITE) -> Path:
     shutil.copytree(src, dst)
     (tmp_path / "repo/bindings").mkdir()
     shutil.copy(ROOT / "bindings" / f"{src.name}.yaml", tmp_path / "repo/bindings")
+    # the tests below count revisions from r2, whatever the harness is at in the checkout (not part of the digest)
+    lock = dst / "harness.lock"
+    lock.write_text(re.sub(r"(?m)^revision: \d+$", "revision: 2", lock.read_text()))
     return dst
 
 

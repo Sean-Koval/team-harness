@@ -1,6 +1,7 @@
 """The work harness's PreToolUse guard: shared systems read-only, the deploy checkout untouched."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -73,7 +74,32 @@ def test_edits(tool, path, code):
     assert run({"tool_name": tool, "tool_input": {"file_path": path}}) == code
 
 
-def test_malformed_input_passes():
-    assert subprocess.run([sys.executable, str(HOOK)], input="not json", capture_output=True,
-                          text=True).returncode == 0
+def test_input_that_is_not_json_fails_closed():
+    r = subprocess.run([sys.executable, str(HOOK)], input=b"not json", capture_output=True)
+    assert r.returncode == 2 and b"not valid JSON" in r.stderr
+
+
+def test_json_that_is_not_an_event_passes():
     assert run(["a list"]) == 0
+
+
+def run_bytes(data: bytes) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    return subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True, env=env)
+
+
+def test_input_that_is_not_utf8_fails_closed():
+    r = run_bytes(b'{"tool_name": "Bash", "tool_input": {"command": "ls \xe9\xff"}}')
+    assert r.returncode == 2 and b"not valid UTF-8" in r.stderr
+
+
+def test_non_ascii_utf8_command_is_still_judged():
+    event = {"tool_name": "Bash", "tool_input": {"command": "echo 'café ✓' && terraform apply"}}
+    r = run_bytes(json.dumps(event, ensure_ascii=False).encode("utf-8"))
+    assert r.returncode == 2
+    assert r.stderr.decode("utf-8").startswith("blocked by the work harness: ")
+
+
+@pytest.mark.parametrize("command", ["ls\nenv", "echo ok\r\nterraform apply", "terraform init\necho -backend=false", "cd /workspace/deploy\ngit commit -am x", "true & kubectl delete pod x", "kubectl \\\ndelete pod x"])
+def test_every_line_and_separator_is_judged(command):
+    assert bash(command) == 2
