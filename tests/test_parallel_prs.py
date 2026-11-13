@@ -223,3 +223,20 @@ def test_guard_refuses_a_changelog_edit_but_not_its_creation(tmp_path):
     branch(repo, "create", {"CHANGELOG.md": log})
     git(repo, "checkout", "-q", "create")
     assert _run(repo, "scripts/build_generated.py", "--guard", "main").returncode == 0
+
+
+def test_generated_yml_runs_the_checks_with_check_yml_tools():
+    """generated.yml re-runs PR CI's checks on main, so it installs the same tools at the same refs (KAN-481): a
+    tool check.yml adds and generated.yml lacks turns every post-merge build red."""
+    import yaml
+
+    wf = ROOT / ".github/workflows"
+    check = yaml.safe_load((wf / "check.yml").read_text(encoding="utf-8"))
+    gen = yaml.safe_load((wf / "generated.yml").read_text(encoding="utf-8"))
+    refs = {k: v for k, v in check["env"].items() if k.endswith("_REF")}
+    assert refs, "check.yml pins no tool refs"
+    for k, v in refs.items():
+        assert gen["env"].get(k) == v, f"generated.yml's {k} differs from check.yml's"
+    build = "\n".join(str(s.get("run", "")) for s in gen["jobs"]["build"]["steps"])
+    for k in refs:
+        assert "${" + k + "}" in build, f"generated.yml's build installs nothing at {k}"
