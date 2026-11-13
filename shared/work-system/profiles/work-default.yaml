@@ -28,6 +28,8 @@ params:
   # The guard hook's MCP roles: which servers this harness binds as the tracker and the wiki (names from
   # harness.lock binding.mcp; a test holds them equal), and the ai-dlc server. JSON.
   mcp_bindings: '{"tracker": ["jira"], "wiki": ["jira"], "ai-dlc": ["ai-dlc"]}'
+  # Site and space pairs where a session may write wiki pages itself, JSON. Empty: only the render job writes.
+  wiki_write_allow: '[]'
   merge_mode: "never"
   merge_rule: >-
     **Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. The approvers
