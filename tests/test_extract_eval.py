@@ -158,8 +158,7 @@ def test_matching_is_by_type_and_quote(tmp_path):
 def test_recorded_run_splits_edits_and_fails_only_on_the_substantive_gate(tmp_path):
     """The recorded run (KAN-474): every edited or dropped record is substantive or cosmetic, and the two add up.
 
-    The recording's substantive rate is over 10% (missing belongs_to links, one quote), so the only failure is that
-    gate. When a re-record brings it under, this test needs the exit code 0 again.
+    Edits never fail the run except through the substantive gate; a record the check refuses fails it as well.
     """
     if not (ROOT / "tests/fixtures/extract-records/cases.yaml").is_file():
         pytest.skip("the skill's example cases (KAN-435) are not on this branch")
@@ -169,8 +168,8 @@ def test_recorded_run_splits_edits_and_fails_only_on_the_substantive_gate(tmp_pa
     for part in (s, s["blind"]):
         assert part["substantive_rate"] + part["cosmetic_rate"] == pytest.approx(part["edit_or_drop_rate"], abs=1e-3)
     assert s["recall"] >= 0.8
-    assert all("substantive edit or deletion" in f for f in result["failures"])
-    assert code == (1 if s["substantive_rate"] >= 0.1 else 0)
+    assert all("substantive edit or deletion" in f or f.startswith("check failures") for f in result["failures"])
+    assert code == (1 if s["substantive_rate"] >= 0.1 or s["check_failures"] else 0)
     assert (tmp_path / "summary.md").read_text().startswith("# Extraction eval: fixture")
 
 
@@ -559,3 +558,15 @@ def test_knowledge_check_is_skipped_without_ai_dlc(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setattr(grade.sys, "executable", str(tmp_path / "python"))
     assert grade.knowledge_check(tmp_path) is None
+
+
+def test_a_record_whose_header_does_not_parse_is_produced_and_substantive(tmp_path):
+    """Invalid YAML front matter hides the record's type; it still counts, as one the check refuses."""
+    case = own_cases()["08-restated-rules"]
+    rel = "team/actions/render-job-service-account.md"
+    text = (case["root"] / "after" / rel).read_text().replace("owner: unknown", "owner: unknown: really")
+    result = grade.grade_case(case, case["root"], proposal(tmp_path, case, {rel: text}), check=no_check)
+    assert result["produced"] == 2 and result["missed"] == [rel] and rel in result["extra"]
+    assert {"record": rel, "fields": ["check"], "severity": "substantive"} in result["edits"]
+    summary = grade.summarize([result])
+    assert summary["precision"] == 0.5 and summary["substantive"] == 1

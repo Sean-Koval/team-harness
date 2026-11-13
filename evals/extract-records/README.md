@@ -34,17 +34,16 @@ empty temporary directory with every tool off, so it cannot read `after/`. In CI
 
 ## Current numbers
 
-Re-graded on 2026-11-12 with the severity split. The trustworthy subset is cases 10–12, extracted blind by a separate
-agent: precision 100% and recall 100%. Of its records, 27% need a substantive edit and none a cosmetic one, so the
-27% total is all substantive.
+Cases 10–12 are run 3: blind, by a separate agent, with the skill from main at 2ec5b48. Precision and recall are
+91%. Of their records, 45% need a substantive edit and none a cosmetic one. Over all cases, 21% are substantive and
+3% cosmetic (24% total). The 10% gate fails.
 
-All of it is case 10: two records lack `belongs_to` the ticket the Source names, and one quote is not verbatim. Over
-all cases, 14% are substantive and 3% cosmetic (17% total). Case 07 also lacks a `belongs_to` link, and case 08 has a
-reworded title.
+Four substantive edits are an extra `belongs_to` link. The skill now links every record to the ticket its Source
+names, but the expected convention and lesson in case 10 have none. In case 12 the ticket appears only in ci-bot
+messages. The fifth is a question in case 12 whose header is not valid YAML; the check refuses it. Case 07 lacks a
+`belongs_to` link.
 
-So the eval fails the new gate on the current recording. Missing `belongs_to` links are three of the four
-substantive edits; a skill fix for them is in flight (KAN-435). Cases 01–09 are not blind: their author saw the case
-list. `baseline.json` holds these numbers; it is not a gate.
+Cases 01–09 are not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
 
 ## Next step for Sean
 

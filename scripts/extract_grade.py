@@ -333,6 +333,10 @@ def grade_case(case: dict, root: Path, proposal: Path, check: Check | None = kno
     before, after, proposed = files(root / "before"), files(root / "after"), files(proposal)
     changed = {p: b for p, b in proposed.items() if before.get(p) != b}
     produced = {p: r for p, r in records(changed).items() if r["head"].get("type") != "source"}
+    # A proposed record whose header does not parse is still a record the reviewer must fix: produced, never matched.
+    unreadable = sorted(
+        p for p, b in changed.items() if p.endswith(".md") and b.startswith(b"---\n") and p not in records(changed)
+    )
     expected = {p: r for p, r in records(after).items() if p in case["expect"] and r["head"].get("type") != "source"}
     source_text = (root / "before" / case["source"]).read_text()
     pairs, wrong = pair(produced, expected)
@@ -366,15 +370,16 @@ def grade_case(case: dict, root: Path, proposal: Path, check: Check | None = kno
             )
             fields = ["type"] if retyped else ["drop"]
         record_edits.append({"record": path, "fields": fields})
+    record_edits += [{"record": path, "fields": ["check"]} for path in unreadable]
     for item in record_edits:
         item["severity"] = record_severity(item["fields"])
     return {
         "id": case["id"],
-        "produced": len(produced),
+        "produced": len(produced) + len(unreadable),
         "expected": len(expected),
         "matched": matched,
         "wrong": wrong,
-        "extra": sorted(set(produced) - {m["produced"] for m in matched}),
+        "extra": sorted((set(produced) - {m["produced"] for m in matched}) | set(unreadable)),
         "missed": missed,
         "edits": sorted(record_edits, key=lambda e: e["record"]),
         "source_filed": filed.get("type") == "source" and filed.get("status") == "processed",

@@ -1,5 +1,5 @@
 ---
-id: tell-support-desk-new-handoff-time
+id: tell-support-desk-handoff-time
 type: action
 scope: team
 status: open
@@ -10,19 +10,15 @@ sources:
 links:
   - {type: derived_from, target: delivery-sync-2026-11-09}
 title: Tell the support desk the on-call handoff time changed
-description: The desk pages whoever the schedule says, so it must know the shift now flips Monday at ten
+description: The desk pages whoever the schedule says, so it must know the new time
 stale_after: 2026-11-16T00:00:00Z
 tags: [owner-unknown]
 author: agent:claude-opus-5-5
 ---
-# Who owes what
+# Someone tells the support desk the handoff time changed
 
 > "And someone also needs to tell the support desk the handoff time changed, because they page whoever the schedule says." (00:04:56, Ana Reyes)
->
-> "Anyway, it needs doing before Monday. Let's — we'll figure out who." (00:05:14, Ana Reyes)
-
-No owner was named: "Somebody tells the support desk, and we still need a name for that." (00:07:47, Ana Reyes). Eli Marsh thinks it goes to the desk's shared inbox, since the lead rotates.
 
 ## Done when
 
-The support desk (shared inbox) knows the on-call handoff is Monday at 10:00 from 2026-11-16, before that Monday.
+The support desk (likely its shared inbox) knows handoff is Monday at ten, before Monday 2026-11-16. No owner was named.

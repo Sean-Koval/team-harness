@@ -10,28 +10,27 @@ sources:
 links:
   - {type: derived_from, target: delivery-sync-2026-11-09}
 title: On-call handoff moves to Monday at ten, after standup
-description: Stops the handoff colliding with standup while keeping everyone around for the incoming person
+description: Ends the collision with standup without leaving the incoming person alone over a weekend
 valid_from: 2026-11-16
 author: agent:claude-opus-5-5
 ---
 # On-call handoff moves to Monday at ten, after standup
 
-> "decided, on-call handoff is Monday at ten, after standup, starting next Monday the 16th. Friday is off the table." (00:04:32, Ana Reyes)
+> "Okay, so, to be clear, because I said the other thing a minute ago: decided, on-call handoff is Monday at ten, after standup, starting next Monday the 16th." (00:04:32, Ana Reyes)
 
 ## Context
 
-Handoff was Monday at nine thirty and collided with standup, so the outgoing person wrote the note while half in standup and the incoming person got a thin note.
+Handoff was Monday at 9:30 and kept colliding with standup, so handoff notes were thin.
 
 ## Options considered
 
-- **Friday at four.** Briefly agreed at 00:01:21, then reversed at 00:04:11 after Eli Marsh pointed out the incoming person would have the weekend with no one to ask, and the support desk is off Friday afternoons since October.
-- **Monday at ten, after standup.** Keeps the Monday advantage of everyone being around and clears the standup collision.
+- Friday at four: briefly agreed in the meeting, then reversed. The incoming person would have the weekend with no one to ask, and the support desk is off Friday afternoons since October.
+- Monday at ten, after standup: chosen.
 
 ## Decision
 
-On-call handoff is Monday at 10:00, after standup, starting Monday 2026-11-16. Friday is off the table. The outgoing person still writes the handoff note (unchanged).
+On-call handoff is Monday at ten, after standup, starting Monday 2026-11-16. Friday is off the table. The outgoing person still writes the handoff note (unchanged).
 
 ## Consequences
 
-- The pager rotation must be edited by hand so the shift flips Monday at ten.
-- The support desk pages whoever the schedule says, so it must be told the new time.
+The pager rotation must be edited by hand to flip Monday at ten, and the support desk must be told the new time.

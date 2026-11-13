@@ -9,20 +9,21 @@ sources:
   - {id: token-refresh-flake-thread, resource: team/sources/token-refresh-flake-thread.md, hash: "sha256:767c6d5dd93cffb870ff9cf3007be5f5cd40ca516416cf4b17f6fefc561bc674"}
 links:
   - {type: derived_from, target: token-refresh-flake-thread}
+  - {type: belongs_to, target: PLAT-433}
 title: Is the sandbox clock synced from the host or via NTP?
-description: Not in the image docs; the answer explained the token-refresh flake
+description: The answer explained the token-refresh flake: restored snapshots keep a stale clock
 author: agent:claude-opus-5-5
 ---
 # Is the sandbox clock synced from the host or via NTP?
 
-> "@Ana Reyes quick q, do you know if the sandbox clock is synced from the host or via NTP? I couldn't find it in the image docs" ([09:09] Dana Kowal)
+> "@Ana Reyes quick q, do you know if the sandbox clock is synced from the host or via NTP?" ([09:09] Dana Kowal)
 
 ## Why it matters
 
-The token-refresh test failed only in sandbox jobs and looked time-dependent; how the clock is set decides whether it can drift during a job.
+The token-refresh test failed only in sandbox jobs and looked time-related; the image docs did not say how the clock is set.
 
 ## Answer
 
-> "From the host, at boot, and that's it. Nothing re-syncs it during the job. The image has no NTP client, on purpose, since egress is closed" ([09:14] Ana Reyes)
->
-> "and a restored snapshot keeps whatever time it had when the snapshot was taken, until the next boot" ([09:14] Ana Reyes)
+> "From the host, at boot, and that's it." ([09:14] Ana Reyes)
+
+Nothing re-syncs it during the job; the image has no NTP client because egress is closed, and a restored snapshot keeps its old time until the next boot.

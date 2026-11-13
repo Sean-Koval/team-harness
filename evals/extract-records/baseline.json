@@ -1,22 +1,22 @@
 {
   "gate": false,
-  "skill_ref": "team-harness 97929d3 (KAN-435, PR #20)",
-  "extractor": "01-09: not blind (author saw case list), claude-opus-5-5 by hand at 97929d3; 10-12: blind, separate agent, opus-5-5, SKILL at 58de185",
+  "skill_ref": "01-09 at team-harness 97929d3; 10-12 at main 2ec5b48",
+  "extractor": "01-09: not blind (author saw case list), claude-opus-5-5 by hand at 97929d3; 10-12: blind, separate agent, opus-5-5, SKILL from team-harness main 2ec5b48 (run 3)",
   "graded_by": "scripts/extract_grade.py: quote pairing; title cutoff 0.6; description an edit only when empty or the title; a record knowledge check refuses is an edit; edits split by severity (KAN-474)",
   "all_cases": {
-    "precision": 1.0,
-    "recall": 0.9667,
-    "edit_or_drop_rate": 0.1724,
-    "substantive_rate": 0.1379,
+    "precision": 0.9655,
+    "recall": 0.9333,
+    "edit_or_drop_rate": 0.2414,
+    "substantive_rate": 0.2069,
     "cosmetic_rate": 0.0345,
     "needs_human": 2,
     "top_fields": [
       [
         "links",
-        3
+        5
       ],
       [
-        "quote",
+        "check",
         1
       ],
       [
@@ -31,19 +31,19 @@
     "06-review-draft"
   ],
   "blind_cases_10_12": {
-    "precision": 1.0,
-    "recall": 1.0,
-    "edit_or_drop_rate": 0.2727,
-    "check_failures": 0,
-    "substantive_rate": 0.2727,
+    "precision": 0.9091,
+    "recall": 0.9091,
+    "edit_or_drop_rate": 0.4545,
+    "substantive_rate": 0.4545,
     "cosmetic_rate": 0.0,
+    "check_failures": 1,
     "top_fields": [
       [
         "links",
-        2
+        4
       ],
       [
-        "quote",
+        "check",
         1
       ]
     ]
