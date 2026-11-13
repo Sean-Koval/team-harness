@@ -110,7 +110,7 @@ The rules are enforced in layers, each catching what the one before can't:
 | Layer | Where | Holds for | What it does |
 | --- | --- | --- | --- |
 | Skills | `shared/work-system/skills/` | every session with the harness | `jira-ticket` (read first, comment, never transition), `work-start` (find or file the ticket, key the branch), `decision-ticket` (a question becomes a Decision that blocks the work; a ruling is drafted for confirmation), `work-docs` (which doc goes where, the `Docs:` line), `github-pr` (who opens it, the contract, the merge rule), and for work-default `release-approvals` |
-| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, any tracker transition or destructive call, `exec:agent`, `gh pr merge --admin`, and any merge where the profile says never |
+| Session hook | `shared/work-system/hooks/guard_work_system.py` | Claude Code with the harness (hangar, local, cloud) | refuses a commit on a branch with no key, a push to main, a force push, a `gh pr create` without the title key, `Jira:` line or `Docs:` line, any transition, destructive or unrecognised call on a server the profile binds as tracker or wiki (`mcp_bindings`), `exec:agent` on any tracker-role write, `gh pr merge --admin`, and any merge where the profile says never, also when hidden in `$(...)`, `bash -c`, `eval` or `gh api` |
 | PR check | [`actions/work-system-pr`](actions/work-system-pr/README.md) | **every** PR, from any surface or tool, Codex and humans included | title key, `Jira:` line, `Docs:` line, `Decision:` → ADR; with a scoped, read-only Jira token, the ticket is open, has an execution label and is not blocked by an open Decision |
 | Tracker automation | Jira, configured by hand | every ticket | statuses move on branch created, PR opened, PR merged and Decision answered (cabinet `docs/WORK-SYSTEM.md`) |
 | Behavior specs | [`flightdeck/specs/work-system.yaml`](flightdeck/specs/work-system.yaml) | hangar runs | measure what no hook can see and catch a layer that drifted |
@@ -246,8 +246,9 @@ flowchart LR
 
 1. **A change becomes a candidate.** Someone edits the harness: here, turning on the ai-dlc workflow plugin. The PR
    updates the files, re-pins them (`hangar harness freeze` from a good run, or `scripts/relock.py` for a hand edit)
-   and points `candidate` at the new digest. `stable` doesn't move. Thawing `team-default@stable` still gives
-   yesterday's harness, found in git history.
+   and points `candidate` at the new digest. `stable` doesn't move: it names a release copy,
+   `harnesses/<name>/releases/rN/`, that keeps yesterday's files in the tree. The digest covers hook scripts too
+   (`env.HARNESS_NATIVE_DIGEST`), and `check_registry.py` fails if files change without a new digest (KAN-473).
 2. **The candidate becomes an experiment.** `flightdeck/suite.yaml` runs the same tasks on both arms
    (`environment: team-default` and `team-default-candidate`, which differ only by the plugin), `n` trials each.
    `flightdeck/decision.yaml` was committed first: promote only if the candidate costs at most $0.40 more per trial,
@@ -255,7 +256,8 @@ flowchart LR
    The behavior specs in `flightdeck/specs/` judge how each arm worked (tests before commit, a PR delivered, the
    ticket read before editing, the cluster left alone).
 3. **The experiment becomes a promotion, or doesn't.** flightdeck posts its report on the PR. If the verdict holds,
-   a second person opens a one-line PR setting `stable` to the candidate's digest. If not, or if the evidence is
+   a second person runs `scripts/promote.py harnesses/<name>`, which writes the release copy and sets `stable` to
+   the candidate's digest, and opens that PR. If not, or if the evidence is
    underpowered, `stable` stays where it was, and the report says so.
 
 This repository's history shows the first round: commit one is `r1` (no plugin, `stable`), commit two adds the
@@ -364,6 +366,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `bindings/<name>.yaml` | Where each MCP credential comes from (credential names, `${VAR}` references), for the environments |
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
 | `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
+| `scripts/promote.py` | Promote: write `releases/rN/` and point `stable` at it |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
 | `environments/` | Role environments for the four-repo convention, `work-multirepo` for change sets, and `agent.yaml` with its variable contract `agent.env.example` |

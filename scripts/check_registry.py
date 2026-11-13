@@ -15,17 +15,26 @@ the way `hangar harness thaw name@<channel>` resolves it (hangar's resolver itse
 repository root, followed by its claim checks against the rendered environments: CLI version, model, approvals,
 MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel claims on `<name>`.
 
+And for promotion (KAN-473): a channel resolves to the current lock or to a release copy, `harnesses/<name>/releases/rN/`
+(written by `scripts/promote.py`), never to git history, where one digest could name several commits' files or vanish
+in a squash. Each copy checks against its lock and never changes once merged. Against the base
+(`--base`, default the merge base with origin/main), a harness whose pinned files changed needs a new
+`harness_digest`, a higher revision and `candidate` moved to it; its native files must be covered by the digest
+(`relock.coverage_problems`).
+
 And for the work conventions: every environment under `environments/` (the role environments and `work-multirepo`)
 loads in hangar's catalog next to the harness environments it extends, `work-multirepo` installs everything the
 infra, code and database roles do, and every change-set profile under `changesets/` is well formed against them.
 The agent environment's pins agree with what they name (`agent_pin_problems`; `--agent-pins` checks only these, which
 `make agent-env` does before it starts one). hangar runs the environment locally (`hangar env local`, KAN-472).
 
-    python scripts/check_registry.py [REPO_ROOT] [--agent-pins]
+    python scripts/check_registry.py [REPO_ROOT] [--base REF] [--agent-pins]
 """
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import re
 import subprocess
 import sys
@@ -42,6 +51,8 @@ from hangar.envspec import EnvCatalog
 from hangar.harnesses import HARNESSES
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import promote  # noqa: E402
+import relock  # noqa: E402
 import render_envs  # noqa: E402
 
 
@@ -70,23 +81,93 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def resolve_channel(root: Path, name: str, channel: str, digest: str) -> str:
-    """Where `name@channel` resolves: 'current' or a commit. Raises ValueError when it doesn't."""
-    top = (_git(root, "rev-parse", "--show-toplevel") or "").strip()
-    if top and Path(top).resolve() == root.resolve():
-        r = harness_thaw.resolve(SimpleNamespace(harness_repo=str(root)), f"{name}@{channel}")
-        return r.commit or "current"
-    # a harness repo kept in a subdirectory (this example inside agent-factory): the same walk, with paths relative
-    # to it (hangar's resolver expects the repository root)
-    rel = f"harnesses/{name}/{hl.LOCK_FILE}"
-    current = hl.load(root / rel)
-    if hl.harness_digest(current) == digest:
+    """Where `name@channel` resolves: 'current' or a release copy (`releases/rN`), never git history, so a squash
+    merge can't lose or change it (KAN-473). Raises ValueError when it doesn't."""
+    harness = root / "harnesses" / name
+    if hl.harness_digest(hl.load(harness)) == digest:
         return "current"
-    for commit in (_git(root, "log", "--format=%H", "--", rel) or "").split():
-        text = _git(root, "show", f"{commit}:./{rel}")
-        old = yaml.safe_load(text or "")
-        if not hl.problems(old) and hl.harness_digest(old) == digest:
-            return commit
-    raise ValueError(f"{name}@{channel} ({digest}) is neither the current lock nor in the git history of {rel}")
+    rel = promote.find_release(harness, digest)
+    if rel is None:
+        raise ValueError(f"{name}@{channel} ({digest}) is neither the current lock nor a release copy under "
+                         f"harnesses/{name}/{promote.RELEASES}/ (scripts/promote.py writes one)")
+    return rel.relative_to(harness).as_posix()
+
+
+def _resolve_from_releases(root: Path):
+    """hangar's `harness_thaw.resolve`, finding a channel's lock in the release copies instead of git history. The
+    copy's directory is the registry path, so `materialize` reads the files a claim needs from it."""
+    hangar_resolve = harness_thaw.resolve
+
+    def resolve(settings: Any, ref: str) -> Any:
+        name, _, at = ref.partition("@")
+        harness = root / "harnesses" / name
+        digest = None
+        if at and not at.startswith("sha256:") and not re.fullmatch(r"r\d+", at):
+            digest = ((yaml.safe_load((root / "channels.yaml").read_text()) or {}).get(name) or {}).get(at)
+        elif at.startswith("sha256:"):
+            digest = at
+        if digest and hl.harness_digest(hl.load(harness)) != digest:
+            rel = promote.find_release(harness, digest)
+            if rel is not None:
+                lock = hl.load(rel)
+                return harness_thaw.Resolved(ref, name, lock, digest,
+                                             (rel / hl.LOCK_FILE).relative_to(root).as_posix())
+        return hangar_resolve(settings, ref)
+
+    return resolve
+
+
+@contextlib.contextmanager
+def _releases_resolver(root: Path):
+    saved = harness_thaw.resolve
+    harness_thaw.resolve = _resolve_from_releases(root)
+    try:
+        yield
+    finally:
+        harness_thaw.resolve = saved
+
+
+def release_base_problems(root: Path, base: str, d: Path) -> list[str]:
+    """Release copies are append-only: one that existed at `base` keeps its lock and files."""
+    errors = []
+    listing = _git(root, "ls-tree", "-d", "--name-only", f"{base}:./harnesses/{d.name}/{promote.RELEASES}") or ""
+    for rn in listing.split():
+        text = _git(root, "show", f"{base}:./harnesses/{d.name}/{promote.RELEASES}/{rn}/{hl.LOCK_FILE}")
+        old = yaml.safe_load(text or "") if text else None
+        now = d / promote.RELEASES / rn
+        if old is None or hl.problems(old):
+            continue
+        if not (now / hl.LOCK_FILE).is_file() or hl.harness_digest(hl.load(now)) != hl.harness_digest(old) \
+                or relock.pinned(hl.load(now)) != relock.pinned(old):
+            errors.append(f"{d.name}: {promote.RELEASES}/{rn} changed or went since {base[:12]}: release copies "
+                          "never change")
+    return errors
+
+
+def base_problems(root: Path, base: str, d: Path, lock: dict[str, Any], chans: dict[str, str]) -> list[str]:
+    """Against the lock at `base`: changed files need a new digest, a higher revision and `candidate` on it."""
+    text = _git(root, "show", f"{base}:./harnesses/{d.name}/{hl.LOCK_FILE}")
+    if text is None:
+        return []  # a new harness
+    old = yaml.safe_load(text)
+    if hl.problems(old) or relock.pinned(old) == relock.pinned(lock):
+        return []
+    digest = hl.harness_digest(lock)
+    errors = []
+    if digest == hl.harness_digest(old):
+        errors.append(f"{d.name}: its files changed since {base[:12]} but harness_digest did not")
+    if lock["revision"] <= old["revision"]:
+        errors.append(f"{d.name}: its files changed since {base[:12]} but the revision is still r{lock['revision']}")
+    if chans and chans.get("candidate") != digest:
+        errors.append(f"{d.name}: its files changed since {base[:12]}; point candidate at {digest} "
+                      "(stable moves only by promotion)")
+    return errors
+
+
+def default_base(root: Path) -> str | None:
+    """The merge base with origin/main (a PR's base; HEAD itself on main), when there is one."""
+    out = (_git(root, "merge-base", "HEAD", "origin/main") or "").strip()
+    return out or None
 
 
 def claim_channel(root: Path, name: str, channel: str) -> str:
@@ -95,7 +176,8 @@ def claim_channel(root: Path, name: str, channel: str) -> str:
     with tempfile.TemporaryDirectory() as data:  # pin copies the lock's files out (hangar#221 mounts them)
         fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data),
                                 catalog=EnvCatalog([root / "harnesses" / name]))
-        p = harness_thaw.pin(fleet, f"{name}@{channel}", env)
+        with _releases_resolver(root):
+            p = harness_thaw.pin(fleet, f"{name}@{channel}", env)
     return f"claim on {env}: ok ({p['harness']} {p['version']}, {p['model']}, {p['approvals']})"
 
 
@@ -164,7 +246,8 @@ def claim_role_environments(root: Path, cat: EnvCatalog, names: dict[str, Any]) 
         with tempfile.TemporaryDirectory() as data:
             fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data), catalog=cat)
             try:
-                p = harness_thaw.pin(fleet, f"{base}@stable", env)
+                with _releases_resolver(root):
+                    p = harness_thaw.pin(fleet, f"{base}@stable", env)
                 print(f"{base}@stable: claim on {env}: ok ({p['harness']} {p['version']}, {p['model']})")
             except harness_thaw.ThawError as e:
                 errors.append(f"{base}@stable on {env}: {e}")
@@ -302,14 +385,22 @@ def agent_pin_problems(root: Path) -> list[str]:
 
 
 def main() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    root = Path(args[0] if args else ".").resolve()
-    if "--agent-pins" in sys.argv[1:]:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("root", nargs="?", default=".", type=Path)
+    ap.add_argument("--base", help="the commit to compare each lock with (default: merge base with origin/main)")
+    ap.add_argument("--agent-pins", action="store_true", help="check only the agent environment's pins")
+    a = ap.parse_args()
+    root = a.root.resolve()
+    if a.agent_pins:
         pins = agent_pin_problems(root)
         for p in pins:
             print(f"error: {p}", file=sys.stderr)
         return 1 if pins else 0
     errors: list[str] = []
+    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
+    top = (_git(root, "rev-parse", "--show-toplevel") or "").strip()
+    is_repo = bool(top) and Path(top).resolve() == root
+    base = a.base or (default_base(root) if is_repo else None)
     for d in sorted((root / "harnesses").iterdir()):
         if not (d / hl.LOCK_FILE).is_file():
             continue
@@ -319,6 +410,11 @@ def main() -> int:
         if not res["ok"]:
             continue
         lock = hl.load(d)
+        errors += [f"{d.name}: {p}" for p in relock.coverage_problems(d, lock)]
+        errors += promote.release_problems(d)
+        if base:
+            errors += base_problems(root, base, d, lock, channels.get(d.name) or {})
+            errors += release_base_problems(root, base, d)
         if (d / "AGENTS.md").exists() and (d / "AGENTS.md").read_bytes() != (d / "CLAUDE.md").read_bytes():
             errors.append(f"{d.name}: AGENTS.md differs from CLAUDE.md (copy it: the lock pins CLAUDE.md)")
         want = render_envs.render(d)
@@ -341,7 +437,6 @@ def main() -> int:
                 errors.append(f"{d.name}: env.candidate.yaml yields {got}, the lock is {hl.harness_digest(lock)}")
             else:
                 print(f"{d.name}: env.candidate.yaml reproduces {got}")
-    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
     for name, chans in channels.items():
         for ch, digest in (chans or {}).items():
             try:

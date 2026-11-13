@@ -1,0 +1,83 @@
+# hangar harness lock (docs/harness-lock.md). Written by `hangar harness freeze`; identity is
+# harness_digest, printed by `hangar harness check`.
+schema: hangar.harness-lock/v1
+name: team-default
+revision: 1
+runtime:
+  harness: claude-code
+  version: 2.1.296
+  pack: null
+model:
+  id: claude-opus-5-5
+  policy: balanced
+components:
+- id: guide:CLAUDE.md
+  digest: sha256:2ac8ef2991abb8246318a0f2fecc91de8c9ee3ff8f94cd785d17000b21e49f34
+  path: CLAUDE.md
+- id: skill:github-pr
+  digest: sha256:4991bdd1b7f1a6d3ced847ba97b3edc5af7aa77a85bcd334fa164749b0d657b3
+  tree: sha256:7205a7602eae9958e7b13e96218c1daa1d7fd0393e098c4e583ad233a768fcbc
+  path: skills/github-pr
+  source: path:skills/github-pr
+- id: skill:gke-diagnose
+  digest: sha256:39bdf7494f3d7cfa33c2c9712f5ce5a4db99768fba73f9a6247caf3f21f09c1c
+  tree: sha256:d012db197e0162d6dd491cb3ca3c30770640e9bc56eed66a2dfa30ee59cf28ad
+  path: skills/gke-diagnose
+  source: path:skills/gke-diagnose
+- id: skill:jira-ticket
+  digest: sha256:0d516f7d8439e1c1e3630a27d06a258c33b21f209af05dd8cf7374b7b9713bf2
+  tree: sha256:9fc72df5360222b63416c91d5b45461f0399ad3683615db8e75daf39e1baa81c
+  path: skills/jira-ticket
+  source: path:skills/jira-ticket
+- id: skill:openspec-change
+  digest: sha256:d986df0291b41d6b437c7993f0c411c7d5234451ba6c52314080ffdd51c7d705
+  tree: sha256:abbe0fdcf56e0ea0742f23bc171c7cac7779eeb6949192d22fbf786a26938272
+  path: skills/openspec-change
+  source: path:skills/openspec-change
+- id: skill:splunk-logs
+  digest: sha256:65df11dfe820e113ce41638ef18c362966a55e5a3183c86ab1396669611fc999
+  tree: sha256:1ba8c79c1abfe52c2d783bf970e7d61b1dca79c47c634a0815db2584c1bb939b
+  path: skills/splunk-logs
+  source: path:skills/splunk-logs
+- id: native:claude-code/hooks/guard_readonly.py
+  digest: sha256:b1ab393d2b81fdecf0f1fde7084fa01b7318ec781f4ed7835bfb3b18eaeb43dc
+  path: native/claude-code/hooks/guard_readonly.py
+- id: native:claude-code/settings.json
+  digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca
+  path: native/claude-code/settings.json
+binding:
+  mcp:
+  - name: github
+    transport: http
+    endpoint: https://api.githubcopilot.com/mcp/
+    header_names:
+    - Authorization
+  - name: gke
+    transport: stdio
+    command: kubernetes-mcp-server
+    args:
+    - --read-only
+    env_names:
+    - KUBECONFIG
+  - name: jira
+    transport: http
+    endpoint: https://mcp.atlassian.com/v1/mcp
+    header_names:
+    - Authorization
+  - name: splunk
+    transport: http
+    endpoint: https://splunk.example.com:8089/services/mcp
+    header_names:
+    - Authorization
+  hooks:
+  - event: SessionStart
+    source: environment:.claude/settings.json
+    digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca
+  - event: PreToolUse
+    source: environment:.claude/settings.json
+    digest: sha256:6165173bce906f7b0f0e394e1d8126874215eddb11fca709f4cdd7834668fbca
+  permissions:
+    approvals: deny-risky
+plugins:
+  autoUpdate: false
+remote: []
