@@ -19,6 +19,9 @@ import check_registry  # noqa: E402
 
 def test_pins_agree():
     assert check_registry.agent_pin_problems(ROOT) == []
+    raw = yaml.safe_load((ROOT / "environments" / "agent.yaml").read_text())
+    # extends names the environment serving the pinned digest (KAN-477), here suite-default-candidate, not the harness
+    assert check_registry.agent_extends_problems(ROOT, "agent", "suite-default", raw["env"])
 
 
 def copy_repo(tmp_path: Path) -> Path:
