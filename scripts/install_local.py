@@ -40,7 +40,8 @@ What it never does:
   credential as a `$VARIABLE` placeholder for you to fill from your secret manager. Plugins are printed the same way.
 - Install two harnesses into one scope: `--uninstall` the first (work and personal harnesses stay apart).
 
-The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the source
+The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the lock's
+model and Claude Code version (read by `ai-dlc knowledge doctor`, KAN-433), the source
 commit, the settings entries added and the SHA-256 of every file written. `--check` reports an edited or missing file,
 a removed settings entry or `@import` line, or that the channel has moved to another revision. `--uninstall` removes only files whose digest
 still matches, leaving an edited file in place with a warning.
@@ -720,7 +721,8 @@ def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") ->
     def manifest(entries: dict[str, list[dict[str, Any]]], files: dict[str, str]) -> dict[str, Any]:
         m = {
             "schema": SCHEMA, "harness": h.name, "channel": channel, "revision": h.revision,
-            "harness_digest": h.digest, "scope": scope, "source": h.source, "guide": p.guide_rel,
+            "harness_digest": h.digest, "model": (h.lock.get("model") or {}).get("id"),
+            "runtime_version": (h.lock.get("runtime") or {}).get("version"), "scope": scope, "source": h.source, "guide": p.guide_rel,
             "guide_import": guide_import or None,
             **{SECTION[n]: sp.block(entries[n]) for n, sp in p.sfiles.items()
                if n == SETTINGS or sp.records or sp.old_records or sp.original is not None},

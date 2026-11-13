@@ -17,6 +17,10 @@
 # harnesses/<h>/skills/ that the layer or the org does not produce is deleted by sync_shared.py and fails --check.
 #
 # team-default is not listed: it is the pre-registered A/B example (flightdeck/decision.yaml), not the work system.
+# Every directory under shared/work-system/skills/ ships to every harness below, except one that a harness names in
+# its own `skills:` (that one goes to that harness only). A new shared skill therefore needs no edit here: add its
+# directory with a SKILL.md whose `name:` is the directory's name, then run sync_shared.py, relock.py and
+# render_envs.py. This list is the record of what ships today; a name in it must be a shared skill directory.
 skills: [jira-ticket, decision-ticket, work-docs, work-start, github-pr, extract-records,
          knowledge-context, query-knowledge, whats-next, plan-to-tickets]   # every harness below
 hook: hooks/guard_work_system.py          # -> native/claude-code/hooks/guard_work_system.py

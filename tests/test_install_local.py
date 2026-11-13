@@ -932,3 +932,14 @@ def test_older_project_install_moves_its_hooks_to_settings_local(tmp_path, monke
     assert project(WORK, target, "--uninstall") == 0
     assert (base / "settings.json").read_bytes() == OWN_SETTINGS
     assert sorted(p.name for p in target.rglob("*") if p.is_file()) == ["settings.json"]
+
+
+def test_manifest_records_the_pinned_model_and_runtime(tmp_path):
+    """ai-dlc's knowledge doctor prints the pins from the manifest alone (KAN-433)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    lock = yaml.safe_load((SUITE / "harness.lock").read_text())
+    assert user(SUITE, home, "--apply") == 0
+    m = manifest(home / ".claude")
+    assert m["model"] == lock["model"]["id"]
+    assert m["runtime_version"] == lock["runtime"]["version"]
