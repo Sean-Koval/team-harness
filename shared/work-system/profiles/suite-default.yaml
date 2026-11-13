@@ -18,6 +18,9 @@ params:
   decision_labels: >-
     `exec:human`, the work ticket's `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it;
     assign it to Sean
+  # The guard hook's MCP roles: which servers this harness binds as the tracker and the wiki (names from
+  # harness.lock binding.mcp; a test holds them equal), and the ai-dlc server. JSON.
+  mcp_bindings: '{"tracker": ["atlassian"], "wiki": ["atlassian"], "ai-dlc": ["ai-dlc"]}'
   merge_mode: "allowed"
   merge_rule: >-
     **Merging (suite repositories only):** you may merge your own PR once every required check is green, every review
