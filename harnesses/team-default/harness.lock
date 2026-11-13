@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: team-default
-revision: 9
+revision: 8
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -46,7 +46,7 @@ components:
   enabled: true
   source: git:https://github.com/Sean-Koval/ai-dlc#plugins/ai-dlc-workflow@fec8b9186a01009b3e58408c37dc0e508b3ec058
 - id: native:claude-code/hooks/guard_readonly.py
-  digest: sha256:354ebd2a1f32cebf3966d41a5a494348f63bb463ca711ebf6e47d6e03b4711cb
+  digest: sha256:9436a05e0180deea66a3397d4c31711b1caf9f8c8873f239319c08ac76003dee
   path: native/claude-code/hooks/guard_readonly.py
 - id: native:claude-code/settings.json
   digest: sha256:29b082bf7c8db833cc7c1ff75a299760ea916104fe16cf6d41a518d33e137a1c
@@ -78,10 +78,10 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:0c12d1ada54c6c377128d93519795660148adbb27d2b873203b60164a4f9003e
+    digest: sha256:02ac23527c6c01dad7ab8bb5a4d206dbce72e6413cff77725956dde4c4562f60
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:0c12d1ada54c6c377128d93519795660148adbb27d2b873203b60164a4f9003e
+    digest: sha256:02ac23527c6c01dad7ab8bb5a4d206dbce72e6413cff77725956dde4c4562f60
   permissions:
     approvals: deny-risky
 plugins:
