@@ -1,6 +1,7 @@
 """The PreToolUse guard: what it blocks and what it lets through."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,6 +52,32 @@ def test_writes_and_credential_dumps_are_blocked(command):
     assert bash(command) == 2
 
 
-def test_other_tools_and_bad_input_pass():
+def test_other_tools_pass():
     assert run({"tool_name": "Edit", "tool_input": {"file_path": "x"}}) == 0
-    assert subprocess.run([sys.executable, str(HOOK)], input=b"not json", capture_output=True).returncode == 0
+
+
+def test_input_that_is_not_json_fails_closed():
+    r = subprocess.run([sys.executable, str(HOOK)], input=b"not json", capture_output=True)
+    assert r.returncode == 2 and b"not valid JSON" in r.stderr
+
+
+def run_bytes(data: bytes) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    return subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True, env=env)
+
+
+def test_input_that_is_not_utf8_fails_closed():
+    r = run_bytes(b'{"tool_name": "Bash", "tool_input": {"command": "ls \xe9\xff"}}')
+    assert r.returncode == 2 and b"not valid UTF-8" in r.stderr
+
+
+def test_non_ascii_utf8_command_is_still_judged():
+    event = {"tool_name": "Bash", "tool_input": {"command": "echo 'café ✓' && kubectl delete pod x"}}
+    r = run_bytes(json.dumps(event, ensure_ascii=False).encode("utf-8"))
+    assert r.returncode == 2
+    assert r.stderr.decode("utf-8").startswith("blocked by the team harness: ")
+
+
+@pytest.mark.parametrize("command", ["ls\nenv", "echo ok\r\nkubectl delete pod x", "true & helm uninstall api", "kubectl \\\ndelete pod x", "kubectl get pods\nprintenv"])
+def test_every_line_and_separator_is_judged(command):
+    assert bash(command) == 2

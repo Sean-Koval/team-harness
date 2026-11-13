@@ -1,0 +1,39 @@
+# The example org overlay (team-harness.org/v1). Placeholders only: no real company, project, room or rule.
+# A company copies this directory to orgs/<its-name>/, fills in its own projects, gates and room, drops its own flow
+# skill into skills/org-process/, sets placeholder: false and points its harness at it in
+# shared/work-system/targets.yaml (orgs/README.md). scripts/sync_shared.py validates this file and renders it into
+# the harness's release-approvals skill.
+schema: team-harness.org/v1
+name: example-co
+placeholder: true            # the public example: agents file nothing and say the overlay is not applied
+params:                      # only tracker and kb_* may be set here (the org wins for those)
+  tracker: "the WORKPROJ project on COMPANY-SITE.atlassian.net"
+  kb_site: "COMPANY-SITE.atlassian.net"
+  kb_space: "COMPANY-SPACE"
+ticket_types:                # every ticket kind the flow uses
+  - {id: work, project: WORKPROJ, issue_type: Story, role: work}
+  - {id: sre-approval, project: SREPROJ, issue_type: Task, role: approval,
+     summary: "SRE approval: {pr_title}"}   # the PR title starts with the work key
+  - {id: infosec-review, project: SECPROJ, issue_type: Task, role: approval,
+     summary: "Infosec review: {repo} {work_key}"}
+gates:                       # what must exist before a PR merges, in order
+  - id: sre
+    ticket: sre-approval     # a ticket_types id with role: approval
+    when: always             # always | {paths: [globs]} | {labels: [names]}  (any match applies the gate)
+    pr_line: SRE             # the PR body carries `SRE: <KEY>` once the ticket is filed
+    links: [pr, work]        # what the gate ticket links: pr, work, repo
+    filed_by: agent          # agent | person (person: the agent asks in the PR and files nothing)
+    approved_statuses: [Approved, Done]   # optional; with Jira read access the PR check requires one of these
+  - id: infosec
+    ticket: infosec-review
+    when: always
+    pr_line: Infosec
+    links: [repo, work]
+    filed_by: agent
+review_request:
+  room: "the team's review room"   # drafted only; a person posts it
+  template: |
+    Review please: {pr_url}
+    {work_key}: {summary}
+    {gate_lines}
+    Risk: {risk}

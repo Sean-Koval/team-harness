@@ -27,14 +27,14 @@ params:
     the ticket's owner (its assignee, otherwise its reporter)
   merge_mode: "never"
   merge_rule: >-
-    **Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. SRE approves (or
-    merges) the PR after reviewing the SRE ticket that links it (`release-approvals`); hangar lands change sets only
-    after each repository's own approvers approve. The hook refuses `gh pr merge`.
+    **Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. The approvers
+    the company's org overlay declares approve (or merge) the PR from their gate tickets (`release-approvals`); hangar
+    lands change sets only after each repository's own approvers approve. The hook refuses `gh pr merge`.
   scope_map: >-
     A customer engagement is `project` with `boundary: customer`, linked `belongs_to` its project, and its records
     never leave that project. The team's own tooling, process and services are `team`. A person's own notes are
     `personal`. The company overlay may list its projects here; until it does, keep the Source's own scope.
   approvals: >-
-    Every PR goes through the company's review steps: use the `release-approvals` skill once the PR is open (an SRE
-    ticket that links the PR, an infosec ticket that links the repository, and a drafted review request for the
-    team's Symphony room that a person posts).
+    Every PR goes through the company's review steps: use the `release-approvals` skill once the PR is open. It
+    files one approval ticket per gate the company's org overlay declares (`org-process` describes the flow), adds
+    each gate's line to the PR body, and drafts a review request that a person posts.

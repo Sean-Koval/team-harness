@@ -1,0 +1,5 @@
+# Locks pin raw bytes (harness.lock digests, sync_shared.py --check), so the harness files keep LF on every checkout,
+# Git for Windows' autocrlf included (KAN-460).
+shared/** text=auto eol=lf
+harnesses/** text=auto eol=lf
+templates/** text=auto eol=lf

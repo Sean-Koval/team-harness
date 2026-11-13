@@ -1,0 +1,44 @@
+# The agent role, defined once (KAN-447). A run on Sean's computer and a cloud session start from this spec, so a
+# local run is evidence about a cloud one:
+#
+# - cloud: hangar loads it from HANGAR_ENV_DIRS (this directory) and renders and runs it, like the role environments;
+# - local: `make agent-env` renders it with the same hangar renderer, builds that image and starts it under this
+#   egress policy, with no host directory mounted (scripts/agent_env.py).
+#
+# Pinned here: the harness (suite-default, by its harness_digest), ai-dlc (a commit, installed from its uv.lock), the
+# knowledge format version and the model. scripts/check_registry.py fails when a pin and what it names disagree.
+# Credentials and inputs are names only; agent.env.example is the contract, the same names locally and in hangar's
+# secret store. Inputs come from git and the tracker: TICKET_KEY, CODE_REPO, KNOWLEDGE_REPO.
+name: agent
+extends: suite-default
+description: suite-default + ai-dlc pinned, for one ticket's run; the same image on a laptop and in hangar
+model: claude-opus-5-5
+tools:
+  apt: [gh]              # ai-dlc's core module: git and gh
+  mise:
+    python: "3.12.11"    # ai-dlc's own pins (its mise.toml and modules/catalog.toml)
+    uv: "0.9.11"
+    node: "22.23.1"
+    "npm:@fission-ai/openspec": "1.5.0"
+dependencies:
+  script: |
+    git clone --quiet --filter=blob:none https://github.com/Sean-Koval/ai-dlc /home/agent/.local/share/ai-dlc
+    git -C /home/agent/.local/share/ai-dlc checkout --quiet "cf665b96c13710025fc1a4a2932cc18f1f97b431"
+    cd /home/agent/.local/share/ai-dlc
+    UV_PYTHON_DOWNLOADS=never uv sync --locked --no-dev --python "$(mise which python)"
+    mkdir -p /home/agent/.local/bin
+    ln -sf /home/agent/.local/share/ai-dlc/.venv/bin/ai-dlc /home/agent/.local/bin/ai-dlc
+env:
+  AGENT_ENV: agent
+  AGENT_ENV_HARNESS: suite-default
+  AGENT_ENV_HARNESS_DIGEST: "sha256:aca8c64a4f2f72b039509fdc717653d59552405ce7aff9af147810425ede557d"  # r4
+  AI_DLC_REF: "cf665b96c13710025fc1a4a2932cc18f1f97b431"
+  KNOWLEDGE_FORMAT_VERSION: "1"   # ai-dlc's knowledge-record FORMAT_VERSION; a knowledge repo pins [format] version
+secrets:                          # ENV_VAR: hangar credential name (values never live here)
+  GH_TOKEN: github-agent          # clone CODE_REPO and KNOWLEDGE_REPO, read the repo's API
+egress:
+  mode: allowlist
+  presets: [packages, github]     # the package indexes; GitHub for the code and knowledge repos
+  allow:
+  - api.atlassian.com             # the tracker and wiki gateway (Jira and Confluence Cloud REST)
+  - mcp.atlassian.com             # the Atlassian MCP server the harness binds

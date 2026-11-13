@@ -31,19 +31,45 @@ BLOCKED = [
 ]
 
 
-def main() -> int:
+def _commands(command: str) -> list[str]:
+    """The whole call with each line ending made a `;`, then every single command in it. Each is judged, so a
+    newline, `;`, `&&`, `||`, `|` or `&` cannot hide a command from a pattern."""
+    joined = re.sub(r"\s*\r?\n\s*", " ; ", re.sub(r"\\\r?\n", " ", command))
+    return [joined] + [c for c in re.split(r"\s*(?:;|&&|\|\||\||(?<![<>])&(?![>&]))\s*", joined) if c]
+
+
+def _read_event() -> tuple[object, str | None]:
+    """(event, problem): the event read as UTF-8 bytes on every platform (on Windows sys.stdin decodes with the
+    console code page). problem names why the input cannot be checked (not UTF-8, not JSON): the caller fails closed."""
     try:
-        event = json.load(sys.stdin)
-    except (ValueError, OSError):
-        return 0  # not ours to judge; never wedge a session on a malformed event
-    if event.get("tool_name") != "Bash":
+        text = sys.stdin.buffer.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None, "the tool call is not valid UTF-8, so it cannot be checked"
+    except OSError:
+        return None, None
+    try:
+        return json.loads(text), None
+    except ValueError:
+        return None, "the tool call is not valid JSON, so it cannot be checked"
+
+
+def _block(message: str) -> int:
+    sys.stderr.flush()
+    sys.stderr.buffer.write((message + "\n").encode("utf-8"))
+    sys.stderr.buffer.flush()
+    return 2
+
+
+def main() -> int:
+    event, problem = _read_event()
+    if problem:
+        return _block(f"blocked by the team harness: {problem}. Diagnose read-only and propose the change in a PR.")
+    if not isinstance(event, dict) or event.get("tool_name") != "Bash":
         return 0
-    command = str((event.get("tool_input") or {}).get("command") or "")
-    for pattern, why in BLOCKED:
-        if re.search(pattern, command):
-            print(f"blocked by the team harness: {why}. Diagnose read-only and propose the change in a PR.",
-                  file=sys.stderr)
-            return 2
+    for command in _commands(str((event.get("tool_input") or {}).get("command") or "")):
+        for pattern, why in BLOCKED:
+            if re.search(pattern, command):
+                return _block(f"blocked by the team harness: {why}. Diagnose read-only and propose the change in a PR.")
     return 0
 
 
