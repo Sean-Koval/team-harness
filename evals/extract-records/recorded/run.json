@@ -1,9 +1,9 @@
 {
   "skill_sha256": "5afad8d3b076426c9b569b572c1218d779bb7d986a62506ba3ec528b4e4d450d",
-  "skill_ref": "team-harness 97929d3 (KAN-435, PR #20)",
+  "skill_ref": "mixed: 01-09 at team-harness 97929d3, 10-12 at 58de185 (KAN-435); skill_sha256 is the older, so --require-fresh fails until a live re-record",
   "model": "claude-opus-5-5",
   "extractor": "by hand, no model call: see extractors",
-  "notes": "Cases 01-09: not blind (author saw case list); 08-09 were written by the same agent. Cases 10-12: hand-run blind by a separate agent, model opus-5-5, SKILL 97929d3, seeing only SKILL.md and before/; its own notes: it treated a withdrawn proposal as a decision (case 12) and never adds belongs_to. Tokens are estimates (4 characters a token). needs_human holds the #22 reviewer's ruling (2026-11-12).",
+  "notes": "Cases 01-09: not blind (author saw case list); 08-09 were written by the same agent. Cases 10-12: blind, separate agent, opus-5-5, SKILL at 58de185 (KAN-435 head), seeing only SKILL.md, the ai-dlc templates and before/ (run 2, replacing run 1). Tokens are estimates (4 characters a token). needs_human holds the #22 reviewer's ruling (2026-11-12).",
   "blind": {
     "01-meeting": false,
     "02-decision-subrules": false,
@@ -33,6 +33,10 @@
   ],
   "extractors": {
     "01-09": "not blind (author saw case list): claude-opus-5-5 by hand, the agent that wrote cases.yaml's reader and cases 08-09",
-    "10-12": "hand-run blind by a separate agent, model opus-5-5, SKILL 97929d3"
+    "10-12": "blind, separate agent, opus-5-5, SKILL at 58de185 (KAN-435 head)"
+  },
+  "skill_by_case": {
+    "01-09": "97929d3 sha256:5afad8d3b076426c9b569b572c1218d779bb7d986a62506ba3ec528b4e4d450d",
+    "10-12": "58de185 sha256:003194e25fb4bb75b7a357b93d92cc9f42f402f5615a0a0df5a870d71ec0a427"
   }
 }

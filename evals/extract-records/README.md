@@ -27,6 +27,16 @@ Both live runners use the one `model` in `config.yaml`; `--case <id>` runs one c
 empty temporary directory with every tool off, so it cannot read `after/`. In CI the nightly live job needs a
 `CLAUDE_CODE_OAUTH_TOKEN` secret (from `claude setup-token`); without it the job reports itself skipped.
 
-**Baseline:** `baseline.json` is a hand-made upper bound, not a gate. Re-record it from the first live run:
-`python scripts/extract_eval.py --live --runner claude-cli --record`, then commit `recorded/` and the new numbers.
-After changing the skill, record again the same way.
+## Current numbers
+
+The trustworthy subset is cases 10–12, extracted blind by a separate agent: precision 100%, recall 100%, and 27% of
+records to edit or drop, just over the 25% gate. All of it comes from case 10: two records lack `belongs_to` the
+ticket the Source names, and one quote is not verbatim. A skill fix for both is in flight (KAN-435). Cases 01–09 are
+not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
+
+## Next step for Sean
+
+The recording predates the newest `SKILL.md`, so `--require-fresh`, and with it CI, fails until a live re-record.
+That is intended. On a machine logged in to Claude Code, run
+`python scripts/extract_eval.py --live --runner claude-cli --record`, then commit `recorded/` and update
+`baseline.json` from its summary. Record again the same way after every skill change.
