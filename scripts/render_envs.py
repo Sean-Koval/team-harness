@@ -6,9 +6,14 @@ the native files and the MCP servers, and an experiment variant still names an e
 variants by lock (hangar#135). These environments carry exactly the pinned files, so a session on them reports the
 lock's `harness_digest`:
 
-- `env.stable.yaml` (environment `<name>`): the guide, skills, native files and MCP servers; no plugins.
-- `env.candidate.yaml` (environment `<name>-candidate`): the same plus the lock's plugin components, loaded from
-  hangar's read-only plugin seed (hangar docs/harnesses.md#plugins), for flightdeck's environment-based variants.
+- `env.stable.yaml` (environment `<name>`): the guide, skills, native files and MCP servers of the lock `stable`
+  names in `channels.yaml`, read from its release copy (`releases/rN/`, scripts/promote.py) when that isn't the
+  current lock; no plugins. A session on the `stable` channel thaws that lock and runs the environment's hooks, so
+  they must be the release copy's: after a hook edit on main, a stable session keeps the promoted hooks until the next
+  promotion, and turn 1 reports no drift (KAN-477).
+- `env.candidate.yaml` (environment `<name>-candidate`): the current lock in full, plugins too (loaded from hangar's
+  read-only plugin seed, hangar docs/harnesses.md#plugins), whenever `stable` isn't the current lock or the lock has
+  plugins. Sessions on another channel, and flightdeck's environment-based candidate arm, run on it.
 
 Each `settings.json` is provided with `env.HARNESS_NATIVE_DIGEST`: one digest of the harness's other native files (the
 hook scripts and whatever they call). hangar's `harness_digest` covers a settings file only by its own bytes (the
@@ -87,8 +92,46 @@ def native_files(root: Path, runtime: str) -> dict[str, str]:
     return out
 
 
-def render(root: Path) -> dict[str, str]:
+def _as_locked(src: Path, lock: dict[str, Any], runtime: str, provided: dict[str, str]) -> dict[str, str]:
+    """`provided`, with each settings file as `lock` pinned it: a lock from before KAN-473 (a release copy such as
+    team-default r1) pinned its hooks by the settings file's own bytes, without `env.HARNESS_NATIVE_DIGEST`, so the
+    copy's file is provided unchanged and a session on it reproduces that lock's digest."""
+    home = HOME_DIRS[runtime]
+    pinned = {h.get("source"): h.get("digest") for h in lock["binding"].get("hooks") or []}
+    out = dict(provided)
+    for rel in provided:
+        if rel.rsplit("/", 1)[-1] != SETTINGS:
+            continue
+        raw = (src / "native" / runtime / rel).read_bytes()
+        if pinned.get(f"environment:{home}/{rel}") == "sha256:" + hashlib.sha256(raw).hexdigest():
+            out[rel] = raw.decode()
+    return out
+
+
+def stable_dir(root: Path) -> Path:
+    """The directory of the lock `stable` names: the harness itself when it is the current lock (or the harness has
+    no `stable` channel yet), else its release copy. Release copies are found by digest, as hangar's thaw finds them."""
+    from hangar import harness_lock as hl
+
+    import promote  # needs hangar too; imported here so native_files needs neither
+
     lock = yaml.safe_load((root / "harness.lock").read_text())
+    channels = next((p / "channels.yaml" for p in root.resolve().parents if (p / "channels.yaml").is_file()), None)
+    chans = ((yaml.safe_load(channels.read_text()) or {}).get(lock["name"]) or {}) if channels else {}
+    digest = chans.get("stable")
+    if not digest or hl.harness_digest(hl.load(root)) == digest:
+        return root
+    rel = promote.find_release(root, digest)
+    if rel is None:
+        raise SystemExit(f"{root}: stable ({digest}) is neither the current lock nor a release copy under "
+                         f"{root / promote.RELEASES}/ (scripts/promote.py writes one)")
+    return rel
+
+
+def _environment(root: Path, src: Path, env_name: str, description: str, with_plugins: bool) -> dict[str, Any]:
+    """The environment providing the lock in `src` (the harness directory `root` or a release copy under it). Paths
+    are relative to `root`, the spec's directory, where hangar resolves them."""
+    lock = yaml.safe_load((src / "harness.lock").read_text())
     name, runtime = lock["name"], lock["runtime"]["harness"]
     # the repository's bindings/, also from a release copy (harnesses/<name>/releases/rN/)
     repo = next((p for p in root.resolve().parents if (p / "bindings").is_dir()), root.parent.parent)
@@ -96,6 +139,8 @@ def render(root: Path) -> dict[str, str]:
     bind = yaml.safe_load(bindings_file.read_text()) or {}
     comps = lock["components"]
     home = HOME_DIRS[runtime]
+    prefix = src.resolve().relative_to(root.resolve()).as_posix()
+    at = (lambda path: path) if prefix == "." else (lambda path: f"{prefix}/{path}")
 
     mcp: dict[str, Any] = {}
     for m in lock["binding"]["mcp"]:
@@ -118,32 +163,46 @@ def render(root: Path) -> dict[str, str]:
         mcp[m["name"]] = s
 
     guide = next((c for c in comps if c["id"].startswith("guide:")), None)
-    provided = native_files(root, runtime)
+    provided = _as_locked(src, lock, runtime, native_files(src, runtime))
     files = {f"{home}/{c['path'].split('/', 2)[2]}": _text(provided[c["path"].split("/", 2)[2]])
              for c in comps if c["id"].startswith(f"native:{runtime}/")}
-    stable: dict[str, Any] = {
-        "name": name,
-        "description": f"Provides the files of harness {name} (harnesses/{name}/harness.lock) for thaw and experiments",
+    env: dict[str, Any] = {
+        "name": env_name,
+        "description": description,
         "harnesses": [runtime],
         "model": lock["model"]["id"],
-        "skills": [{"path": c["path"]} for c in comps if c["id"].startswith("skill:") and c.get("path")],
-        "agent_config": {"instructions": _text((root / guide["path"]).read_text()) if guide else None,
+        "skills": [{"path": at(c["path"])} for c in comps if c["id"].startswith("skill:") and c.get("path")],
+        "agent_config": {"instructions": _text((src / guide["path"]).read_text()) if guide else None,
                          "files": files},
         "mcp": mcp,
         "secrets": bind.get("secrets") or {},
     }
     if bind.get("dependencies"):
-        stable["dependencies"] = bind["dependencies"]
-    plugins = [c for c in comps if c["id"].startswith("plugin:")]
-    candidate = {"name": f"{name}-candidate", "extends": name,
-                 "description": f"{name} with its plugin components loaded from the read-only plugin seed",
-                 "plugins": [{"path": f"plugins/{c['id'].split('@')[1]}", "name": c["id"][7:].split("@")[0],
-                              "marketplace": c["id"].split("@")[1], "enabled": c.get("enabled", True)}
-                             for c in plugins]}
+        env["dependencies"] = bind["dependencies"]
+    plugins = [c for c in comps if c["id"].startswith("plugin:")] if with_plugins else []
+    if plugins:
+        env["plugins"] = [{"path": at(f"plugins/{c['id'].split('@')[1]}"), "name": c["id"][7:].split("@")[0],
+                           "marketplace": c["id"].split("@")[1], "enabled": c.get("enabled", True)}
+                          for c in plugins]
+    return env
+
+
+def render(root: Path) -> dict[str, str]:
+    lock = yaml.safe_load((root / "harness.lock").read_text())
+    name = lock["name"]
+    src = stable_dir(root)
+    where = f"harnesses/{name}/{src.relative_to(root).as_posix()}/harness.lock" if src != root else \
+        f"harnesses/{name}/harness.lock"
+    rev = yaml.safe_load((src / "harness.lock").read_text())["revision"]
+    stable = _environment(root, src, name, f"Provides the files of harness {name}@stable, r{rev} ({where}), for thaw "
+                          "and experiments", with_plugins=False)
     dump = lambda d: HEADER.format(name=name) + yaml.safe_dump(d, sort_keys=False, width=120, allow_unicode=True)
     out = {"env.stable.yaml": dump(stable)}
-    if plugins:
-        out["env.candidate.yaml"] = dump(candidate)
+    if src != root or any(c["id"].startswith("plugin:") for c in lock["components"]):
+        out["env.candidate.yaml"] = dump(_environment(
+            root, root, f"{name}-candidate", f"Provides the files of harness {name}'s current lock, r{lock['revision']} "
+            f"(harnesses/{name}/harness.lock), plugins included, for candidate sessions and experiments",
+            with_plugins=True))
     return out
 
 

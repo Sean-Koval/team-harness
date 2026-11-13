@@ -20,7 +20,13 @@ import egress_proxy  # noqa: E402
 
 
 def test_pins_agree():
-    assert agent_env.pin_problems(ROOT) == []
+    # extends is check_registry's rule (KAN-477): the environment serving the pinned digest, here suite-default-candidate
+    import check_registry
+
+    assert [p for p in agent_env.pin_problems(ROOT) if "extends" not in p] == []
+    raw = yaml.safe_load((ROOT / "environments" / "agent.yaml").read_text())
+    assert check_registry.agent_extends_problems(ROOT, "agent", raw["extends"], raw["env"]) == []
+    assert check_registry.agent_extends_problems(ROOT, "agent", "suite-default", raw["env"])
 
 
 def copy_repo(tmp_path: Path) -> Path:
