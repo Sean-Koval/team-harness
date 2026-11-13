@@ -18,9 +18,10 @@ MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel
 And for the work conventions: every environment under `environments/` (the role environments and `work-multirepo`)
 loads in hangar's catalog next to the harness environments it extends, `work-multirepo` installs everything the
 infra, code and database roles do, and every change-set profile under `changesets/` is well formed against them.
-The agent environment's pins agree with what they name (`agent_env.pin_problems`).
+The agent environment's pins agree with what they name (`agent_pin_problems`; `--agent-pins` checks only these, which
+`make agent-env` does before it starts one). hangar runs the environment locally (`hangar env local`, KAN-472).
 
-    python scripts/check_registry.py [REPO_ROOT]
+    python scripts/check_registry.py [REPO_ROOT] [--agent-pins]
 """
 
 from __future__ import annotations
@@ -41,7 +42,6 @@ from hangar.envspec import EnvCatalog
 from hangar.harnesses import HARNESSES
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import agent_env  # noqa: E402
 import render_envs  # noqa: E402
 
 
@@ -138,11 +138,11 @@ def check_environments(root: Path) -> list[str]:
             errors.append(f"{MULTI} lacks what {role} installs: {', '.join(missing)}")
     if not errors:
         print(f"environment {MULTI}: carries {', '.join(COVERED_ROLES)}")
-    if agent_env.ENV_NAME in names:
-        pins = agent_env.pin_problems(root)
+    if AGENT_ENV in names:
+        pins = agent_pin_problems(root)
         errors += pins
         if not pins:
-            print(f"environment {agent_env.ENV_NAME}: pins agree (harness, ai-dlc, knowledge format, model, names)")
+            print(f"environment {AGENT_ENV}: pins agree (harness, ai-dlc, knowledge format, model, names)")
     errors += claim_role_environments(root, cat, names)
     return errors
 
@@ -238,8 +238,77 @@ def check_changesets(root: Path) -> list[str]:
     return errors
 
 
+
+# ------------------------------------------------------------------------------------------------ the agent environment
+AGENT_ENV = "agent"  # environments/agent.yaml (KAN-447)
+AGENT_INPUTS = ("TICKET_KEY", "CODE_REPO", "KNOWLEDGE_REPO")
+AGENT_PINS = ("AGENT_ENV_HARNESS", "AGENT_ENV_HARNESS_DIGEST", "AI_DLC_REF", "KNOWLEDGE_FORMAT_VERSION")
+
+
+def agent_catalog(root: Path) -> EnvCatalog:
+    """The catalog `hangar env local` loads: the harness directories, then the role environments and environments/."""
+    harness_dirs = sorted(d for d in (root / "harnesses").iterdir() if (d / hl.LOCK_FILE).is_file())
+    return EnvCatalog([*harness_dirs, root / "environments" / "roles", root / "environments"])
+
+
+def contract_names(path: Path) -> list[str]:
+    """The variable names agent.env.example declares, in order."""
+    return [m.group(1) for line in path.read_text().splitlines() if (m := re.match(r"^([A-Z][A-Z0-9_]*)=", line))]
+
+
+def agent_pin_problems(root: Path) -> list[str]:
+    """Where the agent environment's pins disagree with what they name. Empty when the definition is consistent."""
+    cat = agent_catalog(root)
+    spec = cat.get(AGENT_ENV)
+    raw = cat.raw(AGENT_ENV)
+    out: list[str] = []
+    env = spec.env
+    missing = [p for p in AGENT_PINS if not env.get(p)]
+    if missing:
+        return [f"env {AGENT_ENV}: pin(s) missing: {', '.join(missing)}"]
+    harness = env["AGENT_ENV_HARNESS"]
+    if raw.get("extends") != harness:
+        out.append(f"env {AGENT_ENV}: extends {raw.get('extends')!r}, but AGENT_ENV_HARNESS is {harness!r}")
+    lock_dir = root / "harnesses" / harness
+    if not (lock_dir / hl.LOCK_FILE).is_file():
+        return [*out, f"env {AGENT_ENV}: AGENT_ENV_HARNESS {harness!r} has no harnesses/{harness}/{hl.LOCK_FILE}"]
+    lock = hl.load(lock_dir)
+    digest = hl.harness_digest(lock)
+    if env["AGENT_ENV_HARNESS_DIGEST"] != digest:
+        out.append(f"env {AGENT_ENV}: AGENT_ENV_HARNESS_DIGEST is {env['AGENT_ENV_HARNESS_DIGEST']}, but "
+                   f"{harness} provides r{lock.get('revision')} {digest}")
+    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
+    if not [ch for ch, d in (channels.get(harness) or {}).items() if d == env["AGENT_ENV_HARNESS_DIGEST"]]:
+        out.append(f"env {AGENT_ENV}: AGENT_ENV_HARNESS_DIGEST is no channel of {harness} in channels.yaml")
+    if spec.model != (lock.get("model") or {}).get("id"):
+        out.append(f"env {AGENT_ENV}: model {spec.model!r} is not the harness lock's {lock.get('model')}")
+    ref = env["AI_DLC_REF"]
+    if not re.fullmatch(r"[0-9a-f]{40}", ref):
+        out.append(f"env {AGENT_ENV}: AI_DLC_REF must be a full commit SHA, not {ref!r}")
+    elif ref not in (spec.dependencies.script or ""):
+        out.append(f"env {AGENT_ENV}: dependencies.script does not install ai-dlc at AI_DLC_REF {ref}")
+    if not str(env["KNOWLEDGE_FORMAT_VERSION"]).isdigit():
+        out.append(f"env {AGENT_ENV}: KNOWLEDGE_FORMAT_VERSION must be an integer")
+    names = contract_names(root / "environments" / "agent.env.example")
+    if set(spec.secrets) - set(names):
+        out.append(f"agent.env.example lacks the spec's secrets: {', '.join(sorted(set(spec.secrets) - set(names)))}")
+    if set(AGENT_INPUTS) - set(names):
+        out.append(f"agent.env.example lacks the inputs: {', '.join(sorted(set(AGENT_INPUTS) - set(names)))}")
+    if clash := sorted(set(names) & set(spec.env)):
+        out.append(f"agent.env.example names values the spec fixes: {', '.join(clash)}")
+    if spec.egress is None or spec.egress.mode != "allowlist":
+        out.append(f"env {AGENT_ENV}: egress.mode must be allowlist")
+    return out
+
+
 def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    root = Path(args[0] if args else ".").resolve()
+    if "--agent-pins" in sys.argv[1:]:
+        pins = agent_pin_problems(root)
+        for p in pins:
+            print(f"error: {p}", file=sys.stderr)
+        return 1 if pins else 0
     errors: list[str] = []
     for d in sorted((root / "harnesses").iterdir()):
         if not (d / hl.LOCK_FILE).is_file():
