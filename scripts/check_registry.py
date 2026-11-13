@@ -6,14 +6,16 @@ For each `harnesses/<name>/`:
 1. the lock checks (`harness_lock.check`, what `hangar harness check` runs);
 2. `AGENTS.md`, when present, is byte-identical to the `CLAUDE.md` guide, so the guide's digest covers both;
 3. the rendered environments are up to date (`scripts/render_envs.py --check`);
-4. `env.stable.yaml`, loaded by hangar's environment catalog, yields the lock's `harness_digest` without plugins, and
-   `env.candidate.yaml` (when the lock has plugins) yields the full `harness_digest`, when projected the way a turn's
-   manifest is: an experiment arm on either environment runs exactly that lock.
+4. `env.stable.yaml`, loaded by hangar's environment catalog, yields the `harness_digest` of the lock `stable` names
+   (its release copy when it isn't the current lock) without plugins, and `env.candidate.yaml` (when rendered) yields
+   the current lock's full `harness_digest`, when projected the way a turn's manifest is: a session or an experiment
+   arm on either environment runs exactly that lock.
 
 And for `channels.yaml`: every channel names a digest that resolves to a lock, in the checkout or its git history,
 the way `hangar harness thaw name@<channel>` resolves it (hangar's resolver itself when this directory is the
 repository root, followed by its claim checks against the rendered environments: CLI version, model, approvals,
-MCP servers). Thaw mounts a lock's plugins itself (hangar#221), so every channel claims on `<name>`.
+MCP servers). `stable` claims on `<name>`, which serves stable's release copy, hooks included, so a stable session
+reports no drift on turn 1 (KAN-477); another channel claims on `<name>-candidate` when it exists.
 
 And for promotion (KAN-473): a channel resolves to the current lock or to a release copy, `harnesses/<name>/releases/rN/`
 (written by `scripts/promote.py`), never to git history, where one digest could name several commits' files or vanish
@@ -95,7 +97,8 @@ def resolve_channel(root: Path, name: str, channel: str, digest: str) -> str:
 
 def _resolve_from_releases(root: Path):
     """hangar's `harness_thaw.resolve`, finding a channel's lock in the release copies instead of git history. The
-    copy's directory is the registry path, so `materialize` reads the files a claim needs from it."""
+    copy's directory is the registry path, so `materialize` reads the files a claim needs from it. hangar#465 makes
+    hangar's own resolver do this (KAN-477); drop this once HANGAR_REF includes it."""
     hangar_resolve = harness_thaw.resolve
 
     def resolve(settings: Any, ref: str) -> Any:
@@ -170,9 +173,17 @@ def default_base(root: Path) -> str | None:
     return out or None
 
 
+def channel_env(root: Path, name: str, channel: str) -> str:
+    """The rendered environment that provides `name@channel`: `<name>` for stable, which env.stable.yaml renders from
+    stable's release copy (KAN-477); `<name>-candidate`, the current lock, for any other channel when it exists."""
+    if channel == "stable" or not (root / "harnesses" / name / "env.candidate.yaml").is_file():
+        return name
+    return f"{name}-candidate"
+
+
 def claim_channel(root: Path, name: str, channel: str) -> str:
     """hangar's claim checks (`harness_thaw.pin`) for `name@channel` on the rendered environment that provides it."""
-    env = name
+    env = channel_env(root, name, channel)
     with tempfile.TemporaryDirectory() as data:  # pin copies the lock's files out (hangar#221 mounts them)
         fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data),
                                 catalog=EnvCatalog([root / "harnesses" / name]))
@@ -354,20 +365,26 @@ def main() -> int:
                 errors.append(f"{d.name}: {f} is out of date (python scripts/render_envs.py harnesses/{d.name})")
         if errors:
             continue
-        approvals = (lock["binding"].get("permissions") or {}).get("approvals")
-        without = {**lock, "components": [c for c in lock["components"] if not c["id"].startswith("plugin:")]}
-        got = env_identity(d, lock["name"], approvals)  # the catalog reads env.*.yaml next to the lock
+        # the catalog reads env.*.yaml next to the lock: env.stable.yaml must yield the lock `stable` names (its
+        # release copy's files, hooks too: KAN-477), env.candidate.yaml the current lock
+        src = render_envs.stable_dir(d)
+        st = hl.load(src)
+        approvals = (st["binding"].get("permissions") or {}).get("approvals")
+        without = {**st, "components": [c for c in st["components"] if not c["id"].startswith("plugin:")]}
+        got = env_identity(d, lock["name"], approvals)
+        where = "the current lock" if src == d else src.relative_to(d).as_posix()
         if got != hl.harness_digest(without):
-            errors.append(f"{d.name}: env.stable.yaml yields {got}, the lock without plugins is "
-                          f"{hl.harness_digest(without)}")
+            errors.append(f"{d.name}: env.stable.yaml yields {got}, stable ({where}) without plugins is "
+                          f"{hl.harness_digest(without)}: a stable session would drift on turn 1")
         else:
-            print(f"{d.name}: env.stable.yaml reproduces {got}")
-        if any(c["id"].startswith("plugin:") for c in lock["components"]):
+            print(f"{d.name}: env.stable.yaml reproduces stable r{st['revision']} ({where}) {got}")
+        if (d / "env.candidate.yaml").is_file():
+            approvals = (lock["binding"].get("permissions") or {}).get("approvals")
             got = env_identity(d, f"{lock['name']}-candidate", approvals)
             if got != hl.harness_digest(lock):
                 errors.append(f"{d.name}: env.candidate.yaml yields {got}, the lock is {hl.harness_digest(lock)}")
             else:
-                print(f"{d.name}: env.candidate.yaml reproduces {got}")
+                print(f"{d.name}: env.candidate.yaml reproduces r{lock['revision']} {got}")
     for name, chans in channels.items():
         for ch, digest in (chans or {}).items():
             try:

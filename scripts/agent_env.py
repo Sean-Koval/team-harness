@@ -94,8 +94,13 @@ def pin_problems(root: Path = ROOT) -> list[str]:
     if missing:
         return [f"env {ENV_NAME}: pin(s) missing: {', '.join(missing)}"]
     harness = env["AGENT_ENV_HARNESS"]
-    if raw.get("extends") != harness:
-        out.append(f"env {ENV_NAME}: extends {raw.get('extends')!r}, but AGENT_ENV_HARNESS is {harness!r}")
+    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
+    stable = (channels.get(harness) or {}).get("stable")
+    # `<harness>` serves stable's release copy; the current lock is `<harness>-candidate` when they differ (KAN-477)
+    base = harness if stable in (None, env["AGENT_ENV_HARNESS_DIGEST"]) else f"{harness}-candidate"
+    if raw.get("extends") != base:
+        out.append(f"env {ENV_NAME}: extends {raw.get('extends')!r}, but the environment serving AGENT_ENV_HARNESS "
+                   f"{harness} at AGENT_ENV_HARNESS_DIGEST is {base!r}")
     lock_dir = root / "harnesses" / harness
     if not (lock_dir / hl.LOCK_FILE).is_file():
         return [*out, f"env {ENV_NAME}: AGENT_ENV_HARNESS {harness!r} has no harnesses/{harness}/{hl.LOCK_FILE}"]
@@ -104,7 +109,6 @@ def pin_problems(root: Path = ROOT) -> list[str]:
     if env["AGENT_ENV_HARNESS_DIGEST"] != digest:
         out.append(f"env {ENV_NAME}: AGENT_ENV_HARNESS_DIGEST is {env['AGENT_ENV_HARNESS_DIGEST']}, but "
                    f"{harness} provides r{lock.get('revision')} {digest}")
-    channels = yaml.safe_load((root / "channels.yaml").read_text()) or {}
     named = [ch for ch, d in (channels.get(harness) or {}).items() if d == env["AGENT_ENV_HARNESS_DIGEST"]]
     if not named:
         out.append(f"env {ENV_NAME}: AGENT_ENV_HARNESS_DIGEST is no channel of {harness} in channels.yaml")
