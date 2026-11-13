@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 
 import pytest
+import sys
+
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +73,11 @@ READY = [s for s, i in ITEMS.items() if not not_ready(i)]
 
 def test_skill_is_registered_for_every_harness():
     targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text())
-    assert "plan-to-tickets" in targets["skills"]
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import sync_shared
+
+    common = sync_shared.shared_skills(ROOT / "shared/work-system", targets, targets["harnesses"], [])
+    assert all("plan-to-tickets" in skills for skills in common.values())
     for name in targets["harnesses"]:
         copy = ROOT / "harnesses" / name / "skills/plan-to-tickets"
         assert (copy / "SKILL.md").is_file() and (copy / "examples/decision.md").is_file()

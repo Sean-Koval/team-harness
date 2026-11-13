@@ -29,7 +29,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit",
+        "matcher": "Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -39,7 +39,7 @@
         ]
       },
       {
-        "matcher": "Bash|mcp__.*",
+        "matcher": "Bash|PowerShell|mcp__.*",
         "hooks": [
           {
             "type": "command",

@@ -6,8 +6,8 @@ harnesses, the pieces each one carries, and each harness's profile (`profiles/<h
 `{{name}}` placeholders; the profile's `params` fill them, so nothing person- or company-specific lives in a shared
 file and each harness gets concrete text. For each target harness this:
 
-- renders `shared/work-system/skills/<name>/` into `harnesses/<h>/skills/<name>/` (the whole directory), for the
-  shared skill list plus the harness's own `skills:` from targets.yaml;
+- renders `shared/work-system/skills/<name>/` into `harnesses/<h>/skills/<name>/` (the whole directory), for every
+  shared skill directory (a new one needs no edit to targets.yaml) plus the harness's own `skills:` from targets.yaml;
 - renders the hook into `harnesses/<h>/native/claude-code/hooks/`, and each `session_hooks:` entry beside it;
 - renders `guide_fragment:` into the harness's `CLAUDE.md` (and `AGENTS.md`, its copy), between the markers FRAGMENT_BEGIN and FRAGMENT_END (a
   write appends the block when the markers are missing); the rest of the guide is the harness's own;
@@ -358,6 +358,64 @@ def _skill_name(skill_md: Path) -> str | None:
     return m.group(1).strip() if m else None
 
 
+_HARNESSES = re.compile(r"^harnesses:\s*\[([^\]\n]*)\]\s*$", re.MULTILINE)
+
+
+def _skill_harnesses(skill_md: Path) -> list[str] | None:
+    """The frontmatter `harnesses: [a, b]` of a SKILL.md: the only harnesses it ships to. None when absent."""
+    text = skill_md.read_text(encoding="utf-8", errors="replace")
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    m = _HARNESSES.search(text[3:end if end > 0 else len(text)])
+    if not m:
+        return None
+    return [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
+
+
+def shared_skills(shared: Path, t: dict, harnesses: dict, problems: list[str]) -> dict[str, list[str]]:
+    """The shared skills each harness carries, so a new shared skill ships with no edit to targets.yaml (KAN-433).
+
+    Every directory under `shared/work-system/skills/` ships to every harness, except: one that a harness names in its
+    own `skills:` goes to that harness only, and one whose SKILL.md frontmatter has `harnesses: [..]` goes to those
+    only (a work-only skill says so where it is written). A directory without a SKILL.md, or whose SKILL.md names
+    another skill, is an error rather than a skill shipped half-made; one whose name starts with `.` or `_` is
+    skipped. The top-level `skills:` list may still name skills; a name there must ship to every harness."""
+    skills_dir = shared / "skills"
+    present = sorted(d.name for d in skills_dir.iterdir()
+                     if d.is_dir() and not d.name.startswith((".", "_"))) if skills_dir.is_dir() else []
+    own = {s for e in harnesses.values() for s in ((e or {}).get("skills") or [])}
+    common: dict[str, list[str]] = {h: [] for h in harnesses}
+    limited: set[str] = set()
+    for s in present:
+        md = skills_dir / s / "SKILL.md"
+        if not md.is_file():
+            problems.append(f"shared/work-system/skills/{s}: no SKILL.md, so it is not a skill (add one or remove "
+                            "the directory)")
+            continue
+        if _skill_name(md) != s:
+            problems.append(f"shared/work-system/skills/{s}/SKILL.md must have frontmatter name: {s}")
+            continue
+        if s in own:
+            continue
+        only = _skill_harnesses(md)
+        if only is not None:
+            limited.add(s)
+            for h in only:
+                if h not in harnesses:
+                    problems.append(f"shared/work-system/skills/{s}/SKILL.md: harnesses names {h}, which "
+                                    "targets.yaml does not list")
+        for h in harnesses:
+            if only is None or h in only:
+                common[h].append(s)
+    for s in t.get("skills") or []:
+        if s not in present:
+            problems.append(f"targets.yaml: skills names {s}, which is not a directory under shared/work-system/skills/")
+        elif s in own or s in limited:
+            problems.append(f"targets.yaml: {s} is in skills (every harness) but ships to only some harnesses")
+    return common
+
+
 def plan(root: Path = ROOT, warnings: list[str] | None = None
          ) -> tuple[list[tuple[Path, Path, dict[str, bytes] | None]], list[str]]:
     """(source, destination, rendered files) for every copy that is out of sync, and problems. A left-over skill
@@ -372,6 +430,7 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
     harnesses = t["harnesses"]
     if isinstance(harnesses, list):  # the older form: a plain list, no profiles
         harnesses = {h: {} for h in harnesses}
+    common = shared_skills(shared, t, harnesses, problems)
     for h, entry in harnesses.items():
         entry = entry or {}
         hd = root / "harnesses" / h
@@ -381,7 +440,7 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         params = _profile(shared, h, entry, problems)
         org_dir, org_params = _org(root, h, entry, params, problems, warnings)
         params = {**params, **org_params}  # the org wins
-        sources = [(shared / "skills" / s, s, True) for s in list(t["skills"]) + list(entry.get("skills") or [])]
+        sources = [(shared / "skills" / s, s, True) for s in common.get(h, []) + list(entry.get("skills") or [])]
         own = set(entry.get("own_skills") or [])
         for s in sorted(own & {n for _, n, _ in sources}):
             problems.append(f"{h}: own_skills names {s}, which the shared layer renders")
@@ -453,8 +512,9 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         matchers = " ".join(e.get("matcher", "") for e in entries)
         if not entries:
             problems.append(f"{h}: settings.json does not register {t['hook_command']!r} on PreToolUse")
-        elif "Bash" not in matchers or "mcp__" not in matchers:
-            problems.append(f"{h}: the work-system hook must match Bash and mcp__ tools (matcher: {matchers!r})")
+        elif any(tool not in matchers for tool in ("Bash", "PowerShell", "mcp__")):
+            problems.append(f"{h}: the work-system hook must match Bash, PowerShell and mcp__ tools "
+                            f"(matcher: {matchers!r})")
     return stale, problems
 
 

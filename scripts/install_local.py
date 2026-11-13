@@ -40,7 +40,8 @@ What it never does:
   credential as a `$VARIABLE` placeholder for you to fill from your secret manager. Plugins are printed the same way.
 - Install two harnesses into one scope: `--uninstall` the first (work and personal harnesses stay apart).
 
-The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the source
+The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the lock's
+model and Claude Code version (read by `ai-dlc knowledge doctor`, KAN-433), the source
 commit, the settings entries added and the SHA-256 of every file written. `--check` reports an edited or missing file,
 a removed settings entry or `@import` line, or that the channel has moved to another revision. `--uninstall` removes only files whose digest
 still matches, leaving an edited file in place with a warning.
@@ -51,8 +52,11 @@ quotes with forward slashes, built from the profile directory (`--home`) instead
 `py -3 -c` line that finds the hook through `CLAUDE_PROJECT_DIR`, so no machine path lands in a committed file.
 
 Hooks that don't start. Claude Code carries on when a hook command can't start (no `py` or `python3`, a wrong path),
-so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the
-system shell (cmd on Windows), with a harmless `git status` call on stdin; any exit but 0 fails loudly (exit 1).
+so the guard is off with no warning. `--apply` and `--check` run every installed hook script once, through the shell
+Claude Code uses (`sh -c`; on Windows Git Bash, or PowerShell where Git Bash isn't installed), with a harmless
+`git status` call on stdin; any exit but 0 fails loudly (exit 1).
+On Windows a PreToolUse guard whose matcher names Bash but not PowerShell fails the same way: without Git Bash,
+Claude Code's shell tool is PowerShell, so that guard would see no shell command.
 
 Uninstall puts back `settings.json`, `settings.local.json`, `.gitignore` and `CLAUDE.md` byte for byte. For a settings file, as the manifest keeps the original bytes, unless you
 changed the file meanwhile in some other way: then your settings are kept and only the formatting may differ.
@@ -64,12 +68,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import codecs
 import copy
 import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -356,12 +362,12 @@ def _hook_command(cmd: str, scope: str, src: Path, base: Path | None) -> str:
         return cmd  # an echo and the like: no path, no interpreter
     name = m.group(1)
     if scope == "project":
-        # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for PowerShell, cmd and Git Bash alike
+        # CLAUDE_PROJECT_DIR read by Python, not the shell: one line for Git Bash and PowerShell alike
         return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
                 f"'.claude','hooks','{name}'),run_name='__main__')\"")
     path = Path(os.path.abspath(base or Path.home() / ".claude")).joinpath("hooks", name).as_posix()
     if any(c in path for c in '"$%`'):
-        raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both PowerShell and cmd; '
+        raise Refused(f'{path}: a hook path with ", $, % or ` can\'t be quoted for both Git Bash and PowerShell; '
                       "install with --home pointing elsewhere, or use --scope project")
     return f'py -3 "{path}"'
 
@@ -379,16 +385,29 @@ def _has(s: dict[str, Any], e: tuple[str, str, Any]) -> bool:
     return e[2] in ((s.get(e[0]) or {}).get(e[1]) or [])
 
 
-def _remove(s: dict[str, Any], e: tuple[str, str, Any]) -> bool:
+def _remove(s: dict[str, Any], e: tuple[str, str, Any], keep: frozenset[tuple[str, ...]] = frozenset()) -> bool:
+    """Take entry `e` out of `s`. A container left empty goes too, unless `keep` names it: the person had it before
+    the install (their own `"hooks": {}` stays theirs, KAN-433)."""
     lst = (s.get(e[0]) or {}).get(e[1])
     if not isinstance(lst, list) or e[2] not in lst:
         return False
     lst.remove(e[2])
-    if not lst:  # it held only ours: leave no empty container behind
+    if not lst and (e[0], e[1]) not in keep:  # it held only ours: leave no empty container behind
         del s[e[0]][e[1]]
-        if not s[e[0]]:
+        if not s[e[0]] and (e[0],) not in keep:
             del s[e[0]]
     return True
+
+
+def _containers(s: Any) -> frozenset[tuple[str, ...]]:
+    """The sections and keys `_remove` can empty that exist in `s`: ("hooks",), ("hooks", "PreToolUse"), ..."""
+    out: set[tuple[str, ...]] = set()
+    if isinstance(s, dict):
+        for sec in ("hooks", "permissions"):
+            if isinstance(s.get(sec), dict):
+                out.add((sec,))
+                out.update((sec, k) for k in s[sec])
+    return frozenset(out)
 
 
 def _add(s: dict[str, Any], e: tuple[str, str, Any]) -> None:
@@ -589,8 +608,9 @@ def _plan_settings(base: Path, name: str, part: dict[str, Any], old: dict[str, A
     s = copy.deepcopy(cur_s or {})
     ours = [_unrecord(r) for r in sp.old_records]
     new = _entries(part)
+    keep = _kept(_original({"original": sp.original}))
     for e in ours:
-        if e not in new and _remove(s, e):
+        if e not in new and _remove(s, e, keep):
             sp.lines.append(f"- {_describe(e)}")
     for e in new:
         if e in ours and _has(s, e):
@@ -690,8 +710,12 @@ def _prune(base: Path, rel: str) -> None:
         d = d.parent
 
 
-def _settings_bytes(s: dict[str, Any]) -> bytes:
-    return (json.dumps(s, indent=2, ensure_ascii=False) + "\n").encode()
+def _settings_bytes(s: dict[str, Any], like: bytes = b"") -> bytes:
+    """`s` as JSON. With `like`, the file's own line ending and byte-order mark (a Windows editor's CRLF and BOM)."""
+    out = (json.dumps(s, indent=2, ensure_ascii=False) + "\n").encode()
+    if b"\r\n" in like:
+        out = out.replace(b"\n", b"\r\n")
+    return (codecs.BOM_UTF8 + out) if like.startswith(codecs.BOM_UTF8) else out
 
 
 def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") -> None:
@@ -720,7 +744,8 @@ def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") ->
     def manifest(entries: dict[str, list[dict[str, Any]]], files: dict[str, str]) -> dict[str, Any]:
         m = {
             "schema": SCHEMA, "harness": h.name, "channel": channel, "revision": h.revision,
-            "harness_digest": h.digest, "scope": scope, "source": h.source, "guide": p.guide_rel,
+            "harness_digest": h.digest, "model": (h.lock.get("model") or {}).get("id"),
+            "runtime_version": (h.lock.get("runtime") or {}).get("version"), "scope": scope, "source": h.source, "guide": p.guide_rel,
             "guide_import": guide_import or None,
             **{SECTION[n]: sp.block(entries[n]) for n, sp in p.sfiles.items()
                if n == SETTINGS or sp.records or sp.old_records or sp.original is not None},
@@ -741,7 +766,8 @@ def apply_install(h: Harness, p: Plan, scope: str, channel: str = "checkout") ->
             _write_manifest(p.base, manifest(pending, {**p.old_files, **digests}))
         for n, sp in p.sfiles.items():
             if sp.settings is not None:
-                _write(p.base / n, _settings_bytes(sp.settings))
+                f = p.base / n
+                _write(f, _settings_bytes(sp.settings, like=f.read_bytes() if f.is_file() else b""))
     data = manifest(final, digests)
     cur = read_manifest(p.base)
     if cur is None or _strip_source(cur) != _strip_source(data):
@@ -845,9 +871,54 @@ def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base
 PROBE = {"session_id": "team-harness-probe", "tool_name": "Bash", "tool_input": {"command": "git status"}}
 
 
+def _matches(matcher: str, tool: str) -> bool:
+    """Whether a hook matcher selects `tool` as Claude Code reads it: empty or `*` is every tool, else a regex that
+    must match the whole name (`Bash|Edit`, `(Bash|Edit)`, `Ba.*`). A matcher that isn't a valid regex is read as a
+    `|` list."""
+    if matcher in ("", "*"):
+        return True
+    try:
+        return re.fullmatch(matcher, tool) is not None
+    except re.error:
+        return tool in matcher.split("|")
+
+
 def _runs_hook_file(cmd: str) -> bool:
     """A guard: a command that runs a script from .claude/hooks (an echo reminder is not a guard)."""
     return ".claude/hooks/" in cmd or "'.claude','hooks'" in cmd
+
+
+def _git_bash() -> str | None:
+    """The bash.exe Claude Code runs hooks with on Windows: CLAUDE_CODE_GIT_BASH_PATH, else Git for Windows' own (found
+    beside git.exe, then in Program Files). Never C:\\Windows\\System32\\bash.exe, which is WSL."""
+    named = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if named:
+        if not Path(named).is_file():
+            raise FileNotFoundError(f"CLAUDE_CODE_GIT_BASH_PATH names no file: {named}")
+        return named
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        g = Path(git).resolve()  # <Git>/cmd/git.exe, <Git>/bin/git.exe or <Git>/mingw64/bin/git.exe
+        candidates += [g.parent.parent / "bin" / "bash.exe", g.parent.parent.parent / "bin" / "bash.exe"]
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        root = os.environ.get(var)
+        if root:
+            candidates += [Path(root) / "Git" / "bin" / "bash.exe", Path(root) / "Programs" / "Git" / "bin" / "bash.exe"]
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
+def hook_shell(cmd: str) -> list[str]:
+    """The argv Claude Code runs a shell-form hook command with: `sh -c` on macOS and Linux; on Windows Git Bash, or
+    PowerShell where Git Bash isn't installed. cmd never runs a hook, so probing through it would test the wrong
+    shell."""
+    if os.name != "nt":
+        return ["/bin/sh", "-c", cmd]
+    bash = _git_bash()
+    if bash:
+        return [bash, "-c", cmd]
+    ps = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
+    return [ps, "-NoProfile", "-NonInteractive", "-Command", cmd]
 
 
 def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[str]:
@@ -862,6 +933,13 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
     for r in entries:
         if r.get("section") != "hooks" or not isinstance(r.get("value"), dict):
             continue
+        matcher = str(r["value"].get("matcher") or "")
+        sees_bash_only = _matches(matcher, "Bash") and not _matches(matcher, "PowerShell")
+        if WINDOWS and r.get("key") == "PreToolUse" and sees_bash_only:
+            out.append(f"hook sees no PowerShell call, so its guard is OFF where Git Bash isn't installed: "
+                       f"PreToolUse [{matcher}] (Claude Code's shell tool on Windows without Git Bash is PowerShell; "
+                       "add PowerShell to the matcher, or install Git for Windows. A release cut before the guards "
+                       "judged PowerShell has Bash-only matchers: install --channel candidate until one is promoted)")
         for hk in r["value"].get("hooks") or []:
             cmd = hk.get("command") if isinstance(hk, dict) and hk.get("type", "command") == "command" else None
             if not isinstance(cmd, str) or cmd in seen or not _runs_hook_file(cmd):
@@ -869,7 +947,7 @@ def probe_hooks(base: Path, scope: str, entries: list[dict[str, Any]]) -> list[s
             seen.add(cmd)
             event = json.dumps({**PROBE, "hook_event_name": r["key"], "cwd": str(root)}).encode()
             try:
-                res = subprocess.run(cmd, shell=True, input=event, capture_output=True, env=env,  # noqa: S602
+                res = subprocess.run(hook_shell(cmd), input=event, capture_output=True, env=env,  # noqa: S603
                                      cwd=root if root.is_dir() else None, timeout=30, check=False)
                 rc, said = res.returncode, (res.stderr or res.stdout).decode("utf-8", "replace").strip()
             except subprocess.TimeoutExpired:
@@ -919,19 +997,28 @@ def _uninstall_settings(base: Path, name: str, block: dict[str, Any], removed: l
     if cur is None or not block:
         return
     s = copy.deepcopy(cur)
+    original = _original(block)
+    keep = _kept(original)
     for r in block.get("entries") or []:
-        if _remove(s, _unrecord(r)):
+        if _remove(s, _unrecord(r), keep):
             removed.append(f"{name}: {_describe(_unrecord(r))}")
         else:
             left.append(f"{name}: {_describe(_unrecord(r))}: changed or already gone")
-    original = _original(block)
     if not s and block.get("created"):
         (base / name).unlink()
     elif original is not None and _same_settings(original, s):
         if (base / name).read_bytes() != original:
             _write(base / name, original)  # the person's own bytes: indentation, key order, BOM, CRLF
     elif s != cur:
-        _write(base / name, _settings_bytes(s))
+        _write(base / name, _settings_bytes(s, like=(base / name).read_bytes()))  # edited since: keep CRLF and BOM
+
+
+def _kept(original: bytes | None) -> frozenset[tuple[str, ...]]:
+    """The containers the person had before the install, which taking our entries out never removes."""
+    try:
+        return _containers(_parse_settings(original)) if original is not None else frozenset()
+    except ValueError:
+        return frozenset()
 
 
 def _original(block: dict[str, Any]) -> bytes | None:
@@ -944,9 +1031,21 @@ def _original(block: dict[str, Any]) -> bytes | None:
 
 def _same_settings(original: bytes, s: dict[str, Any]) -> bool:
     try:
-        return _parse_settings(original) == s
+        return _pruned(_parse_settings(original)) == _pruned(s)
     except ValueError:
         return False
+
+
+def _pruned(s: dict[str, Any]) -> dict[str, Any]:
+    """`s` without the empty containers `_remove` takes out, so a person's own `"hooks": {}` still matches (KAN-433)."""
+    out: dict[str, Any] = {}
+    for k, v in s.items():
+        if k in ("hooks", "permissions") and isinstance(v, dict):  # the only sections `_remove` empties
+            v = {kk: vv for kk, vv in v.items() if vv != [] and vv != {}}
+            if not v:
+                continue
+        out[k] = v
+    return out
 
 
 # --- CLI --------------------------------------------------------------------------------------------------------
@@ -1085,7 +1184,7 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
     dead = probe_hooks(base, a.scope, [r for sp in p.sfiles.values() for r in sp.records])
     for d in dead:
         print(f"error: {d}", file=sys.stderr)
-    if dead:
+    if any(d.startswith("hook did not run") for d in dead):
         print("installed, but Claude Code skips a hook that can't start: fix the interpreter or path, then run "
               "--check", file=sys.stderr)
     return 1 if dead else 0
