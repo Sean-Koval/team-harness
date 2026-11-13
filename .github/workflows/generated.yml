@@ -82,22 +82,31 @@ jobs:
         with:
           name: generated-patch
           path: ${{ runner.temp }}
-      # The build job ran repository code and installed packages, so its patch isn't trusted: refuse any path the
-      # build doesn't write (releases/, shared/, workflows), any symlink, mode change, rename or copy, and any
-      # change to a `stable:` line (only promote.py moves stable). Shell and git only.
-      - name: Refuse a patch that reaches outside the generated files
+      # The build job ran repository code and installed packages, so its patch isn't trusted. Before applying it:
+      # refuse any path the build doesn't write (releases/, shared/, workflows) or with a `..`, any symlink, mode
+      # change, rename or copy, and any binary hunk outside a skill copy. After applying it, channels.yaml may differ
+      # only in `candidate:` lines and environments/agent.yaml only in its AGENT_ENV_HARNESS_DIGEST line (only
+      # promote.py moves stable). Shell and git only.
+      - name: Apply the patch, refusing anything outside the generated files
         run: |
           P="$RUNNER_TEMP/generated.patch"
           bad=$( { git apply --numstat "$P" | cut -f3- | grep -vE '^(harnesses/[^/]+/(skills/[^/]+/|native/claude-code/hooks/[^/]+$|harness\.lock$|env\.(stable|candidate)\.yaml$|\.env\.example$)|channels\.yaml$|environments/agent\.yaml$)'; \
-                   git apply --summary "$P" | grep -E 'mode 120000|mode change|rename|copy'; \
-                   grep -E '^[-+][[:space:]]+stable:' "$P"; } || true )
+                   git apply --numstat "$P" | cut -f3- | grep -E '(^|/)\.\.(/|$)'; \
+                   git apply --numstat "$P" | grep -P '^-\t-\t' | cut -f3- | grep -vE '^harnesses/[^/]+/skills/'; \
+                   git apply --summary "$P" | grep -E 'mode 120000|mode change|rename|copy'; } || true )
           [ -z "$bad" ] || { echo "the patch reaches outside the generated files:"; echo "$bad"; exit 1; }
-      - name: Apply, commit and push
+          git apply --index "$P"
+          changed() { git diff --cached --text -U0 -- "$1" | awk '/^@@/ { h = 1; next } h && /^[-+]/'; }
+          bad=$( { changed channels.yaml \
+                     | grep -vE '^[-+]  candidate: "sha256:[0-9a-f]{64}"( +#.*)?$'; \
+                   changed environments/agent.yaml \
+                     | grep -vE '^[-+] +AGENT_ENV_HARNESS_DIGEST: "sha256:[0-9a-f]{64}"( +#.*)?$'; } || true )
+          [ -z "$bad" ] || { echo "the patch changes more than candidate and the agent pin:"; echo "$bad"; exit 1; }
+      - name: Commit and push
         env:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ needs.build.outputs.base }}
         run: |
-          git apply --index "$RUNNER_TEMP/generated.patch"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -q -m "build: regenerate after $(git rev-parse --short HEAD) (KAN-481)"
