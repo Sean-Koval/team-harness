@@ -83,17 +83,21 @@ Adoption adds about 26 files that need review, and `work finish` can't pass its 
 
 ```sh
 git clone <your private fork> && cd team-harness
-python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo>          # dry run
-python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo> --apply
-python3 scripts/install_local.py harnesses/work-default --scope project --target ~/src/<work-repo> --check
+python3 scripts/install_local.py harnesses/work-default --scope user            # dry run
+python3 scripts/install_local.py harnesses/work-default --scope user --apply
+python3 scripts/install_local.py harnesses/work-default --scope user --check
 ```
 
-On Windows, run the same lines with `py -3` in place of `python3`, and `$HOME\src\<work-repo>` as the target. The
-installed hooks run with `py -3` as well, and `--uninstall` leaves `settings.json` byte for byte as it was, unless you changed it since.
-Claude Code skips a hook that can't start, so `--apply` and `--check` run each guard once and fail when one doesn't.
+On Windows, run the same lines with `py -3` in place of `python3`; the installed hooks run with `py -3` as well.
+`--uninstall` leaves your settings files byte for byte as they were, unless you changed them since. Claude Code skips a
+hook that can't start, so `--apply` and `--check` run each guard once and fail when one doesn't.
 
-Use project scope, one repo at a time, until KAN-367 lands; user scope puts the guards on every session. Run the two
-`claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
+User scope is the team default: `--scope user --apply` once per machine, and nothing lands in a repository. Its
+hooks and deny rules then apply to every Claude Code session on that machine. Use project scope when a repository
+should carry the skills and guide for everyone. Its hooks go to the gitignored `.claude/settings.local.json`, one
+command per OS, so a team of Macs and Windows machines commits the same files.
+
+Run the two `claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
 needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session, and that login does
 the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does not stand in for it.
 Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole

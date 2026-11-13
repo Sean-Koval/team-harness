@@ -70,8 +70,8 @@ def manifest(base: Path) -> dict:
     return json.loads((base / il.MANIFEST).read_text(encoding="utf-8"))
 
 
-def settings(base: Path) -> dict:
-    return json.loads((base / "settings.json").read_bytes().decode("utf-8-sig"))
+def settings(base: Path, name: str = "settings.json") -> dict:
+    return json.loads((base / name).read_bytes().decode("utf-8-sig"))
 
 
 def hook_command(hook: str, scope: str, base: Path, windows: bool = il.WINDOWS) -> str:
@@ -406,10 +406,13 @@ def test_project_scope(tmp_path):
     assert (base / "CLAUDE.md").read_text() == "@team-harness/work-default.md\n"
     assert "path" not in manifest(base)["source"]  # a project's manifest may be committed: no machine path
     assert (base / "skills/change-set/SKILL.md").is_file() and (base / "hooks/guard_work.py").is_file()
-    cmds = [hk["command"] for g in settings(base)["hooks"]["PreToolUse"] for hk in g["hooks"]]
+    # hooks per machine, in the gitignored settings.local.json; the deny rules stay in the committed settings.json
+    cmds = [hk["command"] for g in settings(base, "settings.local.json")["hooks"]["PreToolUse"] for hk in g["hooks"]]
     assert cmds == [hook_command("guard_work.py", "project", base),
                     hook_command("guard_work_system.py", "project", base)]
-    assert "$HOME" not in (base / "settings.json").read_text()
+    assert "hooks" not in settings(base) and "Bash(gh pr merge:*)" in settings(base)["permissions"]["deny"]
+    assert (target / ".gitignore").read_bytes() == b".claude/*.local.json\n"
+    assert "$HOME" not in (base / "settings.local.json").read_text()
     assert manifest(base)["scope"] == "project"
     assert project(WORK, target, "--check") == 0
     assert project(WORK, target, "--uninstall") == 0
@@ -535,9 +538,9 @@ def test_edited_harness_hook_group_is_not_added_twice(tmp_path, capsys):
 
 def test_user_scope_says_where_a_work_harness_belongs(tmp_path, capsys):
     assert user(WORK, tmp_path) == 0
-    assert "a work harness belongs in --scope project" in capsys.readouterr().out
+    assert "every Claude Code session on this machine" in capsys.readouterr().out
     assert project(WORK, tmp_path / "svc") == 0
-    assert "a work harness belongs" not in capsys.readouterr().out
+    assert "every Claude Code session" not in capsys.readouterr().out
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -637,7 +640,9 @@ def windows(request, monkeypatch):
 
 
 def hook_commands(base: Path) -> list[str]:
-    return [hk["command"] for groups in settings(base)["hooks"].values() for g in groups for hk in g["hooks"]]
+    """Every hook command installed: settings.json (user scope) and settings.local.json (project scope)."""
+    return [hk["command"] for name in ("settings.json", "settings.local.json") if (base / name).is_file()
+            for groups in (settings(base, name).get("hooks") or {}).values() for g in groups for hk in g["hooks"]]
 
 
 def test_windows_user_scope_runs_hooks_with_py_and_a_quoted_profile_path(tmp_path, monkeypatch):
@@ -668,7 +673,7 @@ def test_windows_project_scope_has_no_machine_path(tmp_path, monkeypatch):
     target = tmp_path / "svc"
     assert project(WORK, target, "--apply") == 0
     base = target / ".claude"
-    text = (base / "settings.json").read_text(encoding="utf-8")
+    text = (base / "settings.json").read_text(encoding="utf-8") + (base / "settings.local.json").read_text("utf-8")
     assert str(tmp_path) not in text and tmp_path.as_posix() not in text and "$" not in text
     cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
     assert cmds == [hook_command("guard_work.py", "project", base, True),
@@ -714,6 +719,10 @@ OWN_SETTINGS = ('\ufeff{\r\n\t"model":"my-model",  "env": {"GREETING": "Grüße"
                 '\r\n}').encode("utf-8")
 
 
+OWN_LOCAL = b'{\r\n  "permissions": {"allow": ["Bash(make test)"]}\r\n}\r\n'
+OWN_IGNORE = b"node_modules/\r\n*.log"  # CRLF, and no final newline
+
+
 def test_uninstall_leaves_settings_byte_identical(tmp_path, windows):
     base = tmp_path / ".claude"
     base.mkdir()
@@ -734,7 +743,10 @@ def test_project_uninstall_leaves_settings_byte_identical_across_an_upgrade(tmp_
     base = target / ".claude"
     base.mkdir(parents=True)
     (base / "settings.json").write_bytes(OWN_SETTINGS)
+    (base / "settings.local.json").write_bytes(OWN_LOCAL)
+    (target / ".gitignore").write_bytes(OWN_IGNORE)
     assert project(h, target, "--apply") == 0
+    assert (target / ".gitignore").read_bytes() == OWN_IGNORE + b"\r\n.claude/*.local.json\r\n"
     sfile = h / "native/claude-code/settings.json"
     s = json.loads(sfile.read_text())
     s["permissions"]["deny"].remove("Read(~/.git-credentials)")
@@ -744,6 +756,8 @@ def test_project_uninstall_leaves_settings_byte_identical_across_an_upgrade(tmp_
     assert manifest(base)["revision"] == 3
     assert project(h, target, "--uninstall") == 0
     assert (base / "settings.json").read_bytes() == OWN_SETTINGS
+    assert (base / "settings.local.json").read_bytes() == OWN_LOCAL
+    assert (target / ".gitignore").read_bytes() == OWN_IGNORE
 
 
 def test_settings_changed_since_the_install_keep_the_change(tmp_path):
@@ -848,3 +862,68 @@ def test_posix_hook_command_on_windows_is_caught(tmp_path, monkeypatch, capsys):
     assert "hook did not run, so its guard is OFF" in capsys.readouterr().err
     assert project(WORK, target, "--check") == 1
     assert "hook did not run, so its guard is OFF" in capsys.readouterr().out
+
+
+# --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------
+
+def test_mixed_os_team_commits_no_hook_command(tmp_path, monkeypatch):
+    """A Mac and a Windows machine install into the same repository: the committed files come out the same, and each
+    machine's hook commands stay in its own settings.local.json."""
+    committed = {}
+    for os_name, win in (("mac", False), ("windows", True)):
+        monkeypatch.setattr(il, "WINDOWS", win)
+        target = tmp_path / os_name
+        assert project(WORK, target, "--apply") == 0
+        files = snapshot(target)
+        local = {".claude/settings.local.json", ".claude/team-harness.local.json"}
+        assert local <= files.keys()
+        committed[os_name] = {k: v for k, v in files.items() if k not in local}
+        for shared in (".claude/settings.json", ".claude/team-harness.json"):
+            text = files[shared].decode("utf-8")
+            assert "python3" not in text and "py -3" not in text
+    assert committed["mac"] == committed["windows"]  # byte for byte: no churn between the two machines
+
+
+def test_gitignore_already_covering_settings_local_is_left_alone(tmp_path):
+    target = tmp_path / "svc"
+    target.mkdir()
+    _git(target, "init", "-q")
+    (target / ".gitignore").write_bytes(b"*.local.json\n")
+    assert project(WORK, target, "--apply") == 0
+    assert (target / ".gitignore").read_bytes() == b"*.local.json\n"
+    assert "gitignore" not in manifest(target / ".claude")
+    assert project(WORK, target, "--uninstall") == 0
+    assert (target / ".gitignore").read_bytes() == b"*.local.json\n"
+
+
+def test_gitignore_line_removed_by_hand_is_drift(tmp_path, capsys):
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 0
+    (target / ".gitignore").write_bytes(b"")
+    capsys.readouterr()
+    assert project(WORK, target, "--check") == 1
+    assert ".gitignore no longer has the line .claude/*.local.json" in capsys.readouterr().out
+    assert project(WORK, target, "--apply") == 0
+    assert project(WORK, target, "--check") == 0
+
+
+def test_older_project_install_moves_its_hooks_to_settings_local(tmp_path, monkeypatch):
+    """An install from before this change put the hooks in the committed settings.json: --apply moves them out, and
+    --uninstall still leaves settings.json as the person had it."""
+    target = tmp_path / "svc"
+    base = target / ".claude"
+    base.mkdir(parents=True)
+    (base / "settings.json").write_bytes(OWN_SETTINGS)
+    real = il.split_settings
+    monkeypatch.setattr(il, "split_settings", lambda s, scope: real(s, "user"))  # the old layout
+    assert project(WORK, target, "--apply") == 0
+    assert "hooks" in manifest(base)["settings"]["entries"][0]["section"]
+    monkeypatch.setattr(il, "split_settings", real)
+    assert project(WORK, target, "--apply") == 0
+    own_hooks = json.loads(OWN_SETTINGS.decode("utf-8-sig"))["hooks"]
+    assert settings(base)["hooks"] == own_hooks  # only the person's own hook is left in the committed file
+    assert len(settings(base, "settings.local.json")["hooks"]["PreToolUse"]) == 2
+    assert project(WORK, target, "--check") == 0
+    assert project(WORK, target, "--uninstall") == 0
+    assert (base / "settings.json").read_bytes() == OWN_SETTINGS
+    assert sorted(p.name for p in target.rglob("*") if p.is_file()) == ["settings.json"]
