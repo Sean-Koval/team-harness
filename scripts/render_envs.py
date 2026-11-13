@@ -90,7 +90,9 @@ def native_files(root: Path, runtime: str) -> dict[str, str]:
 def render(root: Path) -> dict[str, str]:
     lock = yaml.safe_load((root / "harness.lock").read_text())
     name, runtime = lock["name"], lock["runtime"]["harness"]
-    bindings_file = root.parent.parent / "bindings" / f"{name}.yaml"
+    # the repository's bindings/, also from a release copy (harnesses/<name>/releases/rN/)
+    repo = next((p for p in root.resolve().parents if (p / "bindings").is_dir()), root.parent.parent)
+    bindings_file = repo / "bindings" / f"{name}.yaml"
     bind = yaml.safe_load(bindings_file.read_text()) or {}
     comps = lock["components"]
     home = HOME_DIRS[runtime]

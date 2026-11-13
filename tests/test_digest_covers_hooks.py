@@ -14,6 +14,7 @@ from hangar import harness_lock as hl  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import check_registry  # noqa: E402
+import promote  # noqa: E402
 import relock  # noqa: E402
 import render_envs  # noqa: E402
 
@@ -104,7 +105,6 @@ def test_changed_files_need_candidate_moved(repo):
 def test_changed_files_under_the_same_digest_fail(repo):
     root, h, base = repo
     chans = yaml.safe_load((root / "channels.yaml").read_text())["suite-default"]
-    old = hl.load(h)
     with (h / HOOK).open("a") as f:
         f.write("# edited\n")
     # what a lock looked like before KAN-473: the hook's component re-pinned, the digest left as it was
@@ -116,7 +116,52 @@ def test_changed_files_under_the_same_digest_fail(repo):
     problems = check_registry.base_problems(root, base, h, lock, chans)
     assert any("harness_digest did not" in p for p in problems)
     assert any("revision is still" in p for p in problems)
-    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qam", "edit")
-    assert hl.harness_digest(lock) == hl.harness_digest(old)
-    problems = check_registry.channel_content_problems(root, "suite-default", chans)
-    assert any("suite-default@stable" in p and "different sets of files" in p for p in problems)
+
+
+def test_stable_resolves_from_its_release_copy_not_history(repo):
+    root, h, _ = repo
+    chans = yaml.safe_load((root / "channels.yaml").read_text())["suite-default"]
+    promote.write_release(h)
+    rev = hl.load(h)["revision"]
+    with (h / HOOK).open("a") as f:
+        f.write("# edited\n")
+    lock = _relock(h)
+    assert check_registry.resolve_channel(root, "suite-default", "stable", chans["stable"]) == f"releases/r{rev}"
+    assert check_registry.resolve_channel(root, "suite-default", "candidate", hl.harness_digest(lock)) == "current"
+    shutil.rmtree(h / "releases")
+    with pytest.raises(ValueError, match="release copy"):
+        check_registry.resolve_channel(root, "suite-default", "stable", chans["stable"])
+
+
+def test_release_copies_never_change(repo):
+    root, h, _ = repo
+    rel = promote.write_release(h)
+    assert promote.release_problems(h) == []
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "release")
+    base = _git(root, "rev-parse", "HEAD")
+    with (rel / HOOK).open("a") as f:
+        f.write("# edited\n")
+    assert any("the lock says" in p for p in promote.release_problems(h))
+    with (h / HOOK).open("a") as f:
+        f.write("# edited\n")
+    _relock(h)
+    with pytest.raises(SystemExit, match="never change"):
+        promote.write_release(h, rel / hl.LOCK_FILE)
+    relock_rel, _ = relock.relock(rel)
+    (rel / hl.LOCK_FILE).write_text(hl.dump(relock_rel))
+    assert any("never change" in p for p in check_registry.release_base_problems(root, base, h))
+
+
+def test_promote_moves_stable_to_a_release_copy(repo):
+    root, h, _ = repo
+    with (h / HOOK).open("a") as f:
+        f.write("# edited\n")
+    lock = _relock(h)
+    digest = hl.harness_digest(lock)
+    promote.set_channel(root / "channels.yaml", "suite-default", "candidate", digest, "next")
+    promote.write_release(h)
+    promote.set_channel(root / "channels.yaml", "suite-default", "stable", digest, "promoted")
+    chans = yaml.safe_load((root / "channels.yaml").read_text())["suite-default"]
+    assert chans == {"stable": digest, "candidate": digest}
+    assert (h / "releases" / f"r{lock['revision']}" / HOOK).read_bytes() == (h / HOOK).read_bytes()

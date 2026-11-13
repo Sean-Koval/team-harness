@@ -1,12 +1,13 @@
 # Channels: which harness each name resolves to (`hangar harness thaw team-default@stable`).
-# A channel holds a harness_digest; hangar finds that lock in this checkout or in its git history.
-# Only promotion moves `stable` (see README: "From change to promotion").
+# A channel holds a harness_digest: the current lock's, or a release copy's (harnesses/<name>/releases/rN/, written by
+# scripts/promote.py; check_registry.py never resolves from git history). Only promotion moves `stable`
+# (scripts/promote.py; see README: "From change to promotion").
 team-default:
-  stable: "sha256:8242a53f8befb71236d41fb3188e50c0dd6c674a59c821f64d853c05bd81b074"  # r1 (re-keyed: hangar#221 changed the digest form; same lock)
+  stable: "sha256:8242a53f8befb71236d41fb3188e50c0dd6c674a59c821f64d853c05bd81b074"  # r1, releases/r1 (re-keyed: hangar#221 changed the digest form; same lock)
   candidate: "sha256:e7796f6b9b391e167e58c87b3ce0a974d153e7297659e6f128d156e58bc900ca"  # r7: r6's files, digest now covers hook scripts (KAN-473). r6 hooks run natively on Windows (KAN-460). r5: + ai-dlc workflow plugin (Claude); Codex form dropped, jira-ticket status rule stated (KAN-324)
 work-default:
-  stable: "sha256:a184632f8e3fdd682a2695c07d1a9a32aaa372a2e2a9f1f94afc8276afdef41d"  # r3, promoted from candidate (KAN-436); re-keyed in KAN-473 so the digest covers hook scripts (was 6ca52877…, which later hook edits shared); r1 was a7953f66…
+  stable: "sha256:a184632f8e3fdd682a2695c07d1a9a32aaa372a2e2a9f1f94afc8276afdef41d"  # r3, promoted from candidate (KAN-436); releases/r3; re-keyed in KAN-473 so the digest covers hook scripts (was 6ca52877…, which later hook edits shared); r1 was a7953f66…
   candidate: "sha256:652eaaf555dd77de4687c95100b25627efbc8ee902b83ede5d4ff49c589d06bd"  # r7: r6's files, digest now covers hook scripts (KAN-473); r6: + extract-records skill, scope map (KAN-435); r5 hooks run natively on Windows (KAN-460); r4 org overlay slot (KAN-366)
 suite-default:
-  stable: "sha256:6ece1da3e61e6128571d587a7c09742fcdb109dced52b95ae66fde7deed70391"  # r2, promoted from candidate (KAN-436); re-keyed in KAN-473 so the digest covers hook scripts (was 49f69972…, which later hook edits shared); r1 (0176852a…) was the first pin
+  stable: "sha256:6ece1da3e61e6128571d587a7c09742fcdb109dced52b95ae66fde7deed70391"  # r2, promoted from candidate (KAN-436); releases/r2; re-keyed in KAN-473 so the digest covers hook scripts (was 49f69972…, which later hook edits shared); r1 (0176852a…) was the first pin
   candidate: "sha256:73336a0d6e931796cef663b9dd9b80b6d8a42ba17589c066929f73c0fa8b869b"  # r5: r4's files, digest now covers hook scripts (KAN-473); r4: + extract-records skill, scope map (KAN-435); r3 hooks run natively on Windows (KAN-460)
