@@ -44,3 +44,14 @@ def test_session_hook_runs_in_sh(harness, command, tmp_path):
 
 def test_every_harness_with_a_reminder_is_covered():
     assert len(list(_commands())) >= 3
+
+
+@pytest.mark.parametrize("harness, command", list(_commands()))
+def test_session_reminders_need_no_escaping(harness, command):
+    # an echo reminder is one single-quoted string with no quote inside it, so sh, cmd and PowerShell all print it
+    # without an interpreter (Windows usually has no python3)
+    if not command.startswith("echo "):
+        return
+    text = command[len("echo "):]
+    assert text.startswith("'") and text.endswith("'"), command
+    assert "'" not in text[1:-1] and '"' not in text[1:-1], command

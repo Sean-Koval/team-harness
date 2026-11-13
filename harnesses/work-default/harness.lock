@@ -66,7 +66,7 @@ components:
   digest: sha256:db09ef447b794d9ca6b1e19b313e59c6150b67552f7b1b90c49fa24937e39df7
   path: native/claude-code/hooks/guard_work_system.py
 - id: native:claude-code/settings.json
-  digest: sha256:4a54b1067d35cddce0b042d835eb5e658bf8f8b903568005755e5da8c3e2125d
+  digest: sha256:1d328140ce19ccd7090689ede002d585ca7f5ad57be180805be2fb8c8db024c2
   path: native/claude-code/settings.json
 binding:
   mcp:
@@ -85,10 +85,10 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:e713e5f0c62e0c5ce6e33df754fd1f2aa520275d271def3a969b5f33bcca50c6
+    digest: sha256:f6f294879000787cbb174448320b1cc5cb89c5d7acb44e1414886e00e00ed17e
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:e713e5f0c62e0c5ce6e33df754fd1f2aa520275d271def3a969b5f33bcca50c6
+    digest: sha256:f6f294879000787cbb174448320b1cc5cb89c5d7acb44e1414886e00e00ed17e
 plugins:
   autoUpdate: false
 remote: []
