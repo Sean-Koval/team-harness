@@ -70,7 +70,8 @@ BARE_HOST = re.compile(r"(?<![\w@./:{$-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+
                        r"(?![\w(-]|\.\w)", re.IGNORECASE)
 # A private-network name (build01.corp.internal, nas.home.arpa) is flagged even bare: two labels before the suffix, or
 # one with a digit or a hyphen, so `settings.local` and `config.internal` (code) still pass.
-PRIVATE_HOST = re.compile(r"(?<![\w@./:{$-])((?:[a-z0-9-]+\.)+home\.arpa|(?:[a-z0-9-]+\.){2,}(?:internal|corp|local|lan|intranet|home\.arpa)"
+PRIVATE_HOST = re.compile(r"(?<![\w@./:{$-])((?:[a-z0-9-]+\.)+home\.arpa"
+                          r"|(?:[a-z0-9-]+\.){2,}(?:internal|corp|local|lan|intranet)"
                           r"|[a-z0-9-]*[0-9-][a-z0-9-]*\.(?:internal|corp|local|lan|intranet|home\.arpa))"
                           r"(?![\w(-]|\.\w)", re.IGNORECASE)
 ALLOWED_HOSTS = re.compile(r"(?i)^(?:(?:[\w-]+\.)*example\.(?:com|org|net)|localhost|127\.0\.0\.1"
