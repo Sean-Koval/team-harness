@@ -132,7 +132,8 @@ def test_ai_dlc_s_writing_tools_are_write_tools(name):
     """KAN-483: ai-dlc's tools that write past the session, the vault included, are `write_tools`, so hangar's taint
     gate keeps a tainted session from them; its reading tools are not."""
     tools = yaml.safe_load((ROOT / "bindings" / f"{name}.yaml").read_text())["mcp"]["ai-dlc"]["write_tools"]
-    writers = {"tracker_create", "tracker_update", "tracker_comment", "knowledge_propose", "knowledge_render",
+    writers = {"tracker_create", "tracker_create_decision", "tracker_update", "tracker_comment", "knowledge_propose",
+               "knowledge_render",
                "knowledge_pull_transcripts", "knowledge_append", "knowledge_note", "work_publish", "work_pr"}
     assert writers <= set(tools)
     assert not {"tracker_get", "tracker_search", "knowledge_search", "knowledge_check"} & set(tools)
