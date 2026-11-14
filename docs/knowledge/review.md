@@ -1,6 +1,6 @@
 # Review a records PR in under 5 minutes
 
-A records PR proposes records that an agent extracted from one Source. You decide what the team will remember, so
+A records PR proposes the records an agent extracted from one night's Sources, a section for each. You decide what the team will remember, so
 you check each record against its quote, not against your memory of the meeting.
 
 ## Find what waits on you
