@@ -64,6 +64,16 @@ def test_contract_lists_inputs_and_holds_no_values():
             assert re.match(r"^[A-Z][A-Z0-9_]*=\s*(#.*)?$", line), f"a value in the contract: {line}"
 
 
+def test_contract_names_the_claude_credentials():
+    """KAN-496: the subscription token (`claude setup-token`) and the API key, the two credentials hangar's claude-code
+    harness reads; `make agent-env-check`'s agent probe needs one of them set."""
+    from hangar.harnesses import get_harness
+
+    names = check_registry.contract_names(CONTRACT)
+    assert {c.env_var for c in get_harness("claude-code").credentials} <= set(names)
+    assert names.index("CLAUDE_CODE_OAUTH_TOKEN") < names.index("ANTHROPIC_API_KEY")  # the default comes first
+
+
 def test_no_host_paths_in_the_spec():
     text = (ROOT / "environments" / "agent.yaml").read_text()
     assert "/Users/" not in text and "~/" not in text and "$HOME" not in text
