@@ -690,3 +690,291 @@ def test_every_mention_in_the_pr_body_is_defused(tmp_path: Path) -> None:
     (scratch / cb.PR_BODY).write_text("odd `@alice, `@bob` and ``@carol``; (@dave) @eve\nmail a.b@c.com x+y@d.org")
     body = cb.pr_body(repo, scratch, []).read_text()
     assert "@" not in body.replace("a.b@c.com", "").replace("x+y@d.org", ""), body
+
+
+# --- customer knowledge repositories (KAN-492) ----------------------------------------------------------------------
+
+CHAT = "symphony-cf33296ef652aae7"  # a qualifying thread in the fixture
+CHAT_FILE = "inbox/symphony-cf33296ef652aae7--4e9f918bae4ebada.md"
+CUSTOMER_TITLE = "Alpha Corp cutover room"
+
+
+def customer_source(root: Path, project: str, *, boundary: str = "customer", name: str = "") -> str:
+    """The fixture's qualifying thread as Work Copilot exports it into a customer checkout (KAN-489)."""
+    source_id = name or f"symphony-{project}-0001"
+    text = (FIXTURE / CHAT_FILE).read_text()
+    text = text.replace(f'id: "{CHAT}"', f'id: "{source_id}"').replace('scope: "team"', 'scope: "project"')
+    text = text.replace("Delivery room: long-deploy", CUSTOMER_TITLE)
+    text = text.replace('provider: "symphony"', f'provider: "symphony"\nboundary: "{boundary}"\nproject: "{project}"')
+    (root / "inbox/raw").mkdir(parents=True, exist_ok=True)
+    payload = text.split('"resource": "', 1)[1].split('"', 1)[0]
+    shutil.copy(FIXTURE / payload, root / payload)
+    (root / f"inbox/{source_id}.md").write_text(text)
+    return source_id
+
+
+def customer_checkout(tmp_path: Path, project: str, *, declare: str | None = None) -> Path:
+    """A fixture customer checkout as `ai-dlc knowledge init --customer` makes it: declared, empty inbox."""
+    root = tmp_path / f"{project}-knowledge"
+    (root / "inbox").mkdir(parents=True)
+    (root / "projects" / project).mkdir(parents=True)
+    declared = project if declare is None else declare
+    table = f'[repo]\nboundary = "customer"\nproject = "{declared}"\ndeny_list = "deny-terms.txt"\n\n'
+    config = f'[format]\nversion = 1\n\n{table if declared else ""}[check]\nroots = ["projects/{project}"]\n'
+    (root / "knowledge.toml").write_text(config)
+    return root
+
+
+def list_customers(repo: Path, *projects: str, extra: str = "") -> None:
+    entries = "".join(f'\n[[transcripts.customers]]\nproject = "{p}"\ntitles = ["{p.title()}"]\n' for p in projects)
+    team = f'[format]\nversion = 1\n\n[transcripts]\nowner = "ana-ruiz"\n{extra}{entries}'
+    (repo / "knowledge.toml").write_text(team)
+
+
+class WhereRunner(FakeRunner):
+    """Records which checkout each Source was extracted in, and answers with a PR in that checkout's repository."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.where: dict[str, Path] = {}
+
+    def __call__(self, source: dict, repo: Path, config: dict) -> dict:
+        self.where[source["id"]] = repo
+        usage = super().__call__(source, repo, config)
+        name = config.get("customer") or "knowledge"
+        usage["result"] = usage["result"].replace("example/knowledge", f"example/{name}")
+        return usage
+
+
+def fake_export(bin_dir: Path, calls: Path) -> None:
+    """work-copilot export as KAN-489 makes it: a checkout declaring a customer gets that customer's thread only."""
+    tool = bin_dir / "work-copilot"
+    tool.write_text(f"""#!{sys.executable}
+import sys, tomllib
+from pathlib import Path
+sys.path.insert(0, {str(Path(__file__).parent)!r})
+args = sys.argv[1:]
+with open({str(calls)!r}, "a") as handle:
+    handle.write("work-copilot " + " ".join(args) + "\\n")
+to = Path(args[args.index("--to") + 1])
+declared = tomllib.loads((to / "knowledge.toml").read_text()).get("repo", {{}}).get("project")
+if declared:
+    from test_capture_batch import customer_source
+    customer_source(to, declared)
+""")
+    tool.chmod(0o755)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a script stands in for work-copilot")
+def test_two_customers_each_get_their_own_sources_prs_and_run_log(repo: Path, tmp_path: Path, monkeypatch) -> None:
+    alpha, beta = customer_checkout(tmp_path, "alpha"), customer_checkout(tmp_path, "beta")
+    list_customers(repo, "alpha", "beta")
+    bin_dir, calls = tmp_path / "bin", tmp_path / "calls.txt"
+    bin_dir.mkdir()
+    fake_export(bin_dir, calls)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    team_before = inbox(repo)
+    runner = WhereRunner()
+    log = cb.run_batch(repo, runner=runner, project=tmp_path,
+                       environ={"KNOWLEDGE_REPO_ALPHA": str(alpha), "KNOWLEDGE_REPO_BETA": str(beta)})  # fmt: skip
+    exports = calls.read_text().splitlines()
+    assert [line.split("--to ")[1].split()[0] for line in exports] == [str(repo), str(alpha), str(beta)]
+    assert all(line.endswith("--owner ana-ruiz --scope project") for line in exports[1:]), "project-scoped"
+    assert not {s["id"] for s in cb.find_sources(repo)} - team_before, "the team inbox gets no customer Source"
+    assert not any(s["boundary"] == "customer" for s in cb.find_sources(repo) + cb.find_sources(repo, "processed"))
+    for root, name in ((alpha, "alpha"), (beta, "beta")):
+        source_id = f"symphony-{name}-0001"
+        assert runner.where[source_id] == root, "extracted in its own checkout only"
+        assert (root / f"processed/{source_id}.md").is_file() and not cb.find_sources(root)
+        customer = next(c for c in log["customers"] if c["project"] == name)
+        assert customer["status"] == "ok" and customer["pulled"] == [source_id]
+        [extracted] = customer["extracted"]
+        assert extracted["pr"].startswith(f"https://github.com/example/{name}/pull/"), "a PR in its own repository"
+        runs = run_log(root)
+        assert len(runs) == 1 and [e["id"] for e in runs[0]["sources"]] == [source_id], "one run log line per repo"
+        assert json.loads((root / cb.STATE).read_text())["last_pull"] == {"work-copilot": log["started"]}
+    assert len(run_log(repo)) == 1
+    assert not any(name in json.dumps(run_log(repo)) for name in ("alpha", "beta"))
+
+
+@pytest.mark.parametrize("case", ["unset", "undeclared", "other project", "team checkout", "missing"])
+def test_a_customer_that_cannot_be_used_is_skipped_with_no_fallback(repo: Path, tmp_path: Path, case: str) -> None:
+    list_customers(repo, "alpha")
+    where = {
+        "unset": lambda: None,
+        "undeclared": lambda: customer_checkout(tmp_path, "alpha", declare=""),
+        "other project": lambda: customer_checkout(tmp_path, "alpha", declare="beta"),
+        "team checkout": lambda: repo,
+        "missing": lambda: tmp_path / "nowhere",
+    }[case]()
+    environ = {} if where is None else {"KNOWLEDGE_REPO_ALPHA": str(where)}
+    before = tree(repo)
+    log = cb.run_batch(repo, runner=FakeRunner(), pulls=False, environ=environ)
+    [customer] = log["customers"]
+    assert customer["status"].startswith("skipped: ") and "KNOWLEDGE_REPO_ALPHA" in customer["status"]
+    assert set(customer) == {"project", "status"}, "nothing ran for it"
+    after = tree(repo)
+    added = {p for p in after if p.startswith(("inbox/", "projects/")) and p not in before}
+    assert not added, "no fallback to the team repository"
+    if case in ("undeclared", "other project"):
+        checkout = Path(environ["KNOWLEDGE_REPO_ALPHA"])
+        assert not (checkout / "capture").exists(), "an undeclared checkout is not written to"
+
+
+def test_dry_run_lists_each_customer_export_and_writes_nothing(repo: Path, tmp_path: Path) -> None:
+    alpha, beta = customer_checkout(tmp_path, "alpha"), customer_checkout(tmp_path, "beta")
+    customer_source(alpha, "alpha")
+    list_customers(repo, "alpha", "beta")
+    before = {root: tree(root) for root in (repo, alpha, beta)}
+    runner = FakeRunner()
+    log = cb.run_batch(repo, runner=runner, dry_run=True, project=tmp_path,
+                       environ={"KNOWLEDGE_REPO_ALPHA": str(alpha), "KNOWLEDGE_REPO_BETA": str(beta)})  # fmt: skip
+    assert runner.calls == [] and {root: tree(root) for root in before} == before
+    for customer, root in zip(log["customers"], (alpha, beta), strict=True):
+        [export] = customer["pulls"]
+        assert export["status"] == "would run"
+        assert export["command"][:4] == ["work-copilot", "export", "--to", str(root)]
+        assert export["command"][-2:] == ["--scope", "project"]
+    assert [r["id"] for r in log["customers"][0]["extracted"]] == ["symphony-alpha-0001"]
+
+
+def test_the_cli_dry_run_reports_an_unset_customer() -> None:
+    with tempfile_repo() as team:
+        list_customers(team, "alpha")
+        env = {k: v for k, v in os.environ.items() if k != "KNOWLEDGE_REPO_ALPHA"}
+        command = [sys.executable, str(ROOT / "scripts/capture_batch.py"), "run", "--repo", str(team), "--dry-run",
+                   "--no-pull"]  # fmt: skip
+        run = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+        assert run.returncode == 0, run.stderr
+        [customer] = json.loads(run.stdout)["customers"]
+        assert customer == {"project": "alpha",
+                            "status": "skipped: not configured: set KNOWLEDGE_REPO_ALPHA to its local checkout"}
+        assert "customer alpha skipped" in run.stderr
+
+
+def tempfile_repo():
+    import contextlib
+    import tempfile
+
+    @contextlib.contextmanager
+    def made():
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "knowledge"
+            shutil.copytree(FIXTURE, target)
+            yield target
+
+    return made()
+
+
+def test_a_customer_source_in_the_team_inbox_is_never_extracted_there(repo: Path) -> None:
+    customer_source(repo, "alpha", name="symphony-stray-0001")
+    runner = FakeRunner()
+    log = cb.run_batch(repo, runner=runner, pulls=False)
+    assert "symphony-stray-0001" not in runner.calls
+    assert {"symphony-stray-0001"} == {s["id"] for s in log["skipped"] if "customer Source" in s["reason"]}
+    assert "symphony-stray-0001" in inbox(repo), "left for a person to move"
+    with pytest.raises(cb.Refused, match="customer Source"):
+        cb.process_now(repo, "symphony-stray-0001", runner=runner)
+
+
+def test_a_customer_checkout_extracts_only_its_own_marked_sources(repo: Path, tmp_path: Path) -> None:
+    alpha = customer_checkout(tmp_path, "alpha")
+    mine = customer_source(alpha, "alpha")
+    theirs = customer_source(alpha, "beta", name="symphony-beta-0009")
+    unmarked = customer_source(alpha, "alpha", boundary="team", name="symphony-unmarked-0001")
+    list_customers(repo, "alpha")
+    runner = WhereRunner()
+    log = cb.run_batch(repo, runner=runner, pulls=False, environ={"KNOWLEDGE_REPO_ALPHA": str(alpha)})
+    [customer] = log["customers"]
+    assert [r["id"] for r in customer["extracted"]] == [mine]
+    assert {s["id"] for s in customer["skipped"]} == {theirs, unmarked}
+    assert {theirs, unmarked} <= inbox(alpha) and runner.where[mine] == alpha
+    assert not {theirs, unmarked} & set(runner.where)
+    with pytest.raises(cb.Refused, match="not marked boundary: customer"):
+        cb.process_now(alpha, theirs, runner=runner)
+
+
+def test_a_customer_run_names_its_sources_by_id_only(repo: Path, tmp_path: Path, capsys) -> None:
+    alpha = customer_checkout(tmp_path, "alpha")
+    good, broken = customer_source(alpha, "alpha"), customer_source(alpha, "alpha", name="symphony-alpha-0002")
+    customer_source(alpha, "beta", name="symphony-beta-0003")
+    list_customers(repo, "alpha")
+
+    class Leaky(WhereRunner):
+        def __call__(self, source: dict, repo: Path, config: dict) -> dict:
+            if source["id"] == broken:
+                raise RuntimeError(f"session failed (1): could not summarise {CUSTOMER_TITLE} from {repo}")
+            return super().__call__(source, repo, config)
+
+    log = cb.run_batch(repo, runner=Leaky(), pulls=False, environ={"KNOWLEDGE_REPO_ALPHA": str(alpha)})
+    printed = json.dumps(log["customers"])
+    assert CUSTOMER_TITLE not in printed and str(alpha) not in printed and "inbox/" not in printed
+    [customer] = log["customers"]
+    assert customer["failed"] == [{"id": broken, "error": "session failed (1)"}]
+    assert [r["id"] for r in customer["extracted"]] == [good]
+    for name in (cb.LOG, cb.STATE):
+        assert CUSTOMER_TITLE not in (alpha / name).read_text()
+
+
+def test_customer_runs_share_the_nights_token_ceiling(repo: Path, tmp_path: Path) -> None:
+    alpha = customer_checkout(tmp_path, "alpha")
+    customer_source(alpha, "alpha")
+    list_customers(repo, "alpha", extra="\n[capture]\ntoken_ceiling = 200000\n")
+    own = (alpha / "knowledge.toml").read_text() + "\n[capture]\ntoken_ceiling = 9000000\n"
+    (alpha / "knowledge.toml").write_text(own)
+    runner = FakeRunner(tokens=100_000)
+    log = cb.run_batch(repo, runner=runner, pulls=False, environ={"KNOWLEDGE_REPO_ALPHA": str(alpha)})
+    assert log["tokens"] + log["customers"][0]["tokens"] <= 200_000
+    assert log["customers"][0]["unprocessed"] == ["symphony-alpha-0001"], "the customer run gets what the team left"
+    assert run_log(alpha)[0]["ceiling_reached"] is True
+
+
+def test_a_customer_draft_pr_opens_in_the_customer_checkout(tmp_path: Path, monkeypatch) -> None:
+    alpha = customer_checkout(tmp_path, "alpha")
+    scratch = tmp_path / "scratch"
+    (scratch / "projects/alpha").mkdir(parents=True)
+    (scratch / "projects/alpha/lesson.md").write_text("---\nid: x\n---\n")
+    seen: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="https://github.com/example/alpha/pull/3", stderr="")
+
+    monkeypatch.setattr(cb.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    source = {"id": "symphony-alpha-0001"}
+    config = {**cb.load_config(alpha), "project": str(tmp_path)}
+    assert config["customer"] == "alpha"
+    cb.propose(source, alpha, scratch, ["projects/alpha/lesson.md"], config)
+    assert seen[-1][seen[-1].index("--root") + 1] == str(alpha)
+    team = {**config, "customer": None}
+    cb.propose(source, alpha, scratch, ["projects/alpha/lesson.md"], team)
+    assert "--root" not in seen[-1], "the team repository keeps the project's knowledge role"
+
+
+@pytest.mark.parametrize("bad", ['[[transcripts.customers]]\nproject = "Alpha Corp"\n',
+                                 '[[transcripts.customers]]\nproject = "alpha"\nrepo_env = "not a name"\n',
+                                 '[transcripts.customers]\nproject = "alpha"\n',
+                                 '[repo]\nboundary = "team"\n'])  # fmt: skip
+def test_a_malformed_customer_list_or_declaration_refuses_the_run(repo: Path, bad: str) -> None:
+    (repo / "knowledge.toml").write_text(f"[format]\nversion = 1\n\n[transcripts]\nowner = \"ana-ruiz\"\n\n{bad}")
+    with pytest.raises(cb.Refused):
+        cb.run_batch(repo, runner=FakeRunner(), pulls=False, environ={})
+
+
+def test_routes_read_the_same_table_and_default_variable_as_transcripts(repo: Path, tmp_path: Path) -> None:
+    list_customers(repo, "acme-corp")
+    assert cb.customer_routes(repo) == [{"project": "acme-corp", "repo_env": "KNOWLEDGE_REPO_ACME_CORP"}]
+    with pytest.raises(cb.Refused, match="customer repository"):
+        cb.run_batch(customer_checkout(tmp_path, "alpha"), runner=FakeRunner(), pulls=False, environ={})
+
+
+@pytest.mark.skipif(shutil.which("ai-dlc") is None, reason="needs the ai-dlc CLI on PATH (CI installs it)")
+def test_a_customer_checkout_after_its_run_passes_knowledge_check(repo: Path, tmp_path: Path) -> None:
+    alpha = customer_checkout(tmp_path, "alpha")
+    customer_source(alpha, "alpha")
+    list_customers(repo, "alpha")
+    cb.run_batch(repo, runner=WhereRunner(), pulls=False, environ={"KNOWLEDGE_REPO_ALPHA": str(alpha)})
+    assert (alpha / "processed/symphony-alpha-0001.md").is_file()
+    run = subprocess.run(["ai-dlc", "knowledge", "check", str(alpha)], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
