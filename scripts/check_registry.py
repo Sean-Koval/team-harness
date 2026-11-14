@@ -241,12 +241,14 @@ def check_environments(root: Path) -> list[str]:
 
 
 def harness_env(root: Path, harness: str, digest: str) -> str:
-    """The rendered environment that serves `harness` at `digest`: `<harness>` for stable (env.stable.yaml renders
-    stable's release copy, KAN-477), `<harness>-candidate` for the current lock when stable is another."""
-    stable = ((yaml.safe_load((root / "channels.yaml").read_text()) or {}).get(harness) or {}).get("stable")
-    if stable in (None, digest) or not (root / "harnesses" / harness / "env.candidate.yaml").is_file():
-        return harness
-    return f"{harness}-candidate"
+    """The rendered environment that serves `harness` at `digest`: `<harness>-candidate`, the current lock, whenever it
+    is rendered, so an environment pinned to the current lock keeps its `extends` when a promotion makes that lock
+    stable too (KAN-508); else `<harness>` (env.stable.yaml, stable's release copy, KAN-477)."""
+    if (root / "harnesses" / harness / "env.candidate.yaml").is_file():
+        lock = root / "harnesses" / harness
+        if (lock / hl.LOCK_FILE).is_file() and hl.harness_digest(hl.load(lock)) == digest:
+            return f"{harness}-candidate"
+    return harness
 
 
 def agent_extends_problems(root: Path, env_name: str, extends: Any, env: dict[str, str]) -> list[str]:

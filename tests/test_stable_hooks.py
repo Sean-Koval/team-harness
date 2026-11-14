@@ -77,9 +77,22 @@ def test_the_committed_stable_environments_serve_the_release_copies():
 
 
 def test_one_lock_needs_no_candidate_environment(repo):
-    _, h, digest, _ = repo
+    """Without a release copy, a lock that is stable needs only env.stable.yaml."""
+    _, h, digest, rel = repo
+    shutil.rmtree(rel)
+    _write(h)
     assert not (h / "env.candidate.yaml").exists()
     assert _identity(h, NAME) == digest
+
+
+def test_a_promoted_lock_renders_stable_from_its_release_copy(repo):
+    """Stable that is also the current lock renders from releases/rN, and candidate keeps its own environment, so
+    neither file changes when the next candidate lands (KAN-508)."""
+    root, h, digest, rel = repo
+    assert render_envs.stable_dir(h) == rel
+    assert (h / "env.candidate.yaml").exists()
+    assert _identity(h, NAME) == digest
+    assert _identity(h, f"{NAME}-candidate") == digest
 
 
 def test_a_hook_edit_on_main_waits_for_a_promotion(repo):
@@ -109,7 +122,15 @@ def test_a_hook_edit_on_main_waits_for_a_promotion(repo):
     out = _write(h)
     assert _hook(out["env.stable.yaml"]).endswith("# edited on main\n")
     assert _identity(h, NAME) == candidate
-    assert "env.candidate.yaml" not in out
+    # stable renders from its release copy even now that it is also the current lock, so the next candidate leaves
+    # env.stable.yaml byte for byte, and the build needs no promotion to keep it (KAN-508)
+    assert check_registry.harness_env(root, NAME, candidate) == f"{NAME}-candidate"
+    promoted = out["env.stable.yaml"]
+    with (h / HOOK).open("a") as f:
+        f.write("# edited again\n")
+    lock, _ = relock.relock(h)
+    (h / hl.LOCK_FILE).write_text(hl.dump(lock))
+    assert _write(h)["env.stable.yaml"] == promoted
 
 
 def test_stable_without_a_release_copy_is_refused(repo):
