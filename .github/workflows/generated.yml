@@ -21,7 +21,7 @@ concurrency:
 env:
   # the same tools as check.yml, at the same refs (tests/test_parallel_prs.py holds them equal), so the checks
   # below pass here exactly when they pass on a PR
-  HANGAR_REF: 2e40bb379ab68010ee688ed89af5c7bc95555729
+  HANGAR_REF: ee176d11931f5db459c1c00d7c24905bf93137ef
   FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
   AI_DLC_REF: 72327f45d698a255cc6959b68b107a88f6fa421d
   PYTEST_VERSION: "9.2.0"

@@ -74,6 +74,18 @@ def test_contract_names_the_claude_credentials():
     assert names.index("CLAUDE_CODE_OAUTH_TOKEN") < names.index("ANTHROPIC_API_KEY")  # the default comes first
 
 
+def test_agents_run_under_their_own_identity():
+    """KAN-497: `make agent-env` and `agent-env-check` hand hangar the release allow-list, so it refuses an agent whose
+    Atlassian account is a releaser's; and the contract says every credential is the agent's own."""
+    make = (ROOT / "Makefile").read_text()
+    for target in ("agent-env", "agent-env-check"):
+        rule = re.search(rf"^{target}:([^\n]*)\n\t([^\n]*)", make, re.M)
+        assert rule and "agent-env-identity" in rule.group(1) and "$(IDENTITY)" in rule.group(2), target
+    assert '--release-config "$(RELEASE_CONFIG)"' in make
+    contract = CONTRACT.read_text()
+    assert "never a person's" in contract and "agent_release.people" in contract and "github_people" in contract
+
+
 def test_ai_dlc_mcp_reads_the_knowledge_checkout():
     """KAN-496: `make agent-env` clones KNOWLEDGE_REPO to /workspace/knowledge, and hangar writes that path, not the
     URL, into ai-dlc's MCP server, whose knowledge tools read the checkout."""
