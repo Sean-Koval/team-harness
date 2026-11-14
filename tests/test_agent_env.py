@@ -83,7 +83,21 @@ def test_agents_run_under_their_own_identity():
         assert rule and "agent-env-identity" in rule.group(1) and "$(IDENTITY)" in rule.group(2), target
     assert '--release-config "$(RELEASE_CONFIG)"' in make
     contract = CONTRACT.read_text()
-    assert "never a person's" in contract and "agent_release.people" in contract
+    assert "never a person's" in contract and "agent_release.people" in contract and "github_people" in contract
+
+
+def test_ai_dlc_mcp_reads_the_knowledge_checkout():
+    """KAN-496: `make agent-env` clones KNOWLEDGE_REPO to /workspace/knowledge, and hangar writes that path, not the
+    URL, into ai-dlc's MCP server, whose knowledge tools read the checkout."""
+    from hangar import localenv
+
+    spec = check_registry.agent_catalog(ROOT).get(check_registry.AGENT_ENV)
+    clones = localenv.parse_clones(re.findall(r"--clone (\S+)", (ROOT / "Makefile").read_text()))
+    assert ("knowledge", "KNOWLEDGE_REPO") in clones
+    env = {"KNOWLEDGE_REPO": "https://github.com/o/knowledge", "ATLASSIAN_MCP_AUTHORIZATION": "Basic x"}
+    files, servers, _ = localenv.harness_config(spec, localenv.baked_harness(spec, "bake"), env, clones)
+    assert {"ai-dlc", "atlassian"} <= set(servers)
+    assert files[".claude.json"]["mcpServers"]["ai-dlc"]["env"]["KNOWLEDGE_REPO"] == "/workspace/knowledge"
 
 
 def test_no_host_paths_in_the_spec():
