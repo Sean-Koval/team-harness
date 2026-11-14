@@ -10,15 +10,16 @@ finish it without asking a question. A person reads the drafts and files them; t
 
 Employer content (tickets, pages, code, logs, meeting transcripts, Symphony chat) stays on the company's systems and in tools the company approved on the work machine. Never write it to any other Atlassian site, to Notion, to a personal notes vault, or to any personal sync or backup, and never tag it for a personal system. If the knowledge-base site or space this harness names still reads COMPANY-SITE or COMPANY-SPACE, the company overlay was not applied: write no page, and say so in the PR.
 
-## Tools: drafts now, direct filing later
+## Tools: drafts only
 
 Use only ai-dlc's roles. Read the decision with `ai-dlc knowledge records get <id>`. Tickets belong in
-the WORKPROJ project on COMPANY-SITE.atlassian.net, reached only through ai-dlc's `tracker` role. That role has no command yet that files a ticket with
-this layout, labels and links (`ai-dlc work publish` files a work record, not a planned ticket). So:
+the WORKPROJ project on COMPANY-SITE.atlassian.net, reached only through ai-dlc's `tracker` role. That role has no command that files a ticket with this
+layout, labels and links (`ai-dlc work publish` files a work record, not a planned ticket). So write the drafts as
+files and a filing checklist (section 3), and a person files them.
 
-- **Today:** write the drafts as files and a filing checklist (section 3). A person files them.
-- **When ai-dlc's MCP surface ships the tracker tools** (`tracker_search`, `tracker_create`, `tracker_comment`):
-  file each draft with `tracker_create`, exactly as the draft and checklist say.
+Don't file with ai-dlc's `tracker_create`, even where its MCP server lists it. It takes no type, epic or links, and it
+files in the tracker role of the repository you are in, which may not be the WORKPROJ project on COMPANY-SITE.atlassian.net. Direct filing waits for a
+change to this skill that says so.
 
 Name no vendor tool and call none, whichever path you take. Never transition a ticket and never set `exec:agent`.
 

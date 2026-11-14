@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 15
+revision: 16
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -40,28 +40,28 @@ components:
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:extract-records
-  digest: sha256:8e8c03de08c383c152354de9bbac28228a88fa64f6ea21d6fc9f05aec698fa98
-  tree: sha256:53ee152c7672d05ba7dd912c3764fe2b19580c3ae38ad60383384fab89d0600e
+  digest: sha256:ee067c28f7980f275b20a4bde6455e907afa71d8134735c8b0a24861a047074e
+  tree: sha256:a27c5770fa0bb48d7a8720fe1c1aa8e45741803cfe891e1758b5bcc8c6bff40b
   path: skills/extract-records
   source: path:skills/extract-records
 - id: skill:knowledge-context
-  digest: sha256:ee737f7bd7ed56713684492a7948caa2cfc9ea861b116bbde665c1de723c2414
-  tree: sha256:08348e08e1660f2b410c51125c19b56043bd693c7775f627b70552d993f22af0
+  digest: sha256:53a88770a919c40f89370cb08c7e7c43d17260394d0a2cfdc25c611bd2b2ef6e
+  tree: sha256:2b4ec1bf5b7eedaf2fba1aab8a7aa5082628e9047295ebe0ea2f9e5817d9230c
   path: skills/knowledge-context
   source: path:skills/knowledge-context
 - id: skill:query-knowledge
-  digest: sha256:f62a80d6497643b55ca8f788c2c7a7cbd53a61bd56a9523f34fea761831779ea
-  tree: sha256:1412b66aec360f477f33364874c89fd295dcb318a9c581fff71553c3e41f5d02
+  digest: sha256:2bb1372bc346b4574f891660807e88c363daa9dc9288f65c45ed6cc0b3c87944
+  tree: sha256:2d13283007747cb8d3e66ebf8eb2b7d4e81790d6941a477ad98b62382676c41f
   path: skills/query-knowledge
   source: path:skills/query-knowledge
 - id: skill:whats-next
-  digest: sha256:26d60515651408544edf8f8f715a5898ecf1bf06b7a0d72c3584c3feacfc04e4
-  tree: sha256:8b2c4e388f84ee4d2de13f9d4f2881d46d0360453060777e59131b009a86c234
+  digest: sha256:05f7e7186891c08d75abc731cfb360ee8ee6b1d14c1e069fdf18ad7b68b23ef2
+  tree: sha256:2b110bddca720cd3f0c3a1fda3208386c08ad4337216d43073ce173b8604e2c9
   path: skills/whats-next
   source: path:skills/whats-next
 - id: skill:plan-to-tickets
-  digest: sha256:77fa10be1f88fbe46209ee3547a81339d28c8ddae0aaa10eca0feeceb4bd5fc7
-  tree: sha256:cd5bbda9256eb5604ed6a1dfc9805d90cc5185eab5906ae7723c9da391b8ad84
+  digest: sha256:a2fa29cc16c692758eee7c434b94ef9e9f5344c1f8a0c6487eb925fd0f41b775
+  tree: sha256:475dda14e26cf4007c909f0f1c3577c0bb5168d79bca9f269f45269ca759ba3f
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: skill:codify-lesson

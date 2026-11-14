@@ -10,15 +10,16 @@ finish it without asking a question. A person reads the drafts and files them; t
 
 This harness is for personal projects only. Content from an employer (its tickets, pages, code, meeting transcripts, Symphony chat) never comes here: refuse anything tagged `origin: work` or copied from a company system, and never write to a company Atlassian site from this harness.
 
-## Tools: drafts now, direct filing later
+## Tools: drafts only
 
 Use only ai-dlc's roles. Read the decision with `ai-dlc knowledge records get <id>`. Tickets belong in
-Jira project KAN on seanmkoval.atlassian.net, reached only through ai-dlc's `tracker` role. That role has no command yet that files a ticket with
-this layout, labels and links (`ai-dlc work publish` files a work record, not a planned ticket). So:
+Jira project KAN on seanmkoval.atlassian.net, reached only through ai-dlc's `tracker` role. That role has no command that files a ticket with this
+layout, labels and links (`ai-dlc work publish` files a work record, not a planned ticket). So write the drafts as
+files and a filing checklist (section 3), and a person files them.
 
-- **Today:** write the drafts as files and a filing checklist (section 3). A person files them.
-- **When ai-dlc's MCP surface ships the tracker tools** (`tracker_search`, `tracker_create`, `tracker_comment`):
-  file each draft with `tracker_create`, exactly as the draft and checklist say.
+Don't file with ai-dlc's `tracker_create`, even where its MCP server lists it. It takes no type, epic or links, and it
+files in the tracker role of the repository you are in, which may not be Jira project KAN on seanmkoval.atlassian.net. Direct filing waits for a
+change to this skill that says so.
 
 Name no vendor tool and call none, whichever path you take. Never transition a ticket and never set `exec:agent`.
 

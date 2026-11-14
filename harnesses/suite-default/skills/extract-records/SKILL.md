@@ -57,7 +57,8 @@ choice and the draft picks one option. Then write both: the question, and the de
 
 Every record needs a **quotable sentence** from the Source as its basis. The quote is copied **character for
 character**; trimming whitespace at its ends is the only change allowed. Never paraphrase, shorten, fix or join
-sentences. If no exact sentence supports the record, drop the record.
+sentences. If no exact sentence supports the record, drop the record. The quote goes in the record's body and, for
+a Source that expires, in its `sources` entry too (section 6).
 
 - **Decision:** a choice the Source says was made. One decision per choice. Its sub-points (what was chosen, which
   sources, adapters, folders, schedules, fields, statuses, scopes, ids) go in **its body**, even when worded "only"
@@ -123,6 +124,17 @@ Start from the type's template. Header:
 - `owner`: the login of who decided, owes or must answer; `unknown` as above.
 - `sources`: `{id: <Source id>, resource: <Source path>, hash: <Source hash>}`, plus any other resource the record
   rests on. Every record extracted from the Source carries this entry.
+- **Evidence in that entry.** A transcript, meeting, chat or thread Source expires: its payload is deleted, so the
+  record must keep the words. Its `provider` or `tags` say so. For such a Source, add to the entry:
+  - `quote`: the section 3 quote, character for character, without the line's timestamp or speaker. At most 500
+    characters; cite a longer passage as several entries for the same Source, one piece each.
+  - `speaker`: who said it, exactly as the Source's line names them.
+  - `at`: where it was said, always in quotes. A recording offset as `'HH:MM:SS'`; a chat time as an ISO 8601 datetime with a zone,
+    its date from the Source (`[09:14]` on a Source dated 2026-11-12 is `2026-11-12T09:14:00+00:00`, in the zone of
+    its `observed_at`). Use `permalink` instead when the Source links the line itself.
+
+  The quote stays in the body too. `knowledge check` refuses a `derived_from` link to an expiring Source without
+  this evidence. Other Sources stay re-fetchable and need none.
 - `links`: `derived_from: <Source id>`. It **must** target a Source record, never a ticket, URL or another record
   type. `belongs_to` depends on scope and type, and nothing else gets one:
   - a `project` record always gets `belongs_to: <project>` (so does a `personal` record about a project);

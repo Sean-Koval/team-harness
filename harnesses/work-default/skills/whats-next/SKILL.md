@@ -15,8 +15,9 @@ propose a record, assign an owner or change a status from this skill.
 
 ## Before anything: ai-dlc must be here
 
-**Today this skill uses the `ai-dlc knowledge records` CLI.** ai-dlc's MCP server does not list `knowledge_search`
-or `knowledge_get` yet; once it does, use those tools instead, with the same filters. Both run the same service.
+**Today this skill uses the `ai-dlc knowledge records` CLI.** Use it even where ai-dlc's MCP server lists
+`knowledge_search` and `knowledge_get`: those tools take no `--provider` or repository and read the knowledge role of
+the repository you are in, which may not be `KNOWLEDGE_REPO`. The CLI with `--provider git` reads the right one.
 
 Run `ai-dlc knowledge records --help` first. If `ai-dlc` is not found, or it has no `knowledge records` command (an
 older ai-dlc), **stop**: say "ai-dlc with `knowledge records` is not installed in this environment, so `whats-next`
