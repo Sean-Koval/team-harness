@@ -68,6 +68,11 @@ URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^/\s@]+@)?([^/\s:?#)>\]'\"`]+)
 # `pd.io.json`, `client.ai(`): nothing word-like or dotted on either side, no call after it.
 BARE_HOST = re.compile(r"(?<![\w@./:{$-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|ai|dev|co))"
                        r"(?![\w(-]|\.\w)", re.IGNORECASE)
+# A private-network name (build01.corp.internal, nas.home.arpa) is flagged even bare: two labels before the suffix, or
+# one with a digit or a hyphen, so `settings.local` and `config.internal` (code) still pass.
+PRIVATE_HOST = re.compile(r"(?<![\w@./:{$-])((?:[a-z0-9-]+\.)+home\.arpa|(?:[a-z0-9-]+\.){2,}(?:internal|corp|local|lan|intranet|home\.arpa)"
+                          r"|[a-z0-9-]*[0-9-][a-z0-9-]*\.(?:internal|corp|local|lan|intranet|home\.arpa))"
+                          r"(?![\w(-]|\.\w)", re.IGNORECASE)
 ALLOWED_HOSTS = re.compile(r"(?i)^(?:(?:[\w-]+\.)*example\.(?:com|org|net)|localhost|127\.0\.0\.1"
                            r"|(?:[\w-]+\.)*github\.com|(?:[\w-]+\.)*githubusercontent\.com)$")
 # Public documentation a skill may link to. It names no person, company or customer site.
@@ -208,8 +213,9 @@ def content_problems(files: dict[str, str], identity: set[str], deny: list[str],
             out += [f"{at}: an e-mail address ({m.group(0)}); use a {{{{placeholder}}}} or a role" for m in emails
                     if not host_allowed(m.group(1), allow_hosts)]
             hosts = [m.group(1) for m in URL_HOST.finditer(line)]
-            hosts += [m.group(1) for m in BARE_HOST.finditer(line)
-                      if m.group(1).lower() not in {h.lower() for h in hosts} | {e.group(1).lower() for e in emails}]
+            seen = {h.lower() for h in hosts} | {e.group(1).lower() for e in emails}
+            hosts += [m.group(1) for rx in (BARE_HOST, PRIVATE_HOST) for m in rx.finditer(line)
+                      if m.group(1).lower() not in seen]
             out += [f"{at}: the host {h}; use example.com or a {{{{placeholder}}}} (a public docs site: --allow-host)"
                     for h in dict.fromkeys(hosts) if not host_allowed(h, allow_hosts)]
             out += [f"{at}: {v!r} is a profile's person or site; write its {{{{placeholder}}}}" for v, rx in ident_res

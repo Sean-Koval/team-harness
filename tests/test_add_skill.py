@@ -147,7 +147,25 @@ def test_unknown_harness_and_bad_key_are_refused(repo, skill):
     assert any("ticket key" in p for p in add_skill.add(skill, ["work-default"], "kan 8", [], root=repo))
 
 
+@pytest.mark.parametrize("line,host", [
+    ("Deploy from build01.corp.internal first.", "build01.corp.internal"),
+    ("The share is nas.home.arpa.", "nas.home.arpa"),
+    ("Logs on log-1.lan and wiki.team.intranet.", "log-1.lan"),
+    ("Ask db.prod.corp for a dump.", "db.prod.corp"),
+    ("ssh build-02.local", "build-02.local"),
+])
+def test_a_private_network_host_is_refused_bare(line, host):
+    problems = add_skill.content_problems({"SKILL.md": line + "\n"}, set(), [])
+    assert any(f"the host {host}" in p for p in problems), problems
+
+
+def test_a_vendor_name_is_reported_once():
+    problems = add_skill.content_problems({"SKILL.md": "Call mcp__atlassian__getJiraIssue first.\n"}, set(), [])
+    assert len(problems) == 1, problems
+
+
 MUST_PASS = [
+    "Read `config.internal` and `app.local`; `self.corp(x)` is a call.",
     "See https://docs.example.com/x, {{kb_site}} and git@github.com:org/repo.git.",
     "Log it with `logger.info(\"done\")`, then `df.info()` and `request.app.state.db`.",
     "Pin it in requirements.in; local overrides go in settings.local.",

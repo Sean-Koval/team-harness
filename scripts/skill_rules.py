@@ -27,5 +27,7 @@ VENDOR = re.compile(r"(?i:\batlassian\b|\brovo\b)|\bJQL\b|\bCQL\b|\bmcp__[\w-]+"
 
 
 def vendor_hits(line: str) -> list[str]:
-    """Every vendor name in one line of a shared skill, by either rule."""
-    return [m.group(0) for m in VENDOR.finditer(line)] + [m.group(0) for m in ATLASSIAN_TOOL.finditer(line)]
+    """Every vendor name in one line of a shared skill, by either rule, each once: a name both rules match, or one
+    inside another hit (`atlassian` in `mcp__atlassian__getJiraIssue`), is reported once."""
+    hits = dict.fromkeys(m.group(0) for rx in (VENDOR, ATLASSIAN_TOOL) for m in rx.finditer(line))
+    return [h for h in hits if not any(h != o and h in o for o in hits)]
