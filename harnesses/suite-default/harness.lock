@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 16
+revision: 17
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -15,8 +15,8 @@ components:
   digest: sha256:ceec5c37bbf265f9315501f5d1cde32bd7e0c7966b46f7fa960fa5285d518106
   path: CLAUDE.md
 - id: skill:decision-ticket
-  digest: sha256:ec6dce07043e575f080b6ae85deba7224170166446f0c235faf45ff2972516f4
-  tree: sha256:48fa6eccf253039de805de6a9677dfeefcd28b769ed213bc802a79d8b8f96817
+  digest: sha256:6882ecfc01872b85be3f5294740de9d119933e93fac53e4cbe2254b4b3ff8999
+  tree: sha256:6e3e4d68765cca7865f1a50f2c6776611b0c593394e4a58e7082ba24372a0b19
   path: skills/decision-ticket
   source: path:skills/decision-ticket
 - id: skill:github-pr
@@ -25,8 +25,8 @@ components:
   path: skills/github-pr
   source: path:skills/github-pr
 - id: skill:jira-ticket
-  digest: sha256:f9d5b69b1d2a06020505fa3a6cb8f86b0cfd30d8ff63195fb2cc22a8e328086c
-  tree: sha256:51bdb1054baf051a97a79b1973293320266866032bd4fcd19adb13ddc14ab70a
+  digest: sha256:5bf7df8746634ee7566c68fec3485f133c78f83f673839b7b21107bfad3c8dfd
+  tree: sha256:d928f538775b85eb1964c16f645c4dd4993ad79123c54afbc03db200ceb007eb
   path: skills/jira-ticket
   source: path:skills/jira-ticket
 - id: skill:work-docs
@@ -35,8 +35,8 @@ components:
   path: skills/work-docs
   source: path:skills/work-docs
 - id: skill:work-start
-  digest: sha256:165ea2e570f3bdca4adbae543504f04415101a62041ec86e832d192e0adc86ef
-  tree: sha256:92e0e55962fcc2fa4f20938e150656d443b6b1aa4f7fb00df14b2a7e8d4424ee
+  digest: sha256:22f07118b1869fa1c089ef39d9532f644222a84c81e555a172bd82c86ac3caa4
+  tree: sha256:93d08091e3b90718ac222019a8c80d2f8f2e83378c12dace4fd4d4add13ff15e
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:extract-records
