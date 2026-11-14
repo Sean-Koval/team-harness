@@ -5,6 +5,7 @@ import codecs
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -445,6 +446,48 @@ def test_mcp_commands_use_placeholders_only(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "--header 'Authorization: ${ATLASSIAN_MCP_AUTHORIZATION}'" in out
     assert "Bearer " not in out.replace("`Bearer <token>`", "")
+
+
+def _mcp_add_positionals(line):
+    """The positional words of a `claude mcp add` line, read as Claude Code reads them: --env and --header take
+    every word after them up to the next option, and everything after `--` is the server's own command."""
+    words = shlex.split(line, posix=not il.WINDOWS)
+    assert words[:3] == ["claude", "mcp", "add"], line
+    out, i, variadic = [], 3, False
+    while i < len(words) and words[i] != "--":
+        w = words[i]
+        if w in ("--scope", "--transport"):
+            i, variadic = i + 2, False
+            continue
+        if w in ("--env", "-e", "--header", "-H"):
+            variadic = True
+        elif w.startswith("-"):
+            variadic = False
+        elif not variadic:
+            out.append(w)
+        i += 1
+    return out
+
+
+@pytest.mark.parametrize(("harness", "servers"), [
+    ("work-default", {"ai-dlc", "atlassian", "github"}),
+    ("suite-default", {"ai-dlc", "atlassian", "github"}),
+    ("team-default", {"github", "gke", "jira", "splunk"}),
+])
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_mcp_commands_name_the_server_where_claude_code_reads_it(tmp_path, capsys, harness, servers, scope):
+    # A name after --env was read as one more variable, and Claude Code refused the add (KAN-433 review)
+    path = ROOT / "harnesses" / harness
+    assert (user(path, tmp_path) if scope == "user" else project(path, tmp_path / "p")) == 0
+    lines = [ln.strip() for ln in capsys.readouterr().out.splitlines() if ln.strip().startswith("claude mcp add")]
+    named = []
+    for line in lines:
+        positionals = _mcp_add_positionals(line)
+        assert positionals, line
+        named.append(positionals[0])
+        if "--transport stdio" in line:
+            assert positionals == positionals[:1], line  # the command and its args come only after --
+    assert sorted(named) == sorted(servers)
 
 
 def test_mcp_and_plugins_are_never_written(tmp_path):

@@ -827,9 +827,12 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
             for k in m.get("header_names") or []:
                 words += ["--header", quoted(f"{k}: ", _var(m["name"], k, binding))]
         else:
+            # The name goes before --env: Claude Code's --env takes every word after it up to the next option, so a
+            # name after it is read as one more variable and the add fails ("Invalid environment variable format").
+            words.append(m["name"])
             for k in m.get("env_names") or []:
                 words += ["--env", quoted(f"{k}=", k)]
-            words += [m["name"], "--", m.get("command") or "", *map(str, m.get("args") or [])]
+            words += ["--", m.get("command") or "", *map(str, m.get("args") or [])]
         out.append(" ".join(words))
     return out
 
