@@ -5,6 +5,7 @@ import codecs
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -445,6 +446,65 @@ def test_mcp_commands_use_placeholders_only(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "--header 'Authorization: ${ATLASSIAN_MCP_AUTHORIZATION}'" in out
     assert "Bearer " not in out.replace("`Bearer <token>`", "")
+
+
+def parse_mcp_add(command: str) -> dict:
+    """Read a printed command as `claude mcp add` does (KAN-433): --env and --header take every word up to the next
+    option or `--`, so the server name is the first word that is neither an option nor an option's value."""
+    words = shlex.split(command)
+    assert words[:3] == ["claude", "mcp", "add"], command
+    single, variadic = {"--scope", "-s", "--transport", "-t"}, {"--env", "-e", "--header", "-H"}
+    opts: dict[str, list[str]] = {}
+    positional: list[str] = []
+    i, rest = 3, []
+    while i < len(words):
+        w = words[i]
+        if w == "--":
+            rest = words[i + 1:]
+            break
+        if w in single:
+            opts.setdefault(w, []).append(words[i + 1])
+            i += 2
+        elif w in variadic:
+            i += 1
+            while i < len(words) and not words[i].startswith("-"):
+                opts.setdefault(w, []).append(words[i])
+                i += 1
+        else:
+            positional.append(w)
+            i += 1
+    return {"name": positional[0] if positional else None, "positional": positional, "opts": opts, "rest": rest}
+
+
+@pytest.mark.parametrize("windows", [False, True])
+@pytest.mark.parametrize("scope", ["user", "project"])
+@pytest.mark.parametrize("harness", [WORK, SUITE, TEAM])
+def test_mcp_commands_parse_as_claude_mcp_add_reads_them(harness, scope, windows, monkeypatch):
+    monkeypatch.setattr(il, "WINDOWS", windows)
+    h = il.load_harness(harness, scope)
+    servers = (h.lock.get("binding") or {}).get("mcp") or []
+    cmds = il.mcp_commands(h, scope)
+    assert len(cmds) == len(servers)
+    for m, c in zip(servers, cmds):
+        got = parse_mcp_add(c)
+        assert got["name"] == m["name"], c
+        if m.get("transport") == "http":
+            assert got["positional"] == [m["name"], m["endpoint"]], c
+            assert [v.split(":")[0] for v in got["opts"].get("--header", [])] == list(m.get("header_names") or [])
+        else:
+            assert got["positional"] == [m["name"]], c
+            assert got["rest"] == [m["command"], *map(str, m.get("args") or [])], c
+            envs = got["opts"].get("--env", [])
+            assert all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", v) for v in envs), c
+            assert [v.split("=")[0] for v in envs] == list(m.get("env_names") or []), c
+
+
+def test_mcp_add_puts_the_name_before_env(tmp_path, capsys):
+    assert user(WORK, tmp_path) == 0
+    out = capsys.readouterr().out
+    var = "$env:KNOWLEDGE_REPO" if il.WINDOWS else "$KNOWLEDGE_REPO"
+    assert (f'claude mcp add --scope user --transport stdio ai-dlc --env "KNOWLEDGE_REPO={var}" '
+            '-- ai-dlc mcp serve') in out
 
 
 def test_mcp_and_plugins_are_never_written(tmp_path):
