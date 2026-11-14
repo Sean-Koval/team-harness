@@ -7,6 +7,7 @@ tracker server, its searches) is a `{{placeholder}}` its profile fills. And ever
 the pinned ai-dlc's MCP server, so a skill never sends an agent to a tool that isn't there.
 """
 
+import functools
 import json
 import os
 import re
@@ -30,13 +31,13 @@ FIXTURE = ROOT / "tests/fixtures/vendor-skill"
 # ai-dlc's role tools, as a skill names them: `tracker_search`, `knowledge_get`.
 AI_DLC_TOOL = re.compile(r"`((?:tracker|knowledge)_[a-z][a-z_]*)`")
 
-# Tools a shared skill may name before the pinned ai-dlc serves them, each with the ai-dlc change that adds it. Only a
-# skill that stops and reports when the tool is missing may name one. The pin bump that brings a tool in removes its
-# entry: test_a_pending_ai_dlc_tool_is_not_served_yet fails until it does.
+# Tools a shared skill may name before the pinned ai-dlc serves them, each with the open ticket that moves the pin
+# (it removes the entry in the same PR). Only a skill with a paragraph that says to stop when the tool is missing may
+# name one. test_a_pending_ai_dlc_tool_is_not_served_yet fails once the pin serves it, so the entry can't stay.
 PENDING_AI_DLC_TOOLS = {
-    "tracker_create_decision": "KAN-518 (ai-dlc #291); decision-ticket stops and reports the question without it",
+    "tracker_create_decision": "KAN-525: pin ai-dlc with #291 (KAN-518); decision-ticket stops and reports without it",
 }
-STOPS_WHEN_MISSING = "If it is missing"
+STOPS_WHEN_MISSING = re.compile(r"\bIf it is missing\b.*?\bstop\b", re.DOTALL)
 
 
 def skill_files(root: Path) -> list[Path]:
@@ -77,6 +78,7 @@ def test_the_named_tracker_server_is_the_bound_one(profile):
     assert named and set(named) <= set(json.loads(params["mcp_bindings"])["tracker"]), profile.name
 
 
+@functools.cache
 def _pinned_mcp_server() -> str | None:
     """The pinned ai-dlc's mcp_server.py: from a checkout (AI_DLC_CHECKOUT) at the pin, or from the `ai-dlc` CLI on
     PATH, which CI installs at the pin (.github/workflows/check.yml) and which must say it was built from the pin."""
@@ -112,9 +114,10 @@ def _served_by_the_pin() -> set[str]:
     return served
 
 
-def _ai_dlc_tools_named() -> dict[str, list[Path]]:
+def _ai_dlc_tools_named(profiles: bool = False) -> dict[str, list[Path]]:
+    """ai-dlc tools named in the shared skills and, with profiles, in the profile text rendered into them."""
     named: dict[str, list[Path]] = {}
-    for f in skill_files(SHARED_SKILLS):
+    for f in skill_files(SHARED_SKILLS) + (sorted(PROFILES.glob("*.yaml")) if profiles else []):
         for tool in sorted(set(AI_DLC_TOOL.findall(f.read_text(encoding="utf-8")))):
             named.setdefault(tool, []).append(f)
     assert named, "no shared skill names an ai-dlc tool; the scan is broken"
@@ -123,7 +126,7 @@ def _ai_dlc_tools_named() -> dict[str, list[Path]]:
 
 def test_every_ai_dlc_tool_a_skill_names_exists_in_the_pinned_ai_dlc():
     served = _served_by_the_pin()
-    missing = {t: [f.relative_to(ROOT).as_posix() for f in where] for t, where in _ai_dlc_tools_named().items()
+    missing = {t: [f.relative_to(ROOT).as_posix() for f in where] for t, where in _ai_dlc_tools_named(profiles=True).items()
                if t not in served and t not in PENDING_AI_DLC_TOOLS}
     assert not missing, f"skills name ai-dlc tools the pinned ai-dlc does not serve: {missing}"
 
@@ -139,7 +142,7 @@ def test_only_a_skill_that_stops_without_it_names_a_pending_tool(tool):
     where = _ai_dlc_tools_named().get(tool)
     assert where, f"no shared skill names {tool}: remove it from PENDING_AI_DLC_TOOLS"
     for f in where:
-        text = f.read_text(encoding="utf-8")
-        assert STOPS_WHEN_MISSING in text, (
-            f"{f.relative_to(ROOT).as_posix()} names {tool}, which the pinned ai-dlc does not serve yet, without "
-            f"saying what to do when it is missing ('{STOPS_WHEN_MISSING} ..., stop')")
+        paragraphs = re.split(r"\n\s*\n", f.read_text(encoding="utf-8"))
+        assert any(STOPS_WHEN_MISSING.search(p) for p in paragraphs), (
+            f"{f.relative_to(ROOT).as_posix()} names {tool}, which the pinned ai-dlc does not serve yet, without a "
+            "paragraph saying to stop when it is missing ('If it is missing ..., stop')")
