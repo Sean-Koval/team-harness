@@ -43,7 +43,7 @@ py -3 scripts\add_skill.py "$HOME\skills\deploy-notes" --harness work-default --
 ```
 
 The script refuses a skill without a `name` and `description`. It also refuses a vendor tool name, a secret, a
-person, a site or a deny-list word: use a `{{placeholder}}` instead. It copies the skill to `shared/work-system/skills/` and
+person, a site or a deny-list word: use a `{{placeholder}}` instead. A skill holds text files only, not images. It copies the skill to `shared/work-system/skills/` and
 writes a changelog fragment. Commit only those two.
 
 After merge the skill ships in the next `candidate` revision. `stable` moves only by `scripts/promote.py`, with a

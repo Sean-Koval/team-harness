@@ -10,13 +10,15 @@ harnesses only) and `changes/<KEY>.added.md` gets a bullet. Nothing is copied wh
 
 - frontmatter `name:` (kebab-case, free in the shared layer, every org and every harness's own skills) and
   `description:`;
-- no Atlassian MCP tool name: skills call ai-dlc's roles, never a vendor's tools (spec section 2;
-  tests/test_skill_tool_names.py holds the pattern equal);
-- no secret, no e-mail address, no hostname other than example.*, localhost or github.com: write a `{{placeholder}}`;
+- no vendor server, query language or tool name: skills call ai-dlc's roles (seam rule 6). The rules live in
+  scripts/skill_rules.py, which the CI tests import too, so intake and CI never disagree;
+- no secret value, no e-mail address, no host other than example.*, localhost, github.com and a few public docs sites
+  (PUBLIC_HOSTS; add more with `--allow-host`): write a `{{placeholder}}`;
 - no person or site a profile fills in (`owner`, `kb_site`, `kb_space`): write its `{{placeholder}}`;
 - no word from a local deny list (`--deny WORD`, or a file of words named by TEAM_HARNESS_DENY): keep your company's
   and customers' names there, on your machine, never in this repository;
-- every `{{placeholder}}` is one the harness's profile or org fills.
+- every `{{placeholder}}` is one the harness's profile or org fills;
+- text files only (UTF-8, no NUL bytes, at most 256 KiB each): an image or other binary is refused.
 
 Then commit the sources only (the skill and the fragment) and open a PR. After merge, generated.yml renders the skill
 into the harness and moves `candidate`; `stable` moves only by scripts/promote.py, with a flightdeck verdict and a
@@ -36,6 +38,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import skill_rules  # noqa: E402
 import sync_shared  # noqa: E402
 
 SKILLS = Path("shared/work-system/skills")
@@ -43,16 +46,6 @@ NAME_RULE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 IGNORED = {".DS_Store", "Thumbs.db", "desktop.ini"}
 MAX_BYTES = 256 * 1024
 IDENTITY_PARAMS = ("owner", "kb_site", "kb_space")  # profile values that name a person or a site
-
-# The same pattern as tests/test_skill_tool_names.py (a test holds them equal).
-ATLASSIAN_TOOL = re.compile(
-    r"(?<![A-Za-z0-9])(?:[A-Za-z]+(?:Jira|Confluence|Atlassian)[A-Za-z]*"
-    r"|(?:jira|confluence)_[a-z_]+"
-    r"|atlassian[A-Z][A-Za-z]*"
-    r"|execute_?(?:Read|Write|Destructive|read|write|destructive)"
-    r"|getTeamworkGraph[A-Za-z]*"
-    r"|mcp__(?i:\w*(?:atlassian|jira|confluence)\w*?)__\w+"
-    r"|mcp__[\w-]+?__(?i:\w*(?:jira|confluence|atlassian)\w*))(?![A-Za-z0-9])")
 
 SECRETS = [
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -63,15 +56,43 @@ SECRETS = [
     ("API key", re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_\-]{20,}")),
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}")),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.")),
-    ("credential value", re.compile(
-        r"(?i)\b(?:password|passwd|secret|api[_-]?key|token|bearer)\b[\"']?\s*[:=]\s*[\"']?"
-        r"(?!\$\{|\$[A-Z_]|<|\{\{|\*+|x+\b)[A-Za-z0-9+/_\-.]{12,}")),
 ]
+# `password = "hunter2hunter2"`: a literal value after a credential word. Not an environment lookup, a call, a dotted
+# name, a `${VAR}`, a placeholder or plain words (`token: Authorization header`): the value must mix letters and digits.
+CREDENTIAL = re.compile(r"(?i)\b(?:password|passwd|secret|api[_-]?key|token|bearer)\b[\"']?\s*[:=]\s*[\"']?"
+                        r"(?P<value>[A-Za-z0-9+/_\-.]{12,})(?P<after>\(?)")
+DOTTED = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 EMAIL = re.compile(r"[\w.+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})")
-HOST = re.compile(r"(?<![\w@.{-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
-                  r"(?:com|net|org|io|dev|ai|co|app|cloud|biz|info|us|uk|de|fr|in|internal|corp|local))(?![\w-])",
-                  re.IGNORECASE)
-ALLOWED_HOSTS = re.compile(r"(?i)^(?:(?:[\w-]+\.)*example\.(?:com|org|net)|localhost|github\.com)$")
+URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^/\s@]+@)?([^/\s:?#)>\]'\"`]+)", re.IGNORECASE)
+# A bare host outside a URL: only the common TLDs, and not a code identifier (`logger.info`, `request.app`,
+# `pd.io.json`, `client.ai(`): nothing word-like or dotted on either side, no call after it.
+BARE_HOST = re.compile(r"(?<![\w@./:{$-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|ai|dev|co))"
+                       r"(?![\w(-]|\.\w)", re.IGNORECASE)
+ALLOWED_HOSTS = re.compile(r"(?i)^(?:(?:[\w-]+\.)*example\.(?:com|org|net)|localhost|127\.0\.0\.1"
+                           r"|(?:[\w-]+\.)*github\.com|(?:[\w-]+\.)*githubusercontent\.com)$")
+# Public documentation a skill may link to. It names no person, company or customer site.
+PUBLIC_HOSTS = frozenset({
+    "docs.python.org", "peps.python.org", "pypi.org", "docs.pytest.org", "code.claude.com", "docs.claude.com",
+    "docs.anthropic.com", "modelcontextprotocol.io", "learn.microsoft.com", "developer.mozilla.org", "git-scm.com",
+    "nodejs.org", "www.npmjs.com", "npmjs.com", "docs.astral.sh", "yaml.org", "json-schema.org", "semver.org",
+    "www.conventionalcommits.org", "keepachangelog.com", "kubernetes.io", "docs.docker.com", "go.dev",
+})
+
+
+def host_allowed(host: str, extra: frozenset[str] = frozenset()) -> bool:
+    host = host.lower().rstrip(".")
+    return (bool(ALLOWED_HOSTS.match(host)) or host in PUBLIC_HOSTS or host in extra
+            or any(c in host for c in "{$<"))
+
+
+def credential_values(line: str) -> list[str]:
+    out = []
+    for m in CREDENTIAL.finditer(line):
+        v = m.group("value")
+        if m.group("after") or DOTTED.match(v) or not (re.search(r"\d", v) and re.search(r"[A-Za-z]", v)):
+            continue
+        out.append(v)
+    return out
 
 
 def _frontmatter(text: str) -> tuple[dict | None, str]:
@@ -106,12 +127,38 @@ def _identity_values(root: Path) -> set[str]:
     return {v for v in out if len(v) >= 3 and not re.search(r"\s", v)}
 
 
+class DenyFileError(Exception):
+    """The deny file can't be read: intake stops rather than check against nothing."""
+
+
+def read_deny_file(path: str) -> list[str]:
+    """Words from a deny file, one per line (`#` starts a comment). Notepad's UTF-8 with a byte-order mark and Windows
+    PowerShell 5.1's UTF-16 (`Out-File`, `Set-Content -Encoding Unicode`) both read; `~` and quotes around the path
+    are fine. A file that is missing or doesn't decode raises DenyFileError: a silent empty list would let the very
+    names it holds through."""
+    p = Path(path.strip().strip("'\"")).expanduser()
+    try:
+        data = p.read_bytes()
+    except OSError as e:
+        raise DenyFileError(f"cannot read the deny file {p}: {e}") from e
+    try:
+        if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+            text = data.decode("utf-16")
+        else:
+            text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise DenyFileError(f"the deny file {p} is neither UTF-8 nor UTF-16 with a byte-order mark: save it as UTF-8 "
+                            f"({e})") from e
+    if "\x00" in text:
+        raise DenyFileError(f"the deny file {p} holds NUL bytes (UTF-16 without a byte-order mark?): save it as UTF-8")
+    return [w.strip() for w in text.splitlines() if w.strip() and not w.lstrip().startswith("#")]
+
+
 def deny_words(extra: list[str] | None = None) -> list[str]:
     words = list(extra or [])
     path = os.environ.get("TEAM_HARNESS_DENY")
-    if path:
-        words += [w.strip() for w in Path(path).read_text(encoding="utf-8").splitlines()
-                  if w.strip() and not w.lstrip().startswith("#")]
+    if path and path.strip():
+        words += read_deny_file(path)
     return words
 
 
@@ -132,13 +179,17 @@ def read_files(src: Path) -> tuple[dict[str, str], list[str]]:
             try:
                 text = data.decode("utf-8-sig")
             except UnicodeDecodeError:
-                problems.append(f"{rel}: not UTF-8 text; a skill holds text only")
+                problems.append(f"{rel}: not UTF-8 text; a skill holds text only (no images or other binaries)")
+                continue
+            if "\x00" in text:
+                problems.append(f"{rel}: holds NUL bytes; a skill holds text only (save it as UTF-8)")
                 continue
             files[rel] = text.replace("\r\n", "\n").replace("\r", "\n")
     return files, problems
 
 
-def content_problems(files: dict[str, str], identity: set[str], deny: list[str]) -> list[str]:
+def content_problems(files: dict[str, str], identity: set[str], deny: list[str],
+                     allow_hosts: frozenset[str] = frozenset()) -> list[str]:
     """The wall and seam rules over every line of every file."""
     out = []
     deny_res = [(w, re.compile(rf"(?i)(?<![\w]){re.escape(w)}(?![\w])")) for w in deny]
@@ -146,16 +197,21 @@ def content_problems(files: dict[str, str], identity: set[str], deny: list[str])
     for rel, text in files.items():
         for n, line in enumerate(text.splitlines(), 1):
             at = f"{rel}:{n}"
-            out += [f"{at}: names the vendor tool {m.group(0)}; call ai-dlc's role (tracker_*, knowledge_*) instead"
-                    for m in ATLASSIAN_TOOL.finditer(line)]
+            out += [f"{at}: names the vendor server, query language or tool {h}; name ai-dlc's role (tracker_*, "
+                    "knowledge_*) and put what the harness binds in a profile {{placeholder}}"
+                    for h in skill_rules.vendor_hits(line)]
             out += [f"{at}: looks like a {what}; name the credential, never its value" for what, rx in SECRETS
                     if rx.search(line)]
+            out += [f"{at}: looks like a credential value; read it from the environment, never write it"
+                    for _ in credential_values(line)[:1]]
             emails = list(EMAIL.finditer(line))
             out += [f"{at}: an e-mail address ({m.group(0)}); use a {{{{placeholder}}}} or a role" for m in emails
-                    if not ALLOWED_HOSTS.match(m.group(1))]
-            email_hosts = {m.group(1).lower() for m in emails}
-            out += [f"{at}: the host {m.group(1)}; use example.com or a {{{{placeholder}}}}" for m in HOST.finditer(line)
-                    if not ALLOWED_HOSTS.match(m.group(1)) and m.group(1).lower() not in email_hosts]
+                    if not host_allowed(m.group(1), allow_hosts)]
+            hosts = [m.group(1) for m in URL_HOST.finditer(line)]
+            hosts += [m.group(1) for m in BARE_HOST.finditer(line)
+                      if m.group(1).lower() not in {h.lower() for h in hosts} | {e.group(1).lower() for e in emails}]
+            out += [f"{at}: the host {h}; use example.com or a {{{{placeholder}}}} (a public docs site: --allow-host)"
+                    for h in dict.fromkeys(hosts) if not host_allowed(h, allow_hosts)]
             out += [f"{at}: {v!r} is a profile's person or site; write its {{{{placeholder}}}}" for v, rx in ident_res
                     if rx.search(line)]
             out += [f"{at}: {w!r} is on your deny list" for w, rx in deny_res if rx.search(line)]
@@ -209,7 +265,8 @@ def with_harnesses(skill_md: str, harnesses: list[str]) -> str:
     return "---\n" + "\n".join(head) + skill_md[end:]
 
 
-def add(src: Path, harnesses: list[str], key: str, deny: list[str], root: Path = ROOT) -> list[str]:
+def add(src: Path, harnesses: list[str], key: str, deny: list[str], root: Path = ROOT,
+        allow_hosts: frozenset[str] = frozenset()) -> list[str]:
     """Check and copy one skill. Returns problems; nothing is written unless there are none."""
     src = src.expanduser().resolve()
     if not src.is_dir():
@@ -225,13 +282,15 @@ def add(src: Path, harnesses: list[str], key: str, deny: list[str], root: Path =
         problems.append(f"skill name {name!r} is taken (shared, org or a harness's own skill); rename the directory")
     if "harnesses" in fm and sorted(fm.get("harnesses") or []) != sorted(harnesses):
         problems.append(f"SKILL.md says harnesses: {fm['harnesses']}; drop the line, --harness sets it")
-    problems += content_problems(files, _identity_values(root), deny)
+    problems += content_problems(files, _identity_values(root), deny, allow_hosts)
     for h in harnesses:
         allowed = harness_params(root, targets, h, problems)
+        if not allowed:
+            problems.append(f"--harness {h}: its profile fills no parameters, so placeholders can't be checked")
+            continue
         for rel, text in files.items():
             for p in sorted({m.group(1) for m in sync_shared.PLACEHOLDER.finditer(text)} - allowed):
-                if allowed:
-                    problems.append(f"{rel}: {{{{{p}}}}} is not a parameter {h}'s profile fills")
+                problems.append(f"{rel}: {{{{{p}}}}} is not a parameter {h}'s profile fills")
     if problems:
         return problems
     dst = root / SKILLS / name
@@ -249,37 +308,43 @@ def add(src: Path, harnesses: list[str], key: str, deny: list[str], root: Path =
     return []
 
 
-def check(root: Path = ROOT, deny: list[str] | None = None) -> list[str]:
+def check(root: Path = ROOT, deny: list[str] | None = None, allow_hosts: frozenset[str] = frozenset()) -> list[str]:
     """The intake rules over every shared skill (placeholders are sync_shared.py --check's)."""
     out = []
     identity = _identity_values(root)
     for d in sorted(p for p in (root / SKILLS).iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
         files, problems = read_files(d)
         problems += frontmatter_problems(d.name, files)[1]
-        problems += content_problems(files, identity, deny or [])
+        problems += content_problems(files, identity, deny or [], allow_hosts)
         out += [f"{SKILLS.as_posix()}/{d.name}/{p}" for p in problems]
     return out
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("skill", nargs="?", type=Path, help="the skill's directory (holds SKILL.md)")
     ap.add_argument("--harness", action="append", help="a harness it ships to (repeat for more), e.g. work-default")
     ap.add_argument("--key", help="the ticket key, e.g. KAN-123: names the changelog fragment")
     ap.add_argument("--deny", action="append", default=[], help="a word that must not appear (repeat); see also "
                     "the TEAM_HARNESS_DENY file")
+    ap.add_argument("--allow-host", action="append", default=[], help="a public host a skill may link to (repeat)")
     ap.add_argument("--check", action="store_true", help="check every shared skill instead of adding one")
     a = ap.parse_args(argv)
-    deny = deny_words(a.deny)
+    try:
+        deny = deny_words(a.deny)
+    except DenyFileError as e:
+        print(f"error: {e}")
+        return 2
+    allow = frozenset(h.lower() for h in a.allow_host)
     if a.check:
-        problems = check(ROOT, deny)
+        problems = check(ROOT, deny, allow)
         for p in problems:
             print(f"error: {p}")
         print("ok: every shared skill passes intake" if not problems else f"{len(problems)} problem(s)")
         return 1 if problems else 0
     if a.skill is None or not a.harness or not a.key:
         ap.error("give the skill's directory, --harness and --key (or --check)")
-    problems = add(a.skill, a.harness, a.key, deny, root=ROOT)
+    problems = add(a.skill, a.harness, a.key, deny, root=ROOT, allow_hosts=allow)
     for p in problems:
         print(f"error: {p}")
     if problems:

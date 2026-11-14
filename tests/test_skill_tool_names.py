@@ -6,23 +6,15 @@ tool names, which is what the hook stopped relying on. This scans every skill a 
 and the shared and org sources they come from.
 """
 
-import re
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 
-# Atlassian's MCP tools are named for the product (createJiraIssue, getConfluencePage, atlassianUserInfo); its generic
-# ones are the execute dispatchers and the Teamwork Graph tools. A server-qualified name (mcp__atlassian__x) counts too.
-ATLASSIAN_TOOL = re.compile(
-    r"(?<![A-Za-z0-9])(?:[A-Za-z]+(?:Jira|Confluence|Atlassian)[A-Za-z]*"
-    r"|(?:jira|confluence)_[a-z_]+"
-    r"|atlassian[A-Z][A-Za-z]*"
-    r"|execute_?(?:Read|Write|Destructive|read|write|destructive)"
-    r"|getTeamworkGraph[A-Za-z]*"
-    r"|mcp__(?i:\w*(?:atlassian|jira|confluence)\w*?)__\w+"
-    r"|mcp__[\w-]+?__(?i:\w*(?:jira|confluence|atlassian)\w*))(?![A-Za-z0-9])")
+from skill_rules import ATLASSIAN_TOOL  # noqa: E402  (one rule for intake and CI, KAN-511)
 
 SKILL_ROOTS = ["shared/work-system/skills", "orgs", "harnesses"]
 

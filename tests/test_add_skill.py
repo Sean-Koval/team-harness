@@ -46,9 +46,13 @@ def test_every_shared_skill_passes_intake():
     assert add_skill.check() == []
 
 
-def test_the_tool_pattern_is_the_tool_name_tests():
+def test_intake_and_ci_share_one_vendor_rule():
+    import skill_rules
     import test_skill_tool_names
-    assert add_skill.ATLASSIAN_TOOL.pattern == test_skill_tool_names.ATLASSIAN_TOOL.pattern
+    import test_skill_vendor_names
+    assert add_skill.skill_rules is skill_rules
+    assert test_skill_tool_names.ATLASSIAN_TOOL is skill_rules.ATLASSIAN_TOOL
+    assert test_skill_vendor_names.VENDOR is skill_rules.VENDOR
 
 
 def test_sample_is_added_registered_and_logged(repo, skill):
@@ -78,13 +82,18 @@ def test_cli_adds_the_sample(repo, skill, monkeypatch, capsys):
 
 
 BAD_LINES = {
-    "vendor tool": ("Create it with `createJiraIssue`.", "vendor tool"),
-    "server-qualified tool": ("Call mcp__atlassian__getJiraIssue first.", "vendor tool"),
+    "vendor tool": ("Create it with `createJiraIssue`.", "or tool createJiraIssue"),
+    "server-qualified tool": ("Call mcp__atlassian__getJiraIssue first.", "or tool mcp__atlassian__getJiraIssue"),
+    "query language": ("Search with JQL for open tickets.", "vendor server, query language or tool JQL"),
+    "connector": ("Use the Atlassian connector.", "vendor server, query language or tool Atlassian"),
+    "any mcp tool": ("Open it with mcp__github__create_pull_request.", "mcp__github__create_pull_request"),
     "github token": ("Use ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4 to push.", "GitHub token"),
     "credential value": ("password = " + "hunter2hunter2hunter2", "credential value"),
     "private key": ("-----BEGIN RSA " + "PRIVATE KEY-----", "private key"),
     "email": ("Ask jane.doe@" + "acme-corp.com.", "e-mail address"),
-    "site": ("Pages live on acme-corp.atlassian.net.", "the host acme-corp.atlassian.net"),
+    "site": ("Pages live on wiki.acme-corp.com.", "the host wiki.acme-corp.com"),
+    "url": ("Open https://grafana.acme-corp.internal/d/x first.", "the host grafana.acme-corp.internal"),
+    "quoted credential": ('API_KEY = "' + "a1b2c3d4e5f6g7h8i9" + '"', "credential value"),
     "profile person": ("Ask Sean before you post.", "profile's person or site"),
     "profile site": ("See the space on seanmkoval.atlassian.net.", "the host"),
 }
@@ -138,6 +147,74 @@ def test_unknown_harness_and_bad_key_are_refused(repo, skill):
     assert any("ticket key" in p for p in add_skill.add(skill, ["work-default"], "kan 8", [], root=repo))
 
 
-def test_placeholders_and_example_hosts_pass():
-    files = {"SKILL.md": "See https://docs.example.com/x, {{kb_site}} and git@github.com:org/repo.git.\n"}
-    assert add_skill.content_problems(files, {"Sean"}, []) == []
+MUST_PASS = [
+    "See https://docs.example.com/x, {{kb_site}} and git@github.com:org/repo.git.",
+    "Log it with `logger.info(\"done\")`, then `df.info()` and `request.app.state.db`.",
+    "Pin it in requirements.in; local overrides go in settings.local.",
+    "`pd.io.json.dumps(x)` and `client.ai(x)` are calls, not hosts.",
+    "Read https://docs.python.org/3/library/re.html and https://code.claude.com/docs/en/skills.",
+    "Install from https://pypi.org/project/pyyaml/ or https://api.github.com/repos/o/r.",
+    "Fetch https://raw.githubusercontent.com/o/r/main/x.md.",
+    "token = os.environ.get(\"GITHUB_TOKEN\")",
+    "password = getpass.getpass()",
+    "Bearer token: Authorization header from the credential named in bindings.",
+    "token: ${GITHUB_TOKEN} and api_key: {{tracker_server}}",
+    "Jira and Confluence are the tracker and wiki; the jira-ticket skill reads a Jira project.",
+]
+
+
+@pytest.mark.parametrize("line", MUST_PASS)
+def test_ordinary_skill_text_passes(line):
+    assert add_skill.content_problems({"SKILL.md": line + "\n"}, {"Sean"}, []) == []
+
+
+def test_allow_host_admits_a_public_docs_site():
+    files = {"SKILL.md": "See https://docs.internal-tool.dev/guide.\n"}
+    assert add_skill.content_problems(files, set(), [])
+    assert add_skill.content_problems(files, set(), [], frozenset({"docs.internal-tool.dev"})) == []
+
+
+def test_a_binary_or_nul_file_is_refused(repo, skill):
+    (skill / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xff\x00")
+    (skill / "zeros.md").write_bytes(b"\x00" * 16)
+    problems = add_skill.add(skill, ["work-default"], "KAN-9", [], root=repo)
+    assert any("logo.png: not UTF-8" in p for p in problems), problems
+    assert any("zeros.md: holds NUL bytes" in p for p in problems), problems
+
+
+DENY = "# company and customer names\nInitech\n"
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16", "utf-16-be-bom"])
+def test_deny_file_reads_every_windows_encoding(tmp_path, encoding):
+    f = tmp_path / "deny.txt"
+    if encoding == "utf-16-be-bom":
+        f.write_bytes(b"\xfe\xff" + DENY.replace("\n", "\r\n").encode("utf-16-be"))
+    else:
+        f.write_bytes(DENY.replace("\n", "\r\n").encode(encoding))  # utf-16 writes a BOM, as PowerShell 5.1 does
+    assert add_skill.read_deny_file(str(f)) == ["Initech"]
+
+
+def test_deny_file_path_takes_tilde_and_quotes(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / ".team-harness-deny").write_text(DENY, encoding="utf-8")
+    assert add_skill.read_deny_file('"~/.team-harness-deny"') == ["Initech"]
+    monkeypatch.setenv("TEAM_HARNESS_DENY", "'~/.team-harness-deny'")
+    assert add_skill.deny_words(["Globex"]) == ["Globex", "Initech"]
+
+
+def test_unreadable_deny_file_fails_loudly(tmp_path, monkeypatch, capsys):
+    bad = tmp_path / "deny.txt"
+    bad.write_bytes(b"Init\xe9ch\xff\n")
+    with pytest.raises(add_skill.DenyFileError, match="neither UTF-8 nor UTF-16"):
+        add_skill.read_deny_file(str(bad))
+    bom_less = tmp_path / "deny16.txt"
+    bom_less.write_bytes("Initech\n".encode("utf-16-le"))
+    with pytest.raises(add_skill.DenyFileError, match="NUL bytes"):
+        add_skill.read_deny_file(str(bom_less))
+    with pytest.raises(add_skill.DenyFileError, match="cannot read"):
+        add_skill.read_deny_file(str(tmp_path / "missing.txt"))
+    monkeypatch.setenv("TEAM_HARNESS_DENY", str(bad))
+    assert add_skill.main(["--check"]) == 2
+    assert "deny file" in capsys.readouterr().out
