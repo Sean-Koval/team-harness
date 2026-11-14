@@ -25,7 +25,8 @@ One job pulls cheaply and extracts once a day, so token use stays predictable (d
 2. sets aside chat threads with fewer than 5 messages and no decision word (decided, agreed, going forward, we will).
    Their Source records move from `inbox/` to `processed/` unchanged;
 3. runs `extract-records` once per remaining Source, one Claude Code session each, on a throwaway copy of the
-   repository. The batch then proposes what the session wrote as one draft records PR. Nothing merges.
+   repository. Each session's records join the night's one draft records PR for that repository. A re-run that
+   night adds to it. Nothing merges.
 
 A Source whose session finished moves to `processed/` too, so `inbox/` holds only what is left. The run stops before
 it would pass the nightly token ceiling and lists the Sources it left. The next run starts with them. A Source of any
@@ -144,7 +145,7 @@ own knowledge repository, `{{customer_repo}}`, never to `{{knowledge_repo}}`. Cr
 `knowledge.toml`, and set `KNOWLEDGE_REPO_<NAME>` to its local checkout.
 
 The nightly batch then runs once more per listed customer, in that customer's checkout. It exports that customer's
-chat there, extracts there and opens the draft records PRs in the customer's repository. That checkout keeps its own
+chat there, extracts there and opens that night's draft records PR in the customer's repository. That checkout keeps its own
 run log. A customer whose variable is unset, or whose checkout does not declare `[repo] boundary = "customer"` and
 that `project`, is skipped with a reason. Nothing falls back to the team repository. The night's token ceiling is the
 team repository's, shared by all runs. Run `process-now` for a customer Source with `--repo` set to its checkout.

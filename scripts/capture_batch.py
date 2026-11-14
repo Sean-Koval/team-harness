@@ -17,19 +17,23 @@ copy of the knowledge repository. `run` does, in order:
    other thread's Source record moves from `inbox/` to `processed/`, bytes unchanged;
 4. runs `extract-records` once per remaining Source, one headless Claude Code session per Source, on a throwaway
    copy of the repository;
-5. proposes what that session wrote as one draft records PR through `ai-dlc knowledge records propose`, run here
-   with the project's own knowledge role; the session itself cannot propose. Nothing here merges.
+5. proposes what that session wrote into the night's one draft records PR for this checkout (KAN-510): the night's
+   first Source opens it through `ai-dlc knowledge records propose`, run here with the project's own knowledge role,
+   on the branch `records-<YYYY-MM-DD>`; each later Source, in this run or a re-run that night, is pushed onto that
+   branch (never forced, after `ai-dlc knowledge check`) and adds its section to the PR body with `gh`. Its session's
+   copy holds the records already on the branch. A PR merged or closed before a re-run starts `records-<date>-2`.
+   The session itself cannot propose. Nothing here merges.
 
 Then, for each customer the team repository's `knowledge.toml` lists under `[[transcripts.customers]]` (the table
 ai-dlc's transcript pull routes by, KAN-475), the same steps run in that customer's own checkout (KAN-492): the path is
 read from the entry's `repo_env` variable (`KNOWLEDGE_REPO_<PROJECT>` by default), its export is
 `work-copilot export --to <customer checkout> ... --scope project` (transcripts already route themselves), and its
-Sources are filtered, extracted and proposed there, with `propose --root <customer checkout>`, so each draft records
-PR opens in the customer's repository and its run log and state stay in that checkout. A customer whose variable is
-unset, or whose checkout does not declare `[repo] boundary = "customer"` and that `project`, is skipped with its
-reason; nothing falls back to the team repository. A team run never extracts a Source marked `boundary: customer`,
-and a customer run extracts only Sources marked with its own project. The night's token ceiling is the team
-repository's, shared by every run. What the batch prints about a customer names its Sources by id only.
+Sources are filtered, extracted and proposed there, with `propose --root <customer checkout>`, so the customer's one
+draft records PR a night opens in its own repository and its run log and state stay in that checkout. A customer whose
+variable is unset, or whose checkout does not declare `[repo] boundary = "customer"` and that `project`, is skipped
+with its reason; nothing falls back to the team repository. A team run never extracts a Source marked
+`boundary: customer`, and a customer run extracts only Sources marked with its own project. The night's token ceiling
+is the team repository's, shared by every run. What the batch prints about a customer names its Sources by id only.
 
 A session that writes no records is listed under `no_pr` and its Source stays in the inbox for a person to look at
 (`process-now` runs it again).
@@ -460,8 +464,9 @@ def changed_records(repo: Path, scratch: Path, files: list[str]) -> list[str]:
     return lines
 
 
-def pr_body(repo: Path, scratch: Path, files: list[str]) -> Path | None:
-    """The session's PR body, @mentions defused, with any change to an existing record beyond a supersede listed."""
+def pr_body(repo: Path, scratch: Path, files: list[str], heading: str | None = None) -> Path | None:
+    """The session's PR body, @mentions defused, with any change to an existing record beyond a supersede listed.
+    With `heading` (a Source id), the body is that Source's section of the night's PR."""
     path = scratch / PR_BODY
     text = path.read_text("utf-8", errors="replace") if path.is_file() else ""
     text = MENTION.sub("\uff20", text)  # a full-width @ notifies nobody
@@ -473,33 +478,145 @@ def pr_body(repo: Path, scratch: Path, files: list[str]) -> Path | None:
             + "\n".join(changed) + "\n")  # fmt: skip
     if not text.strip():
         return None
+    if heading:
+        text = f"## {heading}\n\n{text.strip()}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
 def propose(source: dict, repo: Path, scratch: Path, files: list[str], config: dict) -> str:
-    """Step 7.4 for the session: one draft records PR through the project's knowledge role, with a fixed root."""
+    """Step 7.4 for the session, through the project's knowledge role with a fixed root.
+
+    In a run, every Source of the night goes into the one draft records PR of this checkout (KAN-510): the first opens
+    it on the branch `records-<night>`, and each later one, in this run or a re-run that night, is pushed onto that
+    branch (update_night). process-now has no night and opens a PR of its own.
+    """
+    night = config.get("night")
+    if night is not None and night.get("pr"):
+        return update_night(source, repo, scratch, files, config, night)
     exe = shutil.which("ai-dlc")
     if not exe:
         raise RuntimeError("the ai-dlc CLI is not on PATH")
-    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     command = [exe, "knowledge", "records", "propose", *[str(scratch / f) for f in files]]
     for relative in files:
         command += ["--path", relative]
-    command += ["--branch", f"records-{source['id']}-{stamp}", "--title", f"records: {source['id']}"]
+    if night is not None:
+        branch, title = night_branch(night), f"records: capture {night['date']}"
+    else:
+        branch = f"records-{source['id']}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+        title = f"records: {source['id']}"
+    command += ["--branch", branch, "--title", title]
     if config.get("customer"):
         # `--root` at a knowledge checkout makes ai-dlc propose into that checkout's repository, whatever the project's
         # knowledge role names: a customer's records never ride the team repository's role.
         command += ["--root", str(repo)]
-    body = pr_body(repo, scratch, files)
+    body = pr_body(repo, scratch, files, source["id"] if night is not None else None)
     if body is not None:
         command += ["--body-file", str(body)]
     run = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
                          cwd=config["project"], timeout=600, check=False)  # fmt: skip
     if run.returncode:
         raise RuntimeError(f"propose failed ({run.returncode}): {(run.stderr or run.stdout).strip()[:300]}")
+    links = list(PR_LINK.finditer(run.stdout))
+    if night is not None and links:
+        night.update(branch=branch, pr=links[-1].group(0), sources=[source["id"]])
     return run.stdout
+
+
+# --- the night's one records PR (KAN-510) ---------------------------------------------------------------------------
+
+
+def night_branch(night: dict) -> str:
+    """`records-<night>`, then `records-<night>-2` and on when the night's PR was merged or closed before a re-run."""
+    return f"records-{night['date']}" + (f"-{night['round']}" if night.get("round", 1) > 1 else "")
+
+
+def git(where: Path, *args: str) -> str:
+    run = subprocess.run(["git", "-C", str(where), *args], capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", timeout=600, check=False)  # fmt: skip
+    if run.returncode:
+        raise RuntimeError(f"git {args[0]} failed ({run.returncode}): {run.stderr.strip()[:300]}")
+    return run.stdout
+
+
+def gh(*args: str, cwd: Path) -> str:
+    exe = shutil.which("gh")
+    if not exe:
+        raise RuntimeError("the gh CLI is not on PATH: it updates the night's records PR")
+    run = subprocess.run([exe, *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         cwd=cwd, timeout=120, check=False)  # fmt: skip
+    if run.returncode:
+        raise RuntimeError(f"gh {args[0]} {args[1]} failed ({run.returncode}): {run.stderr.strip()[:300]}")
+    return run.stdout
+
+
+def home_pr(repo: Path, night: dict) -> None:
+    """Refuse a night PR outside this checkout's own GitHub repository: a customer's records never reach another."""
+    home = origin(repo)
+    if not home or "/".join(night["pr"].split("/")[3:5]).lower() != home:
+        raise RuntimeError(f"the night's records PR {night['pr']} is not in this knowledge repository's origin")
+
+
+def night_records(repo: Path, night: dict | None) -> dict[str, str]:
+    """The records already on the night's PR branch, path -> text, for the next session's copy: it sees them, so it
+    builds on them instead of writing a second record. A PR no longer open starts the night's next round: {}."""
+    if not night or not night.get("pr"):
+        return {}
+    home_pr(repo, night)
+    state = gh("pr", "view", night["pr"], "--json", "state", "--jq", ".state", cwd=repo).strip()
+    if state != "OPEN":
+        night.update(round=night.get("round", 1) + 1, pr=None, branch=None, sources=[])
+        return {}
+    git(repo, "fetch", "--quiet", "origin", night["branch"])
+    head = git(repo, "rev-parse", "FETCH_HEAD").strip()
+    names = git(repo, "diff", "--name-only", "--diff-filter=AM", f"HEAD...{head}", "--", "*.md").splitlines()
+    return {n: git(repo, "show", f"{head}:{n}") for n in names
+            if not n.startswith(NOT_PROPOSED) and inside(repo, n) is not None}
+
+
+def update_night(source: dict, repo: Path, scratch: Path, files: list[str], config: dict, night: dict) -> str:
+    """Push one Source's records onto the night's open PR branch and add its section to the PR body.
+
+    The push is to that branch only, never forced: a branch someone moved fails the Source, which is retried. The
+    whole tree passes `ai-dlc knowledge check` before the push, as `propose` requires.
+    """
+    home_pr(repo, night)
+    exe = shutil.which("ai-dlc")
+    if not exe:
+        raise RuntimeError("the ai-dlc CLI is not on PATH")
+    git(repo, "fetch", "--quiet", "origin", night["branch"])
+    head = git(repo, "rev-parse", "FETCH_HEAD").strip()
+    work = Path(tempfile.mkdtemp(prefix="capture-night-"))
+    tree = work / "tree"
+    try:
+        git(repo, "worktree", "add", "--quiet", "--detach", str(tree), head)
+        for relative in files:
+            target = tree / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((scratch / relative).read_bytes())
+        git(tree, "add", "--", *files)
+        if git(tree, "diff", "--cached", "--name-only").strip():
+            git(tree, "-c", "user.name=capture batch", "-c", "user.email=capture-batch@localhost",
+                "commit", "--quiet", "-m", f"records: {source['id']}")  # fmt: skip
+            check = subprocess.run([exe, "knowledge", "check", str(tree)], capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", cwd=config["project"], timeout=600,
+                                   check=False)  # fmt: skip
+            if check.returncode:
+                raise RuntimeError(f"knowledge check failed ({check.returncode}): "
+                                   f"{(check.stderr or check.stdout).strip()[:300]}")  # fmt: skip
+            git(tree, "push", "--quiet", "origin", f"HEAD:refs/heads/{night['branch']}")
+    finally:
+        subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)], capture_output=True,
+                       timeout=120, check=False)  # fmt: skip
+        shutil.rmtree(work, ignore_errors=True)
+    section = pr_body(repo, scratch, files, source["id"])
+    if section is not None:
+        body = gh("pr", "view", night["pr"], "--json", "body", "--jq", ".body", cwd=repo).rstrip()
+        section.write_text(f"{body}\n\n{section.read_text(encoding='utf-8')}", encoding="utf-8")
+        gh("pr", "edit", night["pr"], "--body-file", str(section), cwd=repo)
+    night.setdefault("sources", []).append(source["id"])
+    return f"Updated {night['pr']}"
 
 
 def claude_runner(source: dict, repo: Path, config: dict) -> dict:
@@ -510,8 +627,12 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
     skill = Path(config["project"]) / SKILL
     if not skill.is_file():
         raise RuntimeError(f"{skill} is missing")
+    overlay = night_records(repo, config.get("night"))
     scratch = scratch_copy(repo)
     try:
+        for relative, text in overlay.items():  # the night's records so far, as the PR branch has them
+            (scratch / relative).parent.mkdir(parents=True, exist_ok=True)
+            (scratch / relative).write_text(text, encoding="utf-8")
         # Both files sit beside the copy, outside the session's working directory, where it cannot change them.
         settings, system = scratch.parent / "settings.json", scratch.parent / "extract-records.md"
         settings.write_text(json.dumps(session_settings(scratch), indent=2), encoding="utf-8")
@@ -527,7 +648,8 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
             reply = {"is_error": True, "result": (run.stdout or run.stderr).strip()}
         if run.returncode or reply.get("is_error"):
             raise RuntimeError(f"session failed ({run.returncode}): {str(reply.get('result'))[:300]}")
-        files = written(repo, scratch)
+        files = [f for f in written(repo, scratch)
+                 if f not in overlay or (scratch / f).read_text(encoding="utf-8", errors="replace") != overlay[f]]
         # Only propose's own output can carry the PR link: the session's words never reach extract().
         result = propose(source, repo, scratch, files, config) if files else ""
     finally:
@@ -818,7 +940,7 @@ def run_customer(team: Path, route: dict, team_config: dict, *, dry_run: bool, r
     for key in ("extracted", "no_pr"):
         summary[key] = [{k: r[k] for k in keep if k in r} for r in log[key]]
     summary["failed"] = [{"id": r["id"], "error": str(r.get("error", "")).split(":", 1)[0][:80]} for r in log["failed"]]
-    for key in ("stopped", "tokens", "cost_usd", "model_calls"):
+    for key in ("stopped", "tokens", "cost_usd", "model_calls", "records_prs"):
         if key in log:
             summary[key] = log[key]
     return summary
@@ -828,6 +950,12 @@ def run_repo(repo: Path, config: dict, *, dry_run: bool, runner: Runner, pulls: 
              budget: int, steps: tuple[str, ...] = PULL_STEPS) -> dict:  # fmt: skip
     """Pull, filter and extract in one knowledge checkout, team or customer, writing its own state and run log."""
     state = read_state(repo)
+    if not dry_run:  # one draft records PR per night in this checkout, shared by re-runs that night (KAN-510)
+        nights = state.setdefault("nights", {})
+        date = f"{started:%Y-%m-%d}"
+        for old in sorted(nights)[:-7]:
+            nights.pop(old)
+        config = {**config, "night": nights.setdefault(date, {"date": date})}
     since = windows(state, config, started, steps)
     before = {s["path"] for s in find_sources(repo)}
     log: dict[str, Any] = {"run_id": new_run_id(started), "started": started.isoformat(timespec="seconds"),
@@ -921,6 +1049,11 @@ def run_repo(repo: Path, config: dict, *, dry_run: bool, runner: Runner, pulls: 
     costs = [r["cost_usd"] for r in log["extracted"] + log["no_pr"] if r.get("cost_usd") is not None]
     log["cost_usd"] = round(sum(costs), 4) if costs else None
     log["model_calls"] = 0 if dry_run else len(log["extracted"]) + len(log["no_pr"]) + len(log["failed"])
+    prs: dict[str, list[str]] = {}
+    for record in log["extracted"]:
+        if record.get("pr"):
+            prs.setdefault(record["pr"], []).append(record["id"])
+    log["records_prs"] = [{"pr": pr, "sources": ids} for pr, ids in prs.items()]  # the Sources each PR holds
     if not dry_run:
         write_json(repo / STATE, state)
         append_log(repo, capture_run(log["run_id"], started, entries, ceiling_reached="stopped" in log))
