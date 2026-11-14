@@ -14,10 +14,10 @@ Every piece of work is one ticket, one branch, one pull request. The ticket live
    reads a ticket, `tracker_search` finds one, `tracker_comment` comments, `tracker_create` files one, and
    `tracker_update` sets its title, description or labels. They refuse `exec:agent` themselves and have no
    transition.
-2. **The tracker server, for what those don't do yet**: a JQL search, a parent epic or work type, an issue link, a
-   Decision's fields, a ticket in another project. Use it too while ai-dlc has no `tracker_` tools or its tracker is
-   not this Jira project. It is the server bound to the tracker role, named `atlassian` in every work-system harness
-   (the Atlassian connector in a local or cloud session). Use its read, comment, create and link tools only.
+2. **The tracker server, for what those don't do yet**: a search by parent or work type, a parent epic or work type
+   on a new ticket, an issue link, a Decision's fields, a ticket in another project. Use it too while ai-dlc has no
+   `tracker_` tools or its tracker is not this project. It is the MCP server this harness binds to the tracker role,
+   {{tracker_server}}. Use its read, comment, create and link tools only.
 
 The wiki is the same server's other role: read it, never write it (`work-docs`). The hook judges every call by its
 role and verb, whatever the tool is called: it refuses transitions, deletes, unknown tools and wiki writes.
