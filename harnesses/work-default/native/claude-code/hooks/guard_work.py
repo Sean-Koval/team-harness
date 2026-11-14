@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse hook for the work harness: shared systems stay read-only, and the deploy checkout stays untouched.
 
-Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash
-from PowerShell; both are judged alike. This exits 2 with the reason on stderr (Claude Code shows it to the
-agent and skips the call) for:
+Claude Code passes the tool call as JSON on stdin. Shell calls come from Bash, or on Windows without Git Bash from
+PowerShell; both are judged alike. This exits 2 with the reason on stderr, and prints the same reason as a
+PreToolUse deny on stdout, which Claude Code reads alongside the exit 2 (it shows the reason to the agent and skips
+the call), for:
 
 - Terraform that changes real infrastructure or state (`apply`, `destroy`, `import`, state edits, an `init` that
   isn't `-backend=false`, and `plan`, which reads real state);
@@ -12,9 +13,9 @@ agent and skips the call) for:
 - any edit under /workspace/deploy, the trigger-deployment checkout hangar's deploy step owns.
 
 Each command is also judged as it runs once PowerShell's and Windows' spellings are taken off (a quoted or
-`& 'terraform'` program name, `terraform.exe`, backtick escapes, a variable the call sets). A call it cannot read
-(not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is blocked. Everything else is
-allowed with exit 0. It reads only the tool call, runs nothing and writes nothing.
+`& 'terraform'` program name, `Terraform.EXE`, backtick escapes, a variable the call sets), in any letter case. A
+call it cannot read (not UTF-8, JSON or an object, no command text, a closed stdin, an error in the hook) is
+blocked. Everything else is allowed with exit 0. It reads only the tool call, runs nothing and writes nothing.
 """
 
 from __future__ import annotations
@@ -33,7 +34,9 @@ BASH = [
     (r"\bterraform\b(?:\s+-\S+)*\s+init\b(?![^;&|]*-backend=false)", "terraform init needs -backend=false here"),
     (r"\bterraform\b(?:\s+-\S+)*\s+plan\b",
      "terraform plan reads real state: validate here, and leave plan to the infra repo's CI"),
-    (rf"\b(psql|pg_dump|pg_restore|mysql|mysqldump|sqlcmd)\b[^;&|]*\s(?:-h\s*|--host[= ])(?!{LOCAL_DB})\S+",
+    # -h stays lower case: -H is another flag (psql's HTML output, sqlcmd's workstation name). sqlcmd's server is
+    # -S, which this does not check yet
+    (rf"\b(psql|pg_dump|pg_restore|mysql|mysqldump|sqlcmd)\b[^;&|]*\s(?:(?-i:-h)\s*|--host[= ])(?!{LOCAL_DB})\S+",
      "database clients may only reach the sandbox's own database (localhost or the service name)"),
     (rf"\b(postgres(?:ql)?|mysql|sqlserver)://[^\s/@]*@(?!{LOCAL_DB})[^\s/:]+",
      "connection URLs may only point at the sandbox's own database"),
@@ -106,6 +109,20 @@ def _read_event() -> tuple[object, str | None]:
 
 
 def _block(message: str) -> int:
+    # Exit 2 with the reason on stderr is the verdict: Claude Code blocks the call and shows the agent the reason.
+    # PowerShell's -Command turns a native exit 2 into 1, so the installer's Windows hook commands end in
+    # `exit $LASTEXITCODE` to keep the 2. The same reason also goes to stdout as a PreToolUse deny, which Claude Code
+    # reads alongside exit 2. Where a shell turns the 2 into 1 anyway, valid JSON decides the call, except on Windows
+    # without Git Bash, where any code but 0 or 2 is a hook failure. If something else writes to stdout (a shell
+    # profile) the JSON is not read, and the non-zero exit still blocks.
+    deny = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": message}}
+    try:
+        sys.stdout.flush()
+        sys.stdout.buffer.write(json.dumps(deny, ensure_ascii=True).encode("ascii") + b"\n")
+        sys.stdout.buffer.flush()
+    except (OSError, ValueError):
+        pass  # the exit code below still blocks
     sys.stderr.flush()
     sys.stderr.buffer.write((message + "\n").encode("utf-8"))
     sys.stderr.buffer.flush()
@@ -123,7 +140,7 @@ def why(event: dict) -> str | None:
     if tool in SHELL_TOOLS:
         for command in _commands(str(args.get("command") or "")):
             for pattern, reason in BASH:
-                if re.search(pattern, command):
+                if re.search(pattern, command, re.IGNORECASE):  # Windows finds Kubectl.EXE as kubectl
                     return reason
     return None
 

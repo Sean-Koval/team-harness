@@ -123,6 +123,25 @@ def _profile(shared: Path, h: str, entry: dict, problems: list[str]) -> dict[str
         return {}
 
 
+def _json_params(h: str, params: dict) -> list[str]:
+    """The hook reads `mcp_bindings` (role -> list of server names) and `wiki_write_allow` (list of site and space
+    pairs) as JSON; a value it cannot read makes it refuse every MCP call, so a bad one is caught here first."""
+    out = []
+    for name, ok in (("mcp_bindings", lambda d: isinstance(d, dict) and all(
+                          isinstance(v, list) and all(isinstance(s, str) for s in v) for v in d.values())),
+                     ("wiki_write_allow", lambda d: isinstance(d, list) and all(
+                          isinstance(e, dict) and e.get("site") and e.get("space") for e in d))):
+        if name not in params:
+            continue
+        try:
+            good = ok(json.loads(str(params[name])))
+        except ValueError:
+            good = False
+        if not good:
+            out.append(f"{h}: params.{name} is not valid JSON of the shape the work-system hook reads")
+    return out
+
+
 def _fields(template: str) -> set[str]:
     """The {field} names in a str.format template; ValueError when it is malformed (an unmatched brace)."""
     return {f for _, f, _, _ in string.Formatter().parse(template) if f}
@@ -440,6 +459,7 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         params = _profile(shared, h, entry, problems)
         org_dir, org_params = _org(root, h, entry, params, problems, warnings)
         params = {**params, **org_params}  # the org wins
+        problems += _json_params(h, params)
         sources = [(shared / "skills" / s, s, True) for s in common.get(h, []) + list(entry.get("skills") or [])]
         own = set(entry.get("own_skills") or [])
         for s in sorted(own & {n for _, n, _ in sources}):

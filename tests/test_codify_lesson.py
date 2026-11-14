@@ -98,6 +98,7 @@ def test_skill_keeps_its_rules():
         "only for (a) and only when the lesson has no `label`", "the last entry whose pattern matches it",
         "every changed file must give the same entry", "exactly one person (`@login`; a team `@org/name` or an email",
         "or the person is the PR's own author", "guess no one",
+        "If the label can't be added, stop there and say so under Flags; never create it",
     ):  # fmt: skip
         assert rule in text, rule
     assert re.search(r"Never\s+`derived_from`", text)

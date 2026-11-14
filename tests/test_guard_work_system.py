@@ -25,6 +25,44 @@ def bash(command: str, cwd: Path | None = None) -> int:
     return run(event).returncode
 
 
+NEUTRAL_BRANCH = "KAN-501-guard-tests"
+
+
+@pytest.fixture(scope="module")
+def neutral_repo(tmp_path_factory) -> Path:
+    d = tmp_path_factory.mktemp("neutral")
+    subprocess.run(["git", "init", "-q", "-b", NEUTRAL_BRANCH, str(d)], check=True)
+    return d
+
+
+@pytest.fixture(autouse=True)
+def _off_the_checkout(neutral_repo, monkeypatch):
+    """KAN-501: an event with no `cwd` is judged in the hook's own working directory, which was this checkout. So a
+    case such as `git commit -m ...` passed on a feature branch and failed on main, where the hook rightly refuses
+    the commit. Every case runs in a fresh repository on a keyed branch instead; a case about a branch passes its own
+    `cwd`. The hook's rules are unchanged."""
+    monkeypatch.chdir(neutral_repo)
+
+
+@pytest.mark.parametrize("head", ["main", "detached"])
+def test_the_cases_pass_on_a_main_or_detached_checkout(tmp_path, head):
+    """KAN-501: the post-merge build runs these tests on main. Copy this file and the hook into a repository whose
+    HEAD is main, or detached at main, and run the cases that once read the checkout's branch."""
+    for rel in ("tests/test_guard_work_system.py", "shared/work-system/hooks/guard_work_system.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes((ROOT / rel).read_bytes())
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "--no-verify", "-m", "main"], check=True)
+    if head == "detached":
+        subprocess.run([*git, "checkout", "-q", "--detach"], check=True)
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                        "tests/test_guard_work_system.py", "-k", "harmless_iex or commit_allowed or push_allowed"],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
+
+
 @pytest.fixture
 def repo(tmp_path):
     def make(branch: str) -> Path:
@@ -422,6 +460,12 @@ FAKE = {"tracker": ["tickets"]}  # a tracker server that is not Atlassian's, wit
     ("mcp__tickets__frobnicate", {"key": "KAN-1"}),
     ("mcp__tickets__ticket_update", {"key": "KAN-1", "labels": ["exec:pair"]}),
     ("mcp__tickets__new_ticket_create", {"labels": ["exec:agent"]}),
+    # status changes through ordinary write verbs (R2 on #44)
+    ("mcp__tickets__set_status", {"key": "KAN-1", "status": "Done"}),
+    ("mcp__tickets__update_ticket", {"key": "KAN-1", "status": "Done"}),
+    ("mcp__tickets__update_ticket", {"key": "KAN-1", "fields": {"State": "closed"}}),
+    ("mcp__tickets__update_ticket", {"key": "KAN-1", "resolution": "Won't do"}),
+    ("mcp__tickets__get_and_update_issue", {"key": "KAN-1", "status": "Done"}),
 ])
 def test_bound_tracker_with_other_tool_names_is_guarded(tool, args):
     assert run_bound({"tool_name": tool, "tool_input": args}, FAKE).returncode == 2
@@ -457,22 +501,164 @@ def test_unbound_atlassian_like_servers_are_still_guarded(tool):
     assert run({"tool_name": tool, "tool_input": {}}).returncode == 2
 
 
+def _servers(h: str) -> list[dict]:
+    """A work-system harness's MCP servers as its lock pins them once built: from bindings/<h>.yaml, which declares
+    them (relock.py builds the lock from it, KAN-459), so the check holds before the lock is rebuilt after merge and
+    without hangar (the Windows job). test_relock_bindings.py holds the built lock to the same list."""
+    import yaml
+    servers = yaml.safe_load((ROOT / "bindings" / f"{h}.yaml").read_text())["mcp"]
+    assert all("transport" in s for s in servers.values()), (h, "bindings declare every server's transport")
+    return [{"name": n, **{k: s[k] for k in ("transport", "endpoint") if k in s}} for n, s in sorted(servers.items())]
+
+
 def test_profiles_bind_roles_to_the_servers_their_locks_pin():
     import yaml
     targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text())
     for h, entry in targets["harnesses"].items():
         params = yaml.safe_load((ROOT / "shared/work-system" / entry["profile"]).read_text())["params"]
         bindings = json.loads(params["mcp_bindings"])
-        lock = yaml.safe_load((ROOT / "harnesses" / h / "harness.lock").read_text())
-        pinned = {m["name"] for m in lock["binding"]["mcp"]}
+        pinned = {m["name"] for m in _servers(h)}
         for role in ("tracker", "wiki"):
             assert bindings[role] and set(bindings[role]) <= pinned, (h, role, bindings[role], pinned)
 
 
-@pytest.mark.parametrize("hook, server", [(SUITE_HOOK, "atlassian"), (WORK_HOOK, "jira")])
-def test_rendered_hooks_carry_their_binding(hook, server):
-    r = run_hook(hook, {"tool_name": f"mcp__{server}__frobnicate", "tool_input": {}})
+@pytest.mark.parametrize("hook", [SUITE_HOOK, WORK_HOOK])
+def test_rendered_hooks_carry_their_binding(hook):
+    r = run_hook(hook, {"tool_name": "mcp__atlassian__frobnicate", "tool_input": {}})
     assert r.returncode == 2 and "fail closed" in r.stderr
+
+
+def test_every_work_system_harness_names_the_atlassian_server_the_same():
+    """One server name in every lock the shared layer renders into (KAN-459): the hook, the skills and the flightdeck
+    specs then speak of one server, and a session's bindings are the same in every work-system harness."""
+    import yaml
+    targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text())
+    names = set()
+    for h, entry in targets["harnesses"].items():
+        servers = _servers(h)
+        atl = {m["name"] for m in servers if "atlassian.com" in str(m.get("endpoint") or "")}
+        params = yaml.safe_load((ROOT / "shared/work-system" / entry["profile"]).read_text())["params"]
+        assert set(json.loads(params["mcp_bindings"])["tracker"]) == atl, h
+        names |= atl
+    assert names == {"atlassian"}
+
+
+# The bypasses an agent could try once tool names no longer decide (KAN-459): Atlassian's server added a second time
+# under a name with no hint, and a session binding that would rebind an Atlassian-named server to another role.
+
+SECOND_SERVER = [
+    ("mcp__corp__transitionJiraIssue", {"issueIdOrKey": "KAN-1", "transition": {"id": "41"}}),
+    ("mcp__corp__deleteJiraIssue", {"issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__createJiraIssue", {"projectKey": "KAN", "summary": "x", "labels": ["exec:agent"]}),
+    ("mcp__corp__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"labels": ["exec:pair"]}}),
+    ("mcp__corp__updateConfluencePage", {"pageId": "7", "body": "x"}),
+    ("mcp__corp__executeWrite", {"name": "transitionJiraIssue", "cloudId": "x", "inputs": {}}),
+    ("mcp__corp__executeWrite", {"name": "frobnicate", "cloudId": "x.atlassian.net"}),
+    ("mcp__corp__executeDestructive", {"name": "x", "cloudId": "x"}),
+    ("mcp__corp__executeDestructive", {"name": "x", "inputs": {"cloudId": "x"}}),
+    ("mcp__tickets2__run", {"operation": "transitionJiraIssue"}),
+    # Atlassian's dispatchers need no cloudId (the session's site is the default): their name alone is enough
+    ("mcp__corp__executeDestructive", {"name": "deleteIssue", "inputs": {"issueIdOrKey": "KAN-1"}}),
+    ("mcp__corp__executeWrite", {"name": "transitionIssue"}),
+    ("mcp__corp__execute_write", {"name": "transitionIssue"}),
+    ("mcp__x__call_tool", {"tool": "deleteJiraIssue"}),
+    ("mcp__x__run", {"name": "x", "inputs": {"site": {"CloudID": "acme.atlassian.net"}}}),
+    ("mcp__x__run", {"name": "x", "cloudId": "9468cd0c-c7fe-48bc-9366-2a720a8dad15"}),
+    # any tool given an Atlassian site is Atlassian's, whatever it is called (R2 on #44)
+    ("mcp__corp__createIssue", {"cloudId": "acme.atlassian.net", "projectKey": "KAN", "labels": ["exec:agent"]}),
+    ("mcp__corp__transitionIssue", {"cloudId": "9468cd0c-c7fe-48bc-9366-2a720a8dad15", "issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__updatePage", {"cloudId": "acme.atlassian.net", "pageId": "7", "body": "x"}),
+    ("mcp__corp__addGraphContext", {"cloudId": "9468cd0c-c7fe-48bc-9366-2a720a8dad15", "frob": 1}),
+    # routers naming the operation under other keys, dotted or slashed, or nested
+    ("mcp__x__call_tool", {"tool_name": "transitionJiraIssue", "arguments": {"issueIdOrKey": "KAN-1"}}),
+    ("mcp__x__callTool", {"toolName": "transitionJiraIssue"}),
+    ("mcp__x__call_tool", {"server_name": "atlassian", "tool_name": "transitionIssue"}),
+    ("mcp__x__call_tool", {"name": "jira.transition_issue"}),
+    ("mcp__x__call_tool", {"name": "jira/transition_issue"}),
+    ("mcp__x__use_tool", {"tool": "jira_transition_issue"}),
+    ("mcp__rube__RUBE_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "JIRA_TRANSITION_ISSUE", "arguments": {}}]}),
+    ("mcp__rube__RUBE_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "JIRA_GET_ISSUE"},
+                                                      {"tool_slug": "JIRA_DELETE_ISSUE"}]}),
+    # every operation named is judged: a read in `name` does not hide a transition in `operation`
+    ("mcp__corp__executeWrite", {"name": "getJiraIssue", "operation": "transitionJiraIssue"}),
+    # a write that sets a status moves the ticket
+    ("mcp__corp__editJiraIssue", {"issueIdOrKey": "KAN-1", "fields": {"status": {"name": "Done"}}}),
+    # HTTP through an MCP fetch tool, as through curl
+    ("mcp__fetch__fetch", {"url": "https://acme.atlassian.net/rest/api/3/issue/KAN-1/transitions",
+                           "method": "POST", "body": "{}"}),
+    ("mcp__fetch__fetch", {"url": "https://acme.atlassian.net/rest/api/3/issue/KAN-1", "method": "DELETE"}),
+]
+
+
+@pytest.mark.parametrize("tool, args", SECOND_SERVER)
+@pytest.mark.parametrize("hook", [HOOK, SUITE_HOOK, WORK_HOOK])
+def test_a_second_atlassian_server_under_another_name_is_guarded(hook, tool, args):
+    r = run_hook(hook, {"tool_name": tool, "tool_input": args})
+    assert r.returncode == 2, (tool, r.stderr)
+
+
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__corp__getJiraIssue", {"issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__searchJiraIssuesUsingJql", {"jql": "project = KAN"}),
+    ("mcp__corp__createJiraIssue", {"projectKey": "KAN", "summary": "x", "labels": ["exec:pair"]}),
+    ("mcp__corp__getConfluencePage", {"pageId": "7"}),
+    ("mcp__corp__executeRead", {"name": "getJiraIssue", "cloudId": "x"}),
+    ("mcp__notes__run", {"operation": "summarise", "text": "a Jira ticket"}),  # no Atlassian operation or site
+    ("mcp__corp__executeRead", {"name": "getIssue"}),
+    # other servers' tools that only mention Jira, or carry another cloud's id, are theirs
+    ("mcp__ci__run_workflow", {"name": "jira-export"}),
+    ("mcp__ci__run_workflow", {"name": "sync-confluence-docs"}),
+    ("mcp__hangar__run_job", {"name": "x", "cloud_id": "gcp-1"}),
+    ("mcp__x__run", {"name": "x", "cloud_id": "gcp-1"}),
+    ("mcp__corp__getIssue", {"cloudId": "acme.atlassian.net", "issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__createIssue", {"cloudId": "acme.atlassian.net", "projectKey": "KAN", "labels": ["exec:pair"]}),
+    ("mcp__x__call_tool", {"tool_name": "getJiraIssue", "arguments": {"issueIdOrKey": "KAN-1"}}),
+    ("mcp__rube__RUBE_MULTI_EXECUTE_TOOL", {"tools": [{"tool_slug": "JIRA_GET_ISSUE", "arguments": {}}]}),
+    # a version's or a page's `name` in what the operation is given is data, not an operation name
+    ("mcp__corp__executeWrite", {"name": "createJiraVersion", "inputs": {"name": "Release 1.0", "project": "KAN"}}),
+    ("mcp__x__call_tool", {"tool_name": "github_list_issues"}),  # a router running something else's tool
+    ("mcp__fetch__fetch", {"url": "https://acme.atlassian.net/rest/api/3/issue/KAN-1"}),
+    ("mcp__fetch__fetch", {"url": "https://example.com/api", "method": "POST", "body": "{}"}),
+    ("mcp__ci__run_workflow", {"name": "nightly", "cloudId": "gcp-1"}),
+])
+def test_a_second_atlassian_server_keeps_its_reads_and_ordinary_writes(tool, args):
+    assert run({"tool_name": tool, "tool_input": args}).returncode == 0
+
+
+@pytest.mark.parametrize("bindings", [{"ai-dlc": ["atlassian"]}, {"tracker": ["atlassian"]},
+                                      {"tracker": ["tickets"], "wiki": ["docs"]}])
+def test_a_session_binding_never_takes_a_role_away(bindings):
+    """WORK_SYSTEM_MCP_BINDINGS only adds roles: binding an Atlassian-named server elsewhere keeps both its guards."""
+    transition = {"tool_name": "mcp__atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "KAN-1"}}
+    page = {"tool_name": "mcp__atlassian__createConfluencePage", "tool_input": {"spaceId": "SD"}}
+    assert run_bound(transition, bindings).returncode == 2
+    r = run_bound(page, bindings)
+    assert r.returncode == 2 and "render job" in r.stderr
+
+
+@pytest.mark.parametrize("stale", ['{"tracker": ["jira"], "wiki": ["jira"], "ai-dlc": ["ai-dlc"]}', '{}'])
+@pytest.mark.parametrize("tool, args", [
+    ("mcp__atlassian__transitionJiraIssue", {"issueIdOrKey": "KAN-1", "transition": {"id": "41"}}),
+    ("mcp__atlassian__deleteJiraIssue", {"issueIdOrKey": "KAN-1"}),
+    ("mcp__atlassian__createConfluencePage", {"spaceId": "SD"}),
+    ("mcp__atlassian__executeWrite", {"name": "transitionIssue"}),
+    ("mcp__corp__transitionJiraIssue", {"issueIdOrKey": "KAN-1"}),
+    ("mcp__corp__executeDestructive", {"name": "deleteIssue"}),
+])
+def test_a_stale_hook_copy_still_guards_the_renamed_server(tmp_path, stale, tool, args):
+    """A copy rendered before the rename (its binding says `jira`), or with no binding left in it, run against the
+    server as it is named now: the server's name and its tools still give it both roles, so nothing slips through.
+    The copy is rendered from the shared hook with work-default's profile, as sync_shared.py renders it."""
+    import yaml
+    params = yaml.safe_load((ROOT / "shared/work-system/profiles/work-default.yaml").read_text())["params"]
+    text = HOOK.read_text(encoding="utf-8")
+    for name, value in {**params, "mcp_bindings": stale}.items():
+        text = text.replace("{{" + name + "}}", str(value))
+    assert "{{" not in text.split('BINDINGS_RENDERED = r"""', 1)[1].split('"""', 1)[0]
+    copy = tmp_path / "guard_work_system.py"
+    copy.write_text(text, encoding="utf-8")
+    r = run_hook(copy, {"tool_name": tool, "tool_input": args})
+    assert r.returncode == 2, (tool, r.stderr)
 
 
 @pytest.mark.parametrize("tool", ["mcp__ai-dlc__tracker_create", "mcp__tickets__tracker_create"])
@@ -488,6 +674,26 @@ def test_exec_agent_is_refused_on_any_tracker_role_create(tool):
 def test_execution_label_edits_are_refused_on_any_tracker_role_update(tool):
     r = run_bound({"tool_name": tool, "tool_input": {"key": "KAN-1", "labels": ["exec:human"]}}, FAKE)
     assert r.returncode == 2 and "execution label" in r.stderr
+
+
+@pytest.mark.parametrize("server", ["dlc", "plugin_ai_dlc", "team-ai-dlc"])
+def test_ai_dlc_under_another_server_name_is_guarded(server):
+    """ai-dlc's tracker tools are known by their names, and a plugin-prefixed ai-dlc server by its own (R2 on #44)."""
+    r = run({"tool_name": f"mcp__{server}__tracker_transition", "tool_input": {"reference": "KAN-1"}})
+    assert r.returncode == 2
+    r = run({"tool_name": f"mcp__{server}__tracker_create", "tool_input": {"title": "x", "labels": ["exec:agent"]}})
+    assert r.returncode == 2 and "exec:agent" in r.stderr
+    assert run({"tool_name": f"mcp__{server}__tracker_get", "tool_input": {"reference": "KAN-1"}}).returncode == 0
+
+
+@pytest.mark.parametrize("raw", ["{not json", '["tracker"]', '{"tracker": "tickets"}'])
+def test_bad_bindings_fail_closed(raw):
+    """A binding the hook cannot read refuses every MCP call, rather than leaving bound servers unguarded."""
+    env = {**os.environ, "WORK_SYSTEM_MCP_BINDINGS": raw}
+    event = {"tool_name": "mcp__tickets__set_status", "tool_input": {"key": "KAN-1"}}
+    r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event), capture_output=True, encoding="utf-8",
+                       env=env)
+    assert r.returncode == 2 and "mcp_bindings" in r.stderr
 
 
 def test_ai_dlc_knowledge_notes_may_mention_labels():
@@ -808,3 +1014,231 @@ def test_a_closed_stdin_fails_closed():
     """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
     r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
     assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
+
+
+@pytest.mark.parametrize("name, value, ok", [
+    ("mcp_bindings", '{"tracker": ["atlassian"], "ai-dlc": ["ai-dlc"]}', True),
+    ("mcp_bindings", '{"tracker": "atlassian"}', False),
+    ("mcp_bindings", "{tracker: [atlassian]}", False),
+    ("wiki_write_allow", "[]", True),
+    ("wiki_write_allow", '[{"site": "x.atlassian.net"}]', False),
+])
+def test_sync_shared_refuses_bindings_the_hook_cannot_read(name, value, ok):
+    """The hook refuses every MCP call when its bindings don't parse, so sync_shared.py --check catches them first."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import sync_shared
+    assert (sync_shared._json_params("h", {name: value}) == []) is ok
+
+
+BLOCKED_CALL = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git push --force origin é"}}).encode()
+
+
+@pytest.mark.parametrize("data", [BLOCKED_CALL, b"not json", b"\xff\xfe"])
+def test_a_block_also_denies_on_stdout_with_the_same_reason(data):
+    """A block exits 2 and also prints one PreToolUse deny, nothing else, with the words stderr carries (KAN-460):
+    Claude Code reads it alongside the exit 2, and where a shell turns the 2 into 1, valid JSON still decides."""
+    r = subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True)
+    assert r.returncode == 2
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert (out["hookEventName"], out["permissionDecision"]) == ("PreToolUse", "deny")
+    assert out["permissionDecisionReason"] == r.stderr.decode("utf-8").strip()
+    assert r.stdout.decode("ascii").strip().count("\n") == 0
+
+
+def test_an_allowed_call_prints_nothing():
+    """A deny is only printed on a block; an allowed call leaves stdout empty, so Claude Code's own flow decides."""
+    r = subprocess.run([sys.executable, str(HOOK)], capture_output=True,
+                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                         "tool_input": {"command": "git status"}}).encode())
+    assert (r.returncode, r.stdout) == (0, b"")
+
+
+@pytest.mark.parametrize("command", [
+    "iex('gh pr merge 12')",
+    'Invoke-Expression("gh pr merge 12")',
+    "Invoke-Expression -Command 'gh pr merge 12'",
+    "iex -Command:'gh pr merge 12'",
+    'Invoke-Command {gh pr merge 12}',
+    'icm -ScriptBlock { gh pr merge 12 }',
+    'Invoke-Command -ComputerName build -ScriptBlock { git push origin HEAD:main }',
+    'Invoke-Command{gh pr merge 12}',
+    'INVOKE-EXPRESSION -Command:"gh pr merge 12"',
+    "Invoke-Expression -C 'gh pr merge 12'",
+    "iex -Com 'gh pr merge 12'",
+    "iex -Command('gh pr merge 12')",
+    "iex('gh pr merge 12; echo ''hi''')",
+    "'gh pr merge 12' | iex",
+    'Invoke-Command -ScriptBlock {param($n) gh pr merge $n} -ArgumentList 12',
+    'Invoke-Command { if ($true) { gh pr merge 12 } }',
+    "Invoke-Command -ArgumentList 'a|b' -ScriptBlock {gh pr merge 12}",
+    '$sb={gh pr merge 12}; Invoke-Command $sb',
+    '1 | % { gh pr merge 12 }',
+    'Start-Job { gh pr merge 12 }',
+    "$s = @'\nit's\n'@\nicm { gh pr merge 5 }",
+    'Write-Output "x`"y"; icm { gh pr merge 5 }',
+    'icm -ScriptBlock {[CmdletBinding()]param($n) gh pr merge 5}',
+    "iex(\n'gh pr merge 5')",
+    "Invoke-Expression @('gh pr merge 5')",
+    # the PR 54 review: a nested or quoted parenthesis in param(...), and code a parenthesis runs
+    "icm { param([ValidateScript({ $_ -gt (1) })]$n) gh pr merge 1 }",
+    "icm { param($a=(1+(2))) gh pr merge 1 }",
+    "icm { param($a = '(') gh pr merge 1 }",
+    'icm { param($a = ")") gh pr merge 1 }',
+    "icm { param($a = (gh pr merge 1)) }",
+    "icm { param([ValidateScript({ gh pr merge 1 })]$a) }",
+    "$x = (gh pr merge 1)",
+    "Write-Output (gh pr merge 1)",
+    "Write-Output $(gh pr merge 1)",
+    # the fix round's review: code a double-quoted `$(...)` runs, and a quote inside a comment
+    '"$(Write-Output (gh pr merge 1))"',
+    '"$(% {gh pr merge 1})"',
+    'Write-Host "$(1 | % { gh pr merge 1 })"',
+    "# it's\ngh pr merge 1 # '",
+    "# it's\nicm { gh pr merge 1 } # '",
+    "<# it's #>gh pr merge 1<# ' #>",
+    "<# x #> gh pr merge 1",
+    "gh <# x #> pr merge 1",
+])
+def test_powershell_iex_and_invoke_command_forms_are_blocked(command):
+    """KAN-491, the PR 40 post-merge review: iex('...'), -Command, an Invoke-Command or icm script block, and a
+    program name in another letter case all run the plain command."""
+    r = _tool("PowerShell", command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("command", [
+    "iex('git status')", 'Invoke-Command { git log -1 }', 'icm {Get-ChildItem}', "'git status' | iex",
+    "git commit -m 'icm { gh pr merge 5 } is now blocked'", 'Get-ChildItem | Where-Object { $_.Length -gt 0 }',
+    '$c = "x"; Write-Output ${c}', "Get-Item (Join-Path a b)", 'git commit -m "fix (thing)"',
+    "icm { param([ValidateRange(1, 5)][int]$n = (1 + 2)) git status }",
+    'Write-Output "price: $(1+2) (approx)"', "git status # it's fine", '$x = "#not a comment"; git status',
+    'gh pr create --title "KAN-1: x" --body-file (Join-Path . body.md)',
+])
+def test_harmless_iex_and_invoke_command_still_pass(command):
+    assert _tool("PowerShell", command).returncode == 0, command
+
+
+def test_a_long_powershell_call_is_judged_in_linear_time():
+    """The unwrapping is one pass: thousands of `icm` or `iex(` words cannot hold the hook past its timeout (10 s),
+    which would let the call through. Whatever the machine, judging stops at the 5 s deadline and blocks."""
+    import time
+    for filler in ("icm ", "iex('", "{param($n) } ", "{param((", "| iex ", "(", "$(", "param("):
+        start = time.monotonic()
+        r = _tool("PowerShell", "Write-Output " + filler * 30000 + "; iex('gh pr merge 1')")
+        assert time.monotonic() - start < load_hook().DEADLINE + 2, filler
+        assert r.returncode == 2, (filler, r.stderr)
+
+
+@pytest.mark.parametrize("command", ["# it's\ngh pr merge 1 # '", "x=1 # it's\ngh pr merge 1 # '"])
+def test_a_quote_in_a_bash_comment_hides_nothing(command):
+    assert bash(command) == 2, command
+
+
+def test_a_hash_inside_a_word_is_not_a_comment():
+    assert bash("echo a#b; git status") == 0
+    assert bash("echo a#b; gh pr merge 1") == 2
+
+
+def test_code_scanned_for_hidden_commands_is_judged_in_linear_time(tmp_path):
+    """The fix round's review: the scan's URL and API-path patterns restarted at every `http://` or `pulls/`, so 84 KB
+    of them held the hook for 12 s, past its timeout."""
+    import time
+    (tmp_path / "p.py").write_text("pulls/" * 50000, encoding="utf-8")
+    for command in ['python3 -c "#' + "http://" * 12000 + '"; gh pr merge 1', "python3 p.py; gh pr merge 1",
+                    'python3 -c "#' + "pulls/" * 30000 + '/merge"',
+                    'curl -d "' + "addPullRequestReview" * 40000 + '" https://example.com; gh pr merge 1',
+                    "echo '" + "a" * 1_000_000 + "'; gh pr merge 1"]:
+        start = time.monotonic()
+        r = run({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)})
+        assert time.monotonic() - start < load_hook().DEADLINE, command[:40]
+        assert r.returncode == 2, (command[:40], r.stderr)
+
+
+def test_the_word_splitter_reads_as_shlex_does():
+    """_posix_words replaces shlex, which builds a word a character at a time: quadratic on a long word."""
+    import random
+    import shlex
+    mod = load_hook()
+
+    def ref(text, escape):
+        lex = shlex.shlex(text, posix=True)
+        lex.whitespace_split, lex.commenters = True, ""
+        if not escape:
+            lex.escape = ""
+        try:
+            return list(lex)
+        except ValueError:
+            return "error"
+
+    def ours(text, escape):
+        try:
+            return mod._posix_words(text, escape)
+        except ValueError:
+            return "error"
+
+    rng = random.Random(491)
+    for _ in range(20000):
+        text = "".join(rng.choice(["a", "b", " ", "\t", "\n", "'", '"', "\\", "$", "#"])
+                       for _ in range(rng.randint(0, 12)))
+        for escape in (True, False):
+            assert ours(text, escape) == ref(text, escape), (text, escape)
+
+
+def test_a_cached_script_verdict_follows_the_call_state(tmp_path):
+    """The fix round's review: a script's verdict depends on the variables, the directory and the reading it is
+    judged in, so the cache keys on them."""
+    (tmp_path / "s.sh").write_text("gh pr $A 1\n", encoding="utf-8")
+    (tmp_path / "s2.sh").write_text("./x.sh\n", encoding="utf-8")
+    for d, body in (("d1", "echo ok\n"), ("d2", "gh pr merge 1\n")):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "x.sh").write_text(body, encoding="utf-8")
+        (tmp_path / d / "x.sh").chmod(0o755)
+    for tool, command in (("Bash", "bash ./s.sh; export A=merge; bash ./s.sh"),
+                          ("Bash", "cd d1; bash ../s2.sh; cd ../d2; bash ../s2.sh"),
+                          ("PowerShell", 'Set-Content w.sh "gh pr m`erge 1"; bash ./w.sh')):
+        r = run({"tool_name": tool, "tool_input": {"command": command}, "cwd": str(tmp_path)})
+        assert r.returncode == 2, (command, r.stderr)
+
+
+def test_a_command_over_one_megabyte_is_blocked_unread():
+    """PR 54's re-review: the deadline is checked between commands, so an 8 MB call overshot it by 1.3 s."""
+    import time
+    mod = load_hook()
+    long_call = "echo " + "a" * mod.MAX_COMMAND
+    start = time.monotonic()
+    r = _tool("PowerShell", long_call)
+    assert time.monotonic() - start < 2 and r.returncode == 2 and b"too long to judge" in r.stderr, r.stderr
+    assert "too long to judge" in mod.why({"tool_name": "Bash", "tool_input": {"command": long_call}})
+    assert mod.why({"tool_name": "Bash", "tool_input": {"command": "echo " + "a" * (mod.MAX_COMMAND - 5)}}) is None
+
+
+def _big_script(path: Path) -> Path:
+    line = "echo hello world; ls -la /tmp | grep x\n"
+    path.write_text(line * (300_000 // len(line)), encoding="utf-8")
+    return path
+
+
+def test_a_script_run_many_times_is_judged_once(tmp_path, monkeypatch):
+    """The PR 54 review: six runs of one large script took 13 s to judge, past the hook's timeout."""
+    _big_script(tmp_path / "s.sh")
+    mod = load_hook()
+    judged = []
+    verdict = mod._script_verdict
+    monkeypatch.setattr(mod, "_script_verdict", lambda *a: judged.append(a[0]) or verdict(*a))
+    event = {"tool_name": "Bash", "cwd": str(tmp_path),
+             "tool_input": {"command": "bash ./s.sh; " * 6 + "gh pr merge 1"}}
+    assert mod.why(event).startswith("agents never merge")
+    assert judged == ["./s.sh"]
+
+
+def test_a_call_that_takes_too_long_to_judge_is_blocked(tmp_path, monkeypatch):
+    """Past the deadline the hook blocks rather than let its timeout kill it, which would let the call through."""
+    for k in range(3):
+        _big_script(tmp_path / f"s{k}.sh")
+    mod = load_hook()
+    monkeypatch.setattr(mod, "DEADLINE", 0.01)
+    event = {"tool_name": "Bash", "cwd": str(tmp_path),
+             "tool_input": {"command": "bash ./s0.sh; bash ./s1.sh; bash ./s2.sh"}}
+    assert "longer than 0.01 s to judge" in mod.why(event)
+    monkeypatch.setattr(mod, "DEADLINE", 60.0)
+    assert mod.why(event) is None

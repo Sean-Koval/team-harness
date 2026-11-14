@@ -3,7 +3,8 @@
 
 The normal way to get a lock is `hangar harness freeze` from a turn that went well. Use this when you change the
 harness's files by hand (a new skill, an edited guide, your own MCP endpoints) and want the lock to pin them before a
-run exists to freeze from: it keeps the lock's runtime, model and binding layer, recomputes every component's digest
+run exists to freeze from: it keeps the lock's runtime, model and binding layer (but MCP servers come from
+`bindings/<name>.yaml` when its servers declare a `transport`), recomputes every component's digest
 (and each skill's `tree`), adds components for unpinned skills, plugins (each `plugins/<marketplace>/` directory marketplace) and native files, and bumps the revision when
 anything changed. `hangar harness check` then passes, and a turn run from the result reports the same
 `harness_digest` once the environment provides the same files.
@@ -28,9 +29,11 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -62,6 +65,87 @@ def _hooks(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+MCP_SHAPE = {"http": ("endpoint",), "stdio": ("command", "args")}  # what the lock pins of each transport
+MCP_KEYS = {"transport", "endpoint", "command", "args", "headers", "env", "trust", "write_tools"}
+SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:@+=-]+$")  # a command or an arg: one word, no quoting or spaces
+SECRET_WORD = re.compile(r"(?i)token|secret|passw|bearer|basic |authorization|api_?key|\$\{")
+
+
+def _shape_problems(name: str, s: dict[str, Any]) -> list[str]:
+    """Why a declared server can't become lock entries: the lock is committed and pinned by digest, so it may hold
+    names and plain values only. A value (a token, a `${VAR}`) belongs under `headers` or `env`, whose names alone
+    reach the lock, and never in the endpoint, the command or the args."""
+    out = []
+    if not SERVER_NAME.match(str(name)):
+        out.append(f"mcp.{name}: a server name is letters, digits, - and _")
+    if extra := sorted(set(s) - MCP_KEYS):
+        out.append(f"mcp.{name}: unknown keys {', '.join(map(str, extra))} (allowed: {', '.join(sorted(MCP_KEYS))})")
+    for key, pattern in (("headers", HEADER_NAME), ("env", ENV_NAME)):
+        if key not in s:
+            continue
+        if not isinstance(s[key], dict):
+            out.append(f"mcp.{name}.{key}: a mapping of name to `${{VAR}}`, not a {type(s[key]).__name__}")
+        elif bad := [str(k) for k in s[key] if not pattern.match(str(k))]:
+            out.append(f"mcp.{name}.{key}: not a {key[:-1] if key == 'headers' else 'variable'} name: "
+                       f"{len(bad)} key(s); a value goes after the colon, not in the name")
+    if s.get("transport") == "http" and "endpoint" in s:
+        e = s["endpoint"]
+        u = urlsplit(e) if isinstance(e, str) else None
+        if u is None or u.scheme != "https" or not u.hostname or u.username or u.password or u.query or u.fragment \
+                or SECRET_WORD.search(e):
+            out.append(f"mcp.{name}.endpoint: an https URL with no user, password, query or fragment, and no token "
+                       "or `${...}`; put credentials under headers")
+    if s.get("transport") == "stdio":
+        words = [s.get("command")] + (s["args"] if isinstance(s.get("args"), list) else [None])
+        if "args" in s and not isinstance(s["args"], list):
+            out.append(f"mcp.{name}.args: a list of words")
+        if any(not isinstance(w, str) or not PLAIN_WORD.match(w) or SECRET_WORD.search(w) for w in words
+               if w is not None):
+            out.append(f"mcp.{name}: command and args are plain words with no token or `${{...}}`; put a value under "
+                       "env")
+    return out
+
+
+def bindings_file(root: Path, name: str) -> Path | None:
+    """The repository's `bindings/<name>.yaml` above the harness directory `root`, as render_envs.py finds it."""
+    repo = next((p for p in root.resolve().parents if (p / "bindings").is_dir()), None)
+    f = repo / "bindings" / f"{name}.yaml" if repo else None
+    return f if f and f.is_file() else None
+
+
+def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
+    """binding.mcp built from `bindings/<name>.yaml` when its servers declare a `transport` (KAN-459), so a server
+    added, renamed or moved is a source change and the build writes the lock; otherwise the lock's, as before.
+    One entry per server in name order: name, transport, then `endpoint` (http) or `command` and `args` (stdio), and
+    the names of its headers or env, never their values."""
+    f = bindings_file(root, lock["name"])
+    servers = ((yaml.safe_load(f.read_text()) or {}).get("mcp") or {}) if f else {}
+    declared = {n for n, s in servers.items() if isinstance(s, dict) and "transport" in s}
+    if not declared:
+        return lock["binding"].get("mcp") or []
+    if declared != set(servers):
+        raise SystemExit(f"{f}: give every mcp server a transport, or none (missing: "
+                         f"{', '.join(sorted(set(servers) - declared))})")
+    if problems := [p for n in sorted(servers, key=str) for p in _shape_problems(n, servers[n])]:
+        raise SystemExit(f"{f}: " + "; ".join(problems))
+    out = []
+    for name in sorted(servers):
+        s = servers[name]
+        shape = MCP_SHAPE.get(s["transport"])
+        if shape is None or any(k not in s for k in shape):
+            raise SystemExit(f"{f}: mcp.{name}: transport http needs endpoint; stdio needs command and args")
+        m: dict[str, Any] = {"name": name, "transport": s["transport"]}
+        m.update({k: (list(s[k]) if k == "args" else s[k]) for k in shape})
+        names = sorted(s.get("headers" if s["transport"] == "http" else "env") or {})
+        if names:
+            m["header_names" if s["transport"] == "http" else "env_names"] = names
+        out.append(m)
+    return out
+
+
 def pinned(lock: dict[str, Any]) -> dict[str, str]:
     """{component id: digest} of what a lock pins by content."""
     return {c["id"]: c["digest"] for c in lock.get("components") or [] if c.get("digest")}
@@ -84,7 +168,7 @@ def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
     """(new lock, previous lock) for the harness directory `root`. `rekey`: the files must be the previous lock's;
     only the digest is recomputed and the revision stays."""
     lock_file = root / hl.LOCK_FILE
-    prev = yaml.safe_load(lock_file.read_text()) if lock_file.is_file() else None
+    prev = yaml.safe_load(lock_file.read_text(encoding="utf-8")) if lock_file.is_file() else None
     if prev is None:
         raise SystemExit(f"{lock_file}: start from a lock (hangar harness freeze, or a skeleton with runtime, model "
                          "and binding and `components: []`)")
@@ -138,6 +222,7 @@ def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
             comps.append({"id": f"native:{runtime_path}", "digest": hl._sha(f.read_bytes()), "path": rel})
 
     lock["components"] = comps
+    lock["binding"]["mcp"] = _mcp(root, lock)
     lock["binding"]["hooks"] = _hooks(root, lock)
     if problems := coverage_problems(root, lock):
         raise SystemExit("; ".join(problems))
@@ -150,6 +235,8 @@ def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
     else:
         # a skeleton (no components yet) is a new harness: revision 1
         lock["revision"] = 1 if not prev["components"] else hl.next_revision(prev, lock)
+    if rekey and lock["binding"]["mcp"] != prev["binding"].get("mcp"):
+        raise SystemExit(f"{root}: --rekey keeps the binding, but bindings/ declares other MCP servers than the lock")
     if prev["components"] and pinned(lock) != pinned(prev) and hl.harness_digest(lock) == hl.harness_digest(prev):
         raise SystemExit(f"{root}: the pinned files changed but harness_digest did not; a channel naming it would "
                          "change without a promotion")
@@ -174,7 +261,7 @@ def main() -> int:
         print(digest)
         return 0
     if a.write:
-        (a.harness / hl.LOCK_FILE).write_text(hl.dump(lock))
+        (a.harness / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
         print(f"{lock['name']} r{lock['revision']} {digest}", file=sys.stderr)
     else:
         sys.stdout.write(hl.dump(lock))

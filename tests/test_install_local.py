@@ -20,6 +20,10 @@ import install_local as il  # noqa: E402
 WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
 TEAM = ROOT / "harnesses/team-default"
+# A Windows guard's command is PowerShell's (KAN-460): Windows runs it in PowerShell, Linux and macOS in pwsh where
+# installed (CI's runners have it). Without either, the tests that run one skip.
+POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
+needs_powershell = pytest.mark.skipif(not POWERSHELL, reason="a Windows guard's command needs PowerShell (or pwsh)")
 
 
 @pytest.fixture(autouse=True)
@@ -76,25 +80,33 @@ def settings(base: Path, name: str = "settings.json") -> dict:
     return json.loads((base / name).read_bytes().decode("utf-8-sig"))
 
 
-def hook_command(hook: str, scope: str, base: Path, windows: bool = il.WINDOWS) -> str:
-    """The command a harness's `python3 "$HOME/.claude/hooks/<hook>"` becomes, spelled out per OS and scope."""
+GUARD_EXIT = "; if ($null -eq $LASTEXITCODE) { exit 2 }; exit $LASTEXITCODE"
+
+
+def hook_command(hook: str, scope: str, base: Path, windows: bool = il.WINDOWS, guard: bool | None = None) -> str:
+    """The command a harness's `python3 "$HOME/.claude/hooks/<hook>"` becomes, spelled out per OS and scope. On
+    Windows a guard's (a PreToolUse hook's) also exits 2 when py never started."""
     if not windows:
         return (f'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/{hook}' if scope == "project"
                 else f'python3 "$HOME/.claude/hooks/{hook}"')
+    end = GUARD_EXIT if (hook.startswith("guard_") if guard is None else guard) else "; exit $LASTEXITCODE"
     if scope == "project":
         return ('py -3 -c "import os,runpy;runpy.run_path(os.path.join(os.environ[\'CLAUDE_PROJECT_DIR\'],'
-                f"'.claude','hooks','{hook}'),run_name='__main__')\"")
-    return f'py -3 "{Path(os.path.abspath(base)).as_posix()}/hooks/{hook}"'
+                f"'.claude','hooks','{hook}'),run_name='__main__')\"" + end)
+    return f'py -3 "{Path(os.path.abspath(base)).as_posix()}/hooks/{hook}"' + end
 
 
 def expected_hooks(hooks: dict, scope: str, base: Path, windows: bool = il.WINDOWS) -> dict:
     out = json.loads(json.dumps(hooks))
-    for groups in out.values():
+    for event, groups in out.items():
         for g in groups:
             for hk in g["hooks"]:
                 m = re.fullmatch(r'python3 "\$HOME/\.claude/hooks/(.+)"', hk["command"])
                 if m:
-                    hk["command"] = hook_command(m.group(1), scope, base, windows)
+                    guard = event == "PreToolUse"
+                    hk["command"] = hook_command(m.group(1), scope, base, windows, guard)
+                    if windows and guard:
+                        hk.update({"shell": "powershell", "onFailure": "block"})
     return out
 
 
@@ -426,8 +438,8 @@ def test_project_scope(tmp_path):
 def test_mcp_commands_use_placeholders_only(tmp_path, capsys):
     assert user(WORK, tmp_path) == 0
     out = capsys.readouterr().out
-    var = "$env:JIRA_MCP_AUTHORIZATION" if il.WINDOWS else "$JIRA_MCP_AUTHORIZATION"
-    assert ('claude mcp add --scope user --transport http jira https://mcp.atlassian.com/v1/mcp '
+    var = "$env:ATLASSIAN_MCP_AUTHORIZATION" if il.WINDOWS else "$ATLASSIAN_MCP_AUTHORIZATION"
+    assert ('claude mcp add --scope user --transport http atlassian https://mcp.atlassian.com/v1/mcp '
             f'--header "Authorization: {var}"') in out
     assert project(SUITE, tmp_path / "p") == 0
     out = capsys.readouterr().out
@@ -634,6 +646,8 @@ def test_unknown_or_unreachable_channel_is_refused(tmp_path, capsys):
 @pytest.fixture(params=[False, True], ids=["posix", "windows"])
 def windows(request, monkeypatch):
     """Run a test with the hook commands of each OS: the Windows forms are plain strings, checkable anywhere."""
+    if request.param and not POWERSHELL:
+        pytest.skip("a Windows guard's command needs PowerShell (or pwsh)")
     monkeypatch.setattr(il, "WINDOWS", request.param)
     if os.name == "nt" and not request.param:
         # sh commands can't start under cmd (the dry-run bug --apply now catches): Linux CI runs them
@@ -647,6 +661,7 @@ def hook_commands(base: Path) -> list[str]:
             for groups in (settings(base, name).get("hooks") or {}).values() for g in groups for hk in g["hooks"]]
 
 
+@needs_powershell
 def test_windows_user_scope_runs_hooks_with_py_and_a_quoted_profile_path(tmp_path, monkeypatch):
     monkeypatch.setattr(il, "WINDOWS", True)
     home = tmp_path / "Users" / "Jo Smith"  # a profile directory with a space
@@ -654,8 +669,9 @@ def test_windows_user_scope_runs_hooks_with_py_and_a_quoted_profile_path(tmp_pat
     base = home / ".claude"
     cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
     profile = Path(os.path.abspath(base)).as_posix()
-    assert cmds == [f'py -3 "{profile}/hooks/guard_work.py"', f'py -3 "{profile}/hooks/guard_work_system.py"',
-                    f'py -3 "{profile}/hooks/knowledge_session_end.py"']
+    assert cmds == [f'py -3 "{profile}/hooks/{h}"{end}' for h, end in (
+        ("guard_work.py", GUARD_EXIT), ("guard_work_system.py", GUARD_EXIT),
+        ("knowledge_session_end.py", "; exit $LASTEXITCODE"))]
     assert not any("$HOME" in c or "python3" in c for c in hook_commands(base))
     assert user(WORK, home, "--check") == 0
     assert user(WORK, home, "--uninstall") == 0
@@ -671,13 +687,15 @@ def test_windows_profile_path_that_cannot_be_quoted_is_refused(tmp_path, monkeyp
     assert not (home / ".claude").exists()
 
 
+@needs_powershell
 def test_windows_project_scope_has_no_machine_path(tmp_path, monkeypatch):
     monkeypatch.setattr(il, "WINDOWS", True)
     target = tmp_path / "svc"
     assert project(WORK, target, "--apply") == 0
     base = target / ".claude"
     text = (base / "settings.json").read_text(encoding="utf-8") + (base / "settings.local.json").read_text("utf-8")
-    assert str(tmp_path) not in text and tmp_path.as_posix() not in text and "$" not in text
+    assert str(tmp_path) not in text and tmp_path.as_posix() not in text
+    assert "$" not in text.replace(il.GUARD_EXIT, "").replace(il.EXIT_AS_PY, "")  # no variable but the exit code
     cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
     assert cmds == [hook_command("guard_work.py", "project", base, True),
                     hook_command("guard_work_system.py", "project", base, True),
@@ -687,15 +705,16 @@ def test_windows_project_scope_has_no_machine_path(tmp_path, monkeypatch):
 BLOCKED = {"tool_name": "Bash", "tool_input": {"command": "terraform apply -auto-approve"}}
 
 
+@needs_powershell
 def test_windows_project_hook_command_blocks_with_the_same_message(tmp_path, monkeypatch):
     """The `py -3 -c` line runs the installed hook as running the file does: same exit code, same bytes out."""
     monkeypatch.setattr(il, "WINDOWS", True)
     target = tmp_path / "svc"
     assert project(WORK, target, "--apply") == 0
     cmd = next(c for c in hook_commands(target / ".claude") if "guard_work.py" in c)
-    prefix = 'py -3 -c "'
-    assert cmd.startswith(prefix) and cmd.endswith('"')
-    code = cmd[len(prefix):-1]
+    prefix, suffix = 'py -3 -c "', '"' + GUARD_EXIT
+    assert cmd.startswith(prefix) and cmd.endswith(suffix)
+    code = cmd[len(prefix):-len(suffix)]
     event = json.dumps(BLOCKED).encode()
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(target)}
     via = subprocess.run([sys.executable, "-c", code], input=event, capture_output=True, env=env, cwd=tmp_path)
@@ -936,7 +955,8 @@ def test_posix_hook_command_on_windows_is_caught(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("scope", ["user", "project"])
 def test_windows_hook_commands_run_in_both_hook_shells(tmp_path, monkeypatch, capsys, scope, shell):
     """The commands written for Windows pass the probe in Git Bash and, where Git Bash isn't installed, PowerShell:
-    the two shells Claude Code runs shell-form hooks with on Windows."""
+    the two shells Claude Code runs shell-form hooks with on Windows. A guard's entry names PowerShell, so it runs
+    there either way."""
     if shell == "git-bash" and il._git_bash() is None:
         pytest.skip("no Git Bash on this machine")
     if shell == "powershell":
@@ -991,31 +1011,118 @@ GUARD_BLOCKS = [  # (harness, guard, a command it blocks, its reason)
 ]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="the native Windows shells")
-@pytest.mark.parametrize("shell", ["git-bash", "powershell"])
+def deny_reason(stdout: bytes) -> str | None:
+    """The reason a PreToolUse hook's stdout denies the call with, read the way Claude Code reads it: one JSON object
+    with nothing around it but whitespace, else it is plain text and decides nothing."""
+    text = stdout.decode("utf-8").strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    out = json.loads(text).get("hookSpecificOutput") or {}
+    if out.get("hookEventName") != "PreToolUse" or out.get("permissionDecision") != "deny":
+        return None
+    return out.get("permissionDecisionReason")
+
+
+@needs_powershell
 @pytest.mark.parametrize("scope", ["user", "project"])
 @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
 @pytest.mark.parametrize("harness, guard, command, reason", GUARD_BLOCKS)
-def test_a_guard_still_blocks_through_each_windows_hook_shell(tmp_path, monkeypatch, shell, scope, tool, harness,
-                                                              guard, command, reason):
+def test_a_guard_still_blocks_through_the_windows_hook_shell(tmp_path, monkeypatch, scope, tool, harness, guard,
+                                                             command, reason):
     """The probe only proves a hook starts; this proves a block survives the shell, in both scopes, from a path with a
-    space and letters outside the console code page, for a Bash call and a PowerShell call. Git Bash passes exit 2 and
-    the reason through. PowerShell's -Command turns a native exit 2 into 1, which Claude Code also treats as a block
-    when Git Bash isn't installed (a PreToolUse exit other than 0 or 2 fails closed); the reason still reaches stderr."""
-    if shell == "git-bash" and il._git_bash() is None:
-        pytest.skip("no Git Bash on this machine")
-    if shell == "powershell":
-        monkeypatch.setattr(il, "_git_bash", lambda: None)
+    space and letters outside the console code page, for a Bash call and a PowerShell call (KAN-460). A guard's
+    Windows entry runs in PowerShell, whose -Command would turn exit 2 into 1, which without Git Bash is a hook
+    failure, not the guard's block, so the command's `exit $LASTEXITCODE` hands on py's 2. The reason reaches stderr,
+    and stdout as a PreToolUse deny with the same words. Off Windows this runs in pwsh, with the test's py."""
     monkeypatch.setattr(il, "WINDOWS", True)
     root = tmp_path / "Jörg Ñúñez"
     shutil.copytree(harness / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
-    cmd = il._hook_command(f'python3 "$HOME/.claude/hooks/{guard}"', scope, harness, root / ".claude")
+    cmd = il._hook_command(f'python3 "$HOME/.claude/hooks/{guard}"', scope, harness, root / ".claude", guard=True)
     event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}},
                        ensure_ascii=False).encode("utf-8")
-    r = subprocess.run(il.hook_shell(cmd), input=event, capture_output=True, timeout=60, cwd=root,
+    r = subprocess.run(il.hook_shell(cmd, "powershell"), input=event, capture_output=True, timeout=60, cwd=root,
                        env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
     assert reason in r.stderr, (cmd, r.stderr)
-    assert r.returncode == 2 if shell == "git-bash" else r.returncode != 0
+    assert r.returncode == 2, (cmd, r.returncode)
+    said = deny_reason(r.stdout)
+    assert said is not None, (cmd, r.stdout)
+    assert reason.decode("utf-8") in said and said in r.stderr.decode("utf-8")
+
+
+@needs_powershell
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_a_windows_guard_whose_py_cannot_start_still_blocks(tmp_path, monkeypatch, scope):
+    """If `py` stops starting after the install (uninstalled, off PATH), PowerShell leaves $LASTEXITCODE empty and a
+    bare `exit $LASTEXITCODE` exits 0, which lets the call through with the guard off. A guard's command exits 2
+    there instead, so Claude Code blocks the call. Any other hook keeps exit 0: a SessionEnd hook can't block."""
+    monkeypatch.setattr(il, "WINDOWS", True)
+    root = tmp_path / "svc"
+    (root / ".claude" / "hooks").mkdir(parents=True)
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}})
+    for guard, want in ((True, 2), (False, 0)):
+        cmd = il._hook_command('python3 "$HOME/.claude/hooks/guard_work.py"', scope, WORK, root / ".claude", guard)
+        assert cmd.startswith("py -3 ")
+        cmd = "no-such-py-kan460" + cmd.removeprefix("py")
+        r = subprocess.run(il.hook_shell(cmd, "powershell"), input=event.encode(), capture_output=True, timeout=60,
+                           cwd=root, env={**os.environ, "CLAUDE_PROJECT_DIR": str(root)})
+        assert r.returncode == want, (guard, cmd, r.returncode, r.stderr)
+
+
+def test_windows_guard_entries_run_in_powershell_and_block_on_failure(tmp_path, monkeypatch):
+    """On Windows each PreToolUse guard's entry names PowerShell, whose syntax its command uses (Git Bash would read it
+    as a syntax error and block every call), and onFailure block, so a PowerShell that can't start blocks too. Other
+    hooks and other OSes keep Claude Code's default shell. Read from the settings install_local.py writes."""
+    src = WORK / "native/claude-code/settings.json"
+    harness = json.loads(src.read_text(encoding="utf-8"))
+    for win in (True, False):
+        monkeypatch.setattr(il, "WINDOWS", win)
+        for scope in ("user", "project"):
+            hooks = il._scoped_settings(harness, scope, src, tmp_path / ".claude")["hooks"]
+            for event, groups in hooks.items():
+                for hk in (h for g in groups for h in g["hooks"] if not h["command"].startswith("echo ")):
+                    guard = win and event == "PreToolUse"
+                    assert hk.get("shell") == ("powershell" if guard else None), (win, scope, event, hk)
+                    assert hk.get("onFailure") == ("block" if guard else None), (win, scope, event, hk)
+                    assert hk["command"].endswith(il.GUARD_EXIT) == guard, (win, scope, event, hk)
+            assert hooks == expected_hooks(harness["hooks"], scope, tmp_path / ".claude", win)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX hook shell")
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("harness, guard, command, reason", GUARD_BLOCKS)
+def test_a_guard_blocks_through_sh_with_exit_2_and_a_deny(tmp_path, tool, harness, guard, command, reason):
+    """Off Windows the hook shell keeps exit 2, the contract every existing caller relies on; the deny on stdout says
+    the same reason, so Claude Code shows the guard's words either way."""
+    root = tmp_path / "Jörg Ñúñez"
+    shutil.copytree(harness / "native" / "claude-code" / "hooks", root / ".claude" / "hooks")
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}})
+    for suffix in ("", il.EXIT_AS_PY):  # sh, as Git Bash, reads `exit $LASTEXITCODE` as a bare exit: still 2
+        r = subprocess.run(il.hook_shell(f'python3 "{root}/.claude/hooks/{guard}"{suffix}'),
+                           input=event.encode("utf-8"), capture_output=True, timeout=60, cwd=root)
+        assert r.returncode == 2 and reason in r.stderr, suffix
+        assert deny_reason(r.stdout) == r.stderr.decode("utf-8").strip()
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_a_guard_whose_block_is_not_exit_2_fails_apply_loudly(tmp_path, monkeypatch, capsys, windows):
+    """A PreToolUse guard must block a call it can't read with exit 2 through the hook shell. Any other code is no
+    verdict to Claude Code, and without Git Bash a hook failure, so --apply says the guard may not block."""
+    if os.name == "nt" and not windows:
+        pytest.skip("the POSIX hook commands run on Linux CI")
+    monkeypatch.setattr(il, "WINDOWS", windows)
+    soft = tmp_path / "soft" / ".claude" / "hooks" / "soft.py"
+    soft.parent.mkdir(parents=True)
+    soft.write_text("import json, sys\ntry:\n    json.loads(sys.stdin.buffer.read())\nexcept ValueError:\n"
+                    "    sys.exit(1)\n")
+    cmd = f'py -3 "{soft.as_posix()}"{il.EXIT_AS_PY}' if windows else f'python3 "{soft.as_posix()}"'
+    real = il.probe_hooks
+    monkeypatch.setattr(il, "probe_hooks", lambda base, scope, entries: real(base, scope, [
+        {**r, "value": {**r["value"], "hooks": [{"type": "command", "command": cmd}]}}
+        if r["section"] == "hooks" and r["key"] == "PreToolUse" else r for r in entries]))
+    assert project(WORK, tmp_path / "svc", "--apply") == 1
+    err = capsys.readouterr().err
+    assert "error: guard's block does not reach Claude Code as exit 2, so it may not block" in err
+    assert "exit 1" in err and "hook did not run" not in err
 
 
 def test_windows_guard_that_cannot_see_powershell_fails_loudly(tmp_path, capsys, monkeypatch):
@@ -1052,6 +1159,7 @@ def test_off_windows_a_bash_only_matcher_is_fine(tmp_path, monkeypatch):
 
 # --- project scope: hooks per machine in settings.local.json, never committed --------------------------------------
 
+@needs_powershell
 def test_mixed_os_team_commits_no_hook_command(tmp_path, monkeypatch):
     """A Mac and a Windows machine install into the same repository: the committed files come out the same, and each
     machine's hook commands stay in its own settings.local.json."""

@@ -23,7 +23,7 @@ tools:
 dependencies:
   script: |
     git clone --quiet --filter=blob:none https://github.com/Sean-Koval/ai-dlc /home/agent/.local/share/ai-dlc
-    git -C /home/agent/.local/share/ai-dlc checkout --quiet "72327f45d698a255cc6959b68b107a88f6fa421d"
+    git -C /home/agent/.local/share/ai-dlc checkout --quiet "67323a98e5426b067ca017f1dfcc023bbcf12906"
     cd /home/agent/.local/share/ai-dlc
     UV_PYTHON_DOWNLOADS=never uv sync --locked --no-dev --python "$(mise which python)"
     mkdir -p /home/agent/.local/bin
@@ -45,8 +45,8 @@ files:                            # ai-dlc's machine file for `ai-dlc doctor` on
 env:
   AGENT_ENV: agent
   AGENT_ENV_HARNESS: suite-default
-  AGENT_ENV_HARNESS_DIGEST: "sha256:1e11b51259fa532802a6894f3cb9194c50567908f0639a7e67b82c4b6f7242e6"  # r13
-  AI_DLC_REF: "72327f45d698a255cc6959b68b107a88f6fa421d"
+  AGENT_ENV_HARNESS_DIGEST: "sha256:2cea8d00ec2baa5f316716ac7ac9cd3d2e5251f22c0dc066d92fd024a87b19bb"  # r14
+  AI_DLC_REF: "67323a98e5426b067ca017f1dfcc023bbcf12906"
   KNOWLEDGE_FORMAT_VERSION: "1"   # ai-dlc's knowledge-record FORMAT_VERSION; a knowledge repo pins [format] version
 secrets:                          # ENV_VAR: hangar credential name (values never live here)
   GH_TOKEN: github-agent          # clone CODE_REPO and KNOWLEDGE_REPO, read the repo's API

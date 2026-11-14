@@ -198,17 +198,23 @@ commit (installed from its `uv.lock`), the knowledge format version and the mode
 when a pin and what it names disagree.
 
 Variables are names only, listed in `environments/agent.env.example`: the inputs `TICKET_KEY`, `CODE_REPO` and
-`KNOWLEDGE_REPO`, and the credentials, the same names locally and in hangar's secret store. Export them, then:
+`KNOWLEDGE_REPO`, and the credentials, the same names locally and in hangar's secret store. Claude's credential is
+`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`, billed to the API. The GitHub and
+Atlassian credentials are the agent's own accounts, never a person's (hangar's `docs/environments/agent-identity.md`).
+`RELEASE_CONFIG` names a file holding `HANGAR_JIRA` (`hangar config list --json > FILE`). hangar refuses to start
+when the agent's Atlassian account is on its `agent_release.people`, or its `GH_TOKEN` login on
+`agent_release.github_people`. Export them, then:
 
 ```sh
 make agent-env          # build, start, clone the inputs, print the pins and `ai-dlc doctor`
-make agent-env-check    # two fresh instances print the same; nothing is mounted; off-list hosts and DNS are refused
+make agent-env-check    # two instances print the same; no mounts; off-list hosts and DNS refused; `claude -p` answers
 make agent-env-down
 ```
 
 hangar runs the local half: the Makefile calls `hangar env local` at the hangar commit CI pins (KAN-472; hangar's
 `docs/environments/local-run.md`). hangar's renderer builds the image (with the agent CLI baked in, since there are
-no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. The container mounts nothing from the
+no pack mounts locally), and hangar's `egress.resolve` gives the allowlist. hangar puts the pinned `claude` on PATH and
+writes the lock's MCP servers into its config in the container, as a cloud claim does (KAN-496). The container mounts nothing from the
 host and gets only the contract's names. It reaches the internet only through hangar's egress sidecar on an internal
 Docker network, and resolves no name itself: the sidecar refuses every DNS query. The allowlist is GitHub, the
 package indexes, `api.atlassian.com` (tracker and wiki), the bound MCP servers and the model's hosts
