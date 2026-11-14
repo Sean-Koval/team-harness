@@ -7,17 +7,16 @@ description: Use at the start of any coding task that has no ticket key yet (a r
 
 Nothing is edited before the work has a ticket key. If you were given a key, skip to step 3.
 
-1. **Find the ticket.** Search {{tracker}} with `tracker_search`, or with JQL on the tracker server (tools: see
-   `jira-ticket`). Look in the project's epic for an open ticket that already covers the request:
-
-   `project = <KEY> AND statusCategory != Done AND text ~ "<words>"`
+1. **Find the ticket.** Search {{tracker}} with `tracker_search` (`text`, `labels`, `state`), or with the tracker
+   server's search (tools: see `jira-ticket`). Look in the project's epic for an open ticket that already covers the
+   request: {{tracker_open_query}}.
 
    If one matches, use it and say which.
 2. **Otherwise file one,** with `tracker_create`, or with the tracker server when it needs the epic or work type
    below. Shape it like the ticket template (`ticket-template.md` in the `jira-ticket` skill):
    - **Work type:** Story (a user-visible change), Task, or Bug.
-   - **Parent:** the project's epic, which is its lane. Find it with
-     `project = <KEY> AND issuetype = Epic AND labels = roadmap`, matched by the repo.
+   - **Parent:** the project's epic, which is its lane: an epic labelled `roadmap`, matched by the repo. Find it with
+     {{tracker_epic_query}}.
    - **Labels:** `proposed`, an execution label and `repo:<repo name>`. The execution label is `exec:pair` when a
      person is working with you, or `exec:human` when only a person can do it. Never `exec:agent`: only a person
      makes work run unattended, and the hook refuses it.
