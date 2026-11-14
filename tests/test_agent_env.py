@@ -20,8 +20,12 @@ import check_registry  # noqa: E402
 def test_pins_agree():
     assert check_registry.agent_pin_problems(ROOT) == []
     raw = yaml.safe_load((ROOT / "environments" / "agent.yaml").read_text())
-    # extends names the environment serving the pinned digest (KAN-477), here suite-default-candidate, not the harness
-    assert check_registry.agent_extends_problems(ROOT, "agent", "suite-default", raw["env"])
+    # extends names the environment serving the pinned digest (KAN-477): suite-default-candidate while candidate is
+    # ahead of stable, suite-default once a promotion makes stable the current lock (KAN-508); never the other one
+    serving = check_registry.harness_env(ROOT, raw["env"]["AGENT_ENV_HARNESS"], raw["env"]["AGENT_ENV_HARNESS_DIGEST"])
+    assert raw["extends"] == serving
+    other = "suite-default-candidate" if serving == "suite-default" else "suite-default"
+    assert check_registry.agent_extends_problems(ROOT, "agent", other, raw["env"])
 
 
 def copy_repo(tmp_path: Path) -> Path:

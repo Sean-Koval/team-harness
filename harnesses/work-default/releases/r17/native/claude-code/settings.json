@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash(terraform apply:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(terraform import:*)",
+      "Bash(kubectl apply:*)",
+      "Bash(kubectl delete:*)",
+      "Bash(helm upgrade:*)",
+      "Bash(helm install:*)",
+      "Edit(/workspace/deploy/**)",
+      "Write(/workspace/deploy/**)",
+      "Read(~/.kube/**)",
+      "Bash(gh pr merge:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Work harness: read the ticket (jira-ticket; no ticket: work-start), read the company process (org-process), plan across /workspace/<role> (change-set), questions become Decision tickets (decision-ticket), docs in the same PR (work-docs), describe each PR with its Jira and Docs lines (github-pr), then the approval gates the org declares and a drafted review request (release-approvals). Never merge. /workspace/deploy is read-only. Agents never move tickets.'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/guard_work.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/guard_work_system.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/knowledge_session_end.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -138,7 +138,7 @@ def test_release_copies_never_change(repo):
     rel = promote.write_release(h)
     assert promote.release_problems(h) == []
     _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "add", "-A")
-    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "release")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "release", "--allow-empty")  # the copy may already be committed (a promoted lock)
     base = _git(root, "rev-parse", "HEAD")
     with (rel / HOOK).open("a") as f:
         f.write("# edited\n")

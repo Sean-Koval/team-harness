@@ -1,0 +1,120 @@
+# hangar harness lock (docs/harness-lock.md). Written by `hangar harness freeze`; identity is
+# harness_digest, printed by `hangar harness check`.
+schema: hangar.harness-lock/v1
+name: suite-default
+revision: 15
+runtime:
+  harness: claude-code
+  version: 2.1.296
+  pack: null
+model:
+  id: claude-opus-5-5
+  policy: balanced
+components:
+- id: guide:CLAUDE.md
+  digest: sha256:ceec5c37bbf265f9315501f5d1cde32bd7e0c7966b46f7fa960fa5285d518106
+  path: CLAUDE.md
+- id: skill:decision-ticket
+  digest: sha256:ec6dce07043e575f080b6ae85deba7224170166446f0c235faf45ff2972516f4
+  tree: sha256:48fa6eccf253039de805de6a9677dfeefcd28b769ed213bc802a79d8b8f96817
+  path: skills/decision-ticket
+  source: path:skills/decision-ticket
+- id: skill:github-pr
+  digest: sha256:6681f0c05e71565b4e8cd27acd1dba85553340a3a27bc27af468c74c67531645
+  tree: sha256:22ec4eb818561fb42909b164de8987dbae66aaabeaf471aaf9898d47565944e2
+  path: skills/github-pr
+  source: path:skills/github-pr
+- id: skill:jira-ticket
+  digest: sha256:f9d5b69b1d2a06020505fa3a6cb8f86b0cfd30d8ff63195fb2cc22a8e328086c
+  tree: sha256:51bdb1054baf051a97a79b1973293320266866032bd4fcd19adb13ddc14ab70a
+  path: skills/jira-ticket
+  source: path:skills/jira-ticket
+- id: skill:work-docs
+  digest: sha256:9aada2ac81c3048ab0cafecdf0f4566e7550e26f6e9fca735c050b5e27d45919
+  tree: sha256:e165729965ca071c76eb74e5b097b080b5d9687d698cd9068535981e4256d43a
+  path: skills/work-docs
+  source: path:skills/work-docs
+- id: skill:work-start
+  digest: sha256:165ea2e570f3bdca4adbae543504f04415101a62041ec86e832d192e0adc86ef
+  tree: sha256:92e0e55962fcc2fa4f20938e150656d443b6b1aa4f7fb00df14b2a7e8d4424ee
+  path: skills/work-start
+  source: path:skills/work-start
+- id: skill:extract-records
+  digest: sha256:8e8c03de08c383c152354de9bbac28228a88fa64f6ea21d6fc9f05aec698fa98
+  tree: sha256:53ee152c7672d05ba7dd912c3764fe2b19580c3ae38ad60383384fab89d0600e
+  path: skills/extract-records
+  source: path:skills/extract-records
+- id: skill:knowledge-context
+  digest: sha256:ee737f7bd7ed56713684492a7948caa2cfc9ea861b116bbde665c1de723c2414
+  tree: sha256:08348e08e1660f2b410c51125c19b56043bd693c7775f627b70552d993f22af0
+  path: skills/knowledge-context
+  source: path:skills/knowledge-context
+- id: skill:query-knowledge
+  digest: sha256:f62a80d6497643b55ca8f788c2c7a7cbd53a61bd56a9523f34fea761831779ea
+  tree: sha256:1412b66aec360f477f33364874c89fd295dcb318a9c581fff71553c3e41f5d02
+  path: skills/query-knowledge
+  source: path:skills/query-knowledge
+- id: skill:whats-next
+  digest: sha256:26d60515651408544edf8f8f715a5898ecf1bf06b7a0d72c3584c3feacfc04e4
+  tree: sha256:8b2c4e388f84ee4d2de13f9d4f2881d46d0360453060777e59131b009a86c234
+  path: skills/whats-next
+  source: path:skills/whats-next
+- id: skill:plan-to-tickets
+  digest: sha256:77fa10be1f88fbe46209ee3547a81339d28c8ddae0aaa10eca0feeceb4bd5fc7
+  tree: sha256:cd5bbda9256eb5604ed6a1dfc9805d90cc5185eab5906ae7723c9da391b8ad84
+  path: skills/plan-to-tickets
+  source: path:skills/plan-to-tickets
+- id: skill:codify-lesson
+  digest: sha256:6f15b583156d18283ea2614386c672a0750bdfc1874389b665b0a428bd8aed57
+  tree: sha256:749422a4cf9841c1903dd55fdd89b4981a5ee29e99c7de1397a15ba17912699d
+  path: skills/codify-lesson
+  source: path:skills/codify-lesson
+- id: skill:knowledge-howto
+  digest: sha256:86a7a1b5476371f2d6972c17fcb94e194454d656af660876570bc071ba8e2905
+  tree: sha256:b1642220e873b393a7103eca2a3e4b55997ea4a96e58d3f3093eea39fdea7d19
+  path: skills/knowledge-howto
+  source: path:skills/knowledge-howto
+- id: native:claude-code/hooks/guard_work_system.py
+  digest: sha256:7efcacc34b4e22de656058743758cc9053c53a8070008c9fdc625a067384e850
+  path: native/claude-code/hooks/guard_work_system.py
+- id: native:claude-code/hooks/knowledge_session_end.py
+  digest: sha256:5c021673f439e14ece3682255fb75b17cc73d579b60d0bb5db98ed149cd30350
+  path: native/claude-code/hooks/knowledge_session_end.py
+- id: native:claude-code/settings.json
+  digest: sha256:f75a4644e2610ea98965c3c3f84c6f246b3ac72da21b4ce99918b02ddd2e5965
+  path: native/claude-code/settings.json
+binding:
+  mcp:
+  - name: ai-dlc
+    transport: stdio
+    command: ai-dlc
+    args:
+    - mcp
+    - serve
+    env_names:
+    - KNOWLEDGE_REPO
+  - name: atlassian
+    transport: http
+    endpoint: https://mcp.atlassian.com/v1/mcp
+    header_names:
+    - Authorization
+  - name: github
+    transport: http
+    endpoint: https://api.githubcopilot.com/mcp/
+    header_names:
+    - Authorization
+  permissions:
+    approvals: deny-risky
+  hooks:
+  - event: SessionStart
+    source: environment:.claude/settings.json
+    digest: sha256:434ef2bb500a97644a67a12d3dca60a3cf828ae189a471b8c051c3df2b224b28
+  - event: PreToolUse
+    source: environment:.claude/settings.json
+    digest: sha256:434ef2bb500a97644a67a12d3dca60a3cf828ae189a471b8c051c3df2b224b28
+  - event: SessionEnd
+    source: environment:.claude/settings.json
+    digest: sha256:434ef2bb500a97644a67a12d3dca60a3cf828ae189a471b8c051c3df2b224b28
+plugins:
+  autoUpdate: false
+remote: []
