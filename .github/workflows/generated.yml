@@ -1,8 +1,8 @@
 # Builds the generated files on main after each merge (KAN-481): the shared layer's copies, each harness's lock and
 # env files, `candidate` and the agent environment's harness pin (scripts/build_generated.py). PRs commit sources
 # only, so they never conflict on these. `stable` and releases/ are left alone: only scripts/promote.py moves them.
-# Two jobs, as ai-dlc's release.yml splits them: `build` installs hangar and runs the build and the checks with read-only access,
-# and hands over a patch; `push` holds the write token, installs nothing and runs no repository code: it applies the
+# Two jobs, as ai-dlc's release.yml splits them: `build` installs check.yml's tools (hangar, flightdeck, the ai-dlc
+# CLI), runs the build and check.yml's checks with read-only access, and hands over a patch; `push` holds the write token, installs nothing and runs no repository code: it applies the
 # patch and pushes it to main. If main moved during the build, the run queued behind this one rebuilds; if main
 # refuses the push (protection), it goes to bot/generated as a PR, and check.yml is started on that branch by
 # workflow_dispatch (a push or PR made with GITHUB_TOKEN starts no workflows itself).
@@ -21,7 +21,7 @@ concurrency:
 env:
   # the same tools as check.yml, at the same refs (tests/test_parallel_prs.py holds them equal), so the checks
   # below pass here exactly when they pass on a PR
-  HANGAR_REF: c7a2de229aecbad9b82d9cddd6112776dc6c9c5a
+  HANGAR_REF: ee176d11931f5db459c1c00d7c24905bf93137ef
   FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
   AI_DLC_REF: 72327f45d698a255cc6959b68b107a88f6fa421d
   PYTEST_VERSION: "9.2.0"
@@ -38,6 +38,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: main
+          fetch-depth: 0   # as check.yml: a release copy renders with the bindings of the commit that added it
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:

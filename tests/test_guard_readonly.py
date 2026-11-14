@@ -145,3 +145,44 @@ def test_a_closed_stdin_fails_closed():
     """With stdin closed, sys.stdin is None: the hook used to crash with exit 1, which lets the call through."""
     r = subprocess.run(["/bin/sh", "-c", f'"{sys.executable}" "{HOOK}" <&-'], capture_output=True)
     assert r.returncode == 2 and b"could not be read" in r.stderr and b"Traceback" not in r.stderr
+
+
+BLOCKED_CALL = json.dumps({"tool_name": "Bash", "tool_input": {"command": "kubectl delete pod é"}}).encode()
+
+
+@pytest.mark.parametrize("data", [BLOCKED_CALL, b"not json", b"\xff\xfe"])
+def test_a_block_also_denies_on_stdout_with_the_same_reason(data):
+    """A block exits 2 and also prints one PreToolUse deny, nothing else, with the words stderr carries (KAN-460):
+    Claude Code reads it alongside the exit 2, and where a shell turns the 2 into 1, valid JSON still decides."""
+    r = subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True)
+    assert r.returncode == 2
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert (out["hookEventName"], out["permissionDecision"]) == ("PreToolUse", "deny")
+    assert out["permissionDecisionReason"] == r.stderr.decode("utf-8").strip()
+    assert r.stdout.decode("ascii").strip().count("\n") == 0
+
+
+def test_an_allowed_call_prints_nothing():
+    """A deny is only printed on a block; an allowed call leaves stdout empty, so Claude Code's own flow decides."""
+    r = subprocess.run([sys.executable, str(HOOK)], capture_output=True,
+                       input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                         "tool_input": {"command": "kubectl get pods"}}).encode())
+    assert (r.returncode, r.stdout) == (0, b"")
+
+
+@pytest.mark.parametrize("tool", ["PowerShell", "Bash"])
+@pytest.mark.parametrize("command", [
+    'Kubectl delete pod x',
+    'KUBECTL.exe delete pod x',
+    "& 'Kubectl' delete pod x",
+    'Helm UNINSTALL web',
+])
+def test_program_names_in_any_case_are_blocked(tool, command):
+    """KAN-491: Windows, and macOS's default file system, find Kubectl.EXE as kubectl."""
+    r = _tool(tool, command)
+    assert r.returncode == 2, (command, r.stderr)
+
+
+@pytest.mark.parametrize("command", ['Kubectl get pods', 'KUBECTL describe pod x', 'Helm list'])
+def test_reads_in_any_case_still_pass(command):
+    assert _tool("PowerShell", command).returncode == 0, command

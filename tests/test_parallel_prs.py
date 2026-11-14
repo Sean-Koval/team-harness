@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -208,6 +209,34 @@ def test_a_hand_edited_copy_fails(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+def test_stable_env_changes_only_with_a_promotion(tmp_path):
+    """ac72dd6: generated.yml built main from a depth-1 clone, where render_envs can't find the commit that added
+    stable's release copy, so it rendered suite-default's stable environment with main's bindings: a dependency added
+    after the release reached stable with no promotion. The build now refuses that, and still writes stable's
+    environment after a promotion."""
+    pytest.importorskip("hangar")
+    full = _clone(tmp_path)
+    env = "harnesses/suite-default/env.stable.yaml"
+    b = full / "bindings/suite-default.yaml"
+    data = yaml.safe_load(b.read_text())
+    data.setdefault("dependencies", {}).setdefault("pip", []).append("example-tool==1.0")
+    b.write_text(yaml.safe_dump(data, sort_keys=False))
+    _build_and_commit(full, "KAN-1: a dependency")  # full history: stable keeps the bindings of its release
+    stable = (full / env).read_text()
+    assert "example-tool" not in stable
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{full}", str(shallow)], check=True,
+                   capture_output=True)
+    r = _run(shallow, "scripts/build_generated.py", "--note", "shallow")
+    assert r.returncode != 0 and f"{env}: the build would change stable's environment" in r.stderr, r.stderr
+    assert (shallow / env).read_text() == stable
+    # a promotion moves stable, and its environment with it
+    r = _run(full, "scripts/promote.py", "harnesses/suite-default")
+    assert r.returncode == 0, r.stderr
+    _build_and_commit(full, "KAN-2: promote")
+    assert "example-tool==1.0" in (full / env).read_text()
+
+
 def test_guard_refuses_a_changelog_edit_but_not_its_creation(tmp_path):
     """A PR edits CHANGELOG.md only when it folds fragments (deletes them); adding the file is fine."""
     pytest.importorskip("hangar")
@@ -240,3 +269,12 @@ def test_generated_yml_runs_the_checks_with_check_yml_tools():
     build = "\n".join(str(s.get("run", "")) for s in gen["jobs"]["build"]["steps"])
     for k in refs:
         assert "${" + k + "}" in build, f"generated.yml's build installs nothing at {k}"
+    # a shallow clone renders a release copy's env with today's bindings, so stable would change without a promotion
+    def depth(steps):
+        return [s.get("with", {}).get("fetch-depth") for s in steps if str(s.get("uses", "")).startswith("actions/checkout")]
+    assert depth(gen["jobs"]["build"]["steps"]) == depth(check["jobs"]["check"]["steps"]) == [0], "fetch-depth differs"
+    # a tool installed but left off PATH (the ai-dlc CLI's own venv) is as missing as one not installed
+    check_steps = [s for job in check["jobs"].values() for s in job.get("steps", [])]
+    for line in "\n".join(str(s.get("run", "")) for s in check_steps).splitlines():
+        if "GITHUB_PATH" in line:
+            assert line.strip() in build, f"generated.yml's build lacks check.yml's PATH line: {line.strip()}"

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """PreToolUse hook for the work system: work carries a ticket key, and agents don't move tickets.
 
-Claude Code passes the tool call as JSON on stdin. This exits 2 with the reason on stderr (Claude Code shows it to the
-agent and skips the call) for:
+Claude Code passes the tool call as JSON on stdin. This exits 2 with the reason on stderr, and prints the same
+reason as a PreToolUse deny on stdout, which Claude Code reads alongside the exit 2 (it shows the reason to the agent
+and skips the call), for:
 
 - `git commit` on a branch whose name has no ticket key (except `nokey/`, `deps/`, `dependabot/`, `renovate/`
   branches, and the `claude/` branches a cloud session is assigned), or on main/master;
@@ -49,8 +50,10 @@ decide it are not in the call. Not covered: shell aliases and functions defined 
 outside it, code fetched or built at run time (`bash -c "$(curl ...)"`, base64 decoding, IFS tricks, string
 concatenation in a script), and commands build tools read from their own files (`make`, `npm run`, `just`); the PR
 check and branch protection still apply. A PowerShell call is also read as PowerShell runs it: `iex` and
-`Invoke-Expression` are judged as `eval`, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a
-backtick before a character or a line end is that character or a continuation, and `$c = 'x'` sets c as `c=x` does.
+`Invoke-Expression` (also `iex('...')`, `-Command` and a string piped into it) are judged as `eval`, every script
+block (`Invoke-Command`, `icm`, `% {...}`, `$sb = {...}`, nested) as the commands in it, `Start-Process` (program and `-ArgumentList`) and `cmd /c` as `sh -c`, a backtick before a
+character or a line end is that character or a continuation, and `$c = 'x'` sets c as `c=x` does. Not covered there:
+a program name built at run time (`& ('g'+'h')`), splatting (`gh @a`) and `[scriptblock]::Create`.
 Input that is not UTF-8, not JSON or not an object, a shell call without command text, a closed stdin and any error
 in the hook itself are blocked (fail closed). Everything else is allowed with exit 0.
 The only commands it runs are `git symbolic-ref --short HEAD`, to learn the branch, and `git config --get
@@ -78,6 +81,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import unicodedata
 
 KEY = os.environ.get("WORK_SYSTEM_KEY") or r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
@@ -180,14 +184,73 @@ def _branch(cwd: str | None, git_c: str | None) -> str | None:
 
 def _words(segment: str) -> list[str]:
     try:
-        lex = shlex.shlex(segment, posix=True)
-        lex.whitespace_split = True
-        lex.commenters = ""
-        if DRIVE_PATH.search(segment):
-            lex.escape = ""  # a Windows path: C:\Users must not lose its backslashes
-        return list(lex)
+        # a Windows path: C:\Users must not lose its backslashes
+        return _posix_words(segment, escape=not DRIVE_PATH.search(segment))
     except ValueError:
         return segment.split()
+
+
+_UNQUOTED = re.compile(r"[^\s'\"\\]+")
+_IN_DOUBLE = re.compile(r'[^"\\]+')
+
+
+def _posix_words(text: str, escape: bool = True) -> list[str]:
+    """The words of `text` as shlex reads them (POSIX mode, split on whitespace, no comments), in linear time: shlex
+    builds each word a character at a time, which is quadratic on a long word and could hold the hook past its
+    timeout. Raises ValueError on an open quote or a trailing backslash, as shlex does."""
+    words, cur, i, n, started = [], [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if c in " \t\r\n":
+            if started:
+                words.append("".join(cur))
+                cur, started = [], False
+            i += 1
+            continue
+        started = True
+        if c == "'":
+            j = text.find("'", i + 1)
+            if j < 0:
+                raise ValueError("No closing quotation")
+            cur.append(text[i + 1:j])
+            i = j + 1
+        elif c == '"':
+            i += 1
+            while True:
+                m = _IN_DOUBLE.match(text, i)
+                if m:
+                    cur.append(m.group(0))
+                    i = m.end()
+                if i >= n:
+                    raise ValueError("No closing quotation")
+                if text[i] == '"':
+                    i += 1
+                    break
+                if not escape:  # a backslash, kept as it is
+                    cur.append("\\")
+                    i += 1
+                    continue
+                if i + 1 >= n:
+                    raise ValueError("No closing quotation")
+                nxt = text[i + 1]
+                cur.append(nxt if nxt in '"\\' else "\\" + nxt)  # only \" and \\ are escapes inside "..."
+                i += 2
+        elif c == "\\" and escape:
+            if i + 1 >= n:
+                raise ValueError("No escaped character")
+            cur.append(text[i + 1])
+            i += 2
+        else:
+            m = _UNQUOTED.match(text, i)
+            if m:
+                cur.append(m.group(0))
+                i = m.end()
+            else:  # a backslash with escapes off
+                cur.append(c)
+                i += 1
+    if started:
+        words.append("".join(cur))
+    return words
 
 
 def _git_subcommand(words: list[str]) -> tuple[str | None, str | None, list[str]]:
@@ -562,12 +625,42 @@ def why(event: dict) -> str | None:
     command = event["tool_input"].get("command") if isinstance(event.get("tool_input"), dict) else None
     if not isinstance(command, str):
         return "the shell call carries no command text, so it cannot be checked"
+    if len(command) > MAX_COMMAND:
+        return (f"the command is longer than {MAX_COMMAND >> 20} MB, too long to judge before the hook's timeout: "
+                "put the code in a script file and run that")
     cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
-    reason = _judge(command, _Ctx(cwd, command), 0)
-    if reason or tool != "PowerShell":
-        return reason
-    ps = _powershell(command)  # PowerShell's own escapes, judged too: either reading may be how it runs
-    return _judge(ps, _Ctx(cwd, ps), 0) if ps != command else None
+    _CALL.update(deadline=time.monotonic() + DEADLINE, scripts={})
+    try:
+        reason = _judge(command, _Ctx(cwd, command), 0)
+        if reason or tool != "PowerShell":
+            return reason
+        ps = _powershell(command)  # PowerShell's own escapes, judged too: either reading may be how it runs
+        _CALL["scripts"] = {}  # a script judged in the first reading may read differently in this one
+        return _judge(ps, _Ctx(cwd, ps), 0) if ps != command else None
+    except _TooLong:
+        return (f"the call takes longer than {DEADLINE:g} s to judge, so it cannot be checked before the hook's "
+                "timeout, which would let it through: run fewer or smaller scripts in one call")
+    finally:
+        _CALL.update(deadline=None, scripts={})
+
+
+# A hook that runs past its timeout (10 s in settings.json) is killed, and Claude Code then runs the call. So judging
+# stops at this deadline, well inside the timeout, and the call is blocked instead.
+DEADLINE = 5.0
+# The deadline is checked between commands, not inside a pass over the whole text, so a very long call could still
+# overshoot it on a slow machine: a command this long is blocked unread.
+MAX_COMMAND = 1 << 20  # characters
+_CALL: dict = {"deadline": None, "scripts": {}}  # this call's deadline, and each script file's verdict once judged
+
+
+class _TooLong(Exception):
+    """Judging the call has passed DEADLINE."""
+
+
+def _in_time() -> None:
+    deadline = _CALL["deadline"]
+    if deadline is not None and time.monotonic() > deadline:
+        raise _TooLong
 
 
 def _powershell(command: str) -> str:
@@ -590,7 +683,87 @@ def _powershell(command: str) -> str:
             continue
         out.append(c)
         i += 1
-    return "".join(out)
+    text = "".join(out)
+    # Invoke-Expression -Command '...' (or -C, -Com: PowerShell takes any prefix of a parameter name) and iex('...'):
+    # the code iex runs, as `iex '...'` reads it. The call's closing parenthesis stays, which changes no verdict.
+    text = PS_IEX_COMMAND.sub(r"\1 ", text)
+    text = PS_IEX_CALL.sub(r"\1 ", text)
+    return _script_blocks(text)
+
+
+def _script_blocks(text: str) -> str:
+    """Every script block's body, and every parenthesis's, as commands of their own: `{`, `}`, `(` and `)` outside
+    quotes become `;`. Invoke-Command {...}, icm -ScriptBlock {...}, `% {...}`, Start-Job {...}, an `if` body,
+    `$sb={...}`, a grouping `(gh ...)` or `$(gh ...)`, a `param(...)` with its default values and validation scripts,
+    and the commands after it, then each have their commands judged, however deeply they nest, whatever is quoted
+    inside, and whether or not the block runs.
+    `${name}` is a variable, not a block, and stays. A quote still open at the end (a here-string, an escaped quote)
+    means the quotes were misread, so the pass is made again with every brace, parenthesis and block-comment marker
+    converted and the quotes dropped, which leaves each command's words to be judged. Linear time."""
+    out = _blocks(text, track_quotes=True)
+    if out is not None:
+        return out
+    # misread quotes: a block comment's markers become separators too, so the code between comments stands alone
+    plain = text.replace("'", " ").replace('"', " ").replace("<#", " ; ").replace("#>", " ; ")
+    return _blocks(plain, track_quotes=False)
+
+
+def _blocks(text: str, track_quotes: bool) -> str | None:
+    """With track_quotes, a `$(...)` inside double quotes is code, as PowerShell runs it, and a comment (`#` to the
+    line's end, `<# ... #>`) is dropped, so a quote inside one can't hide the code after it."""
+    out, i, n, quote = [], 0, len(text), ""
+    subs: list[int] = []  # for each `$(` open inside a double-quoted string, the parentheses open inside it
+    while i < n:
+        c = text[i]
+        if quote == '"' and text.startswith("$(", i):
+            subs.append(0)
+            quote = ""
+            out.append('" ; ')  # the string closes here, so the code in it reads as commands
+            i += 2
+            continue
+        if quote:
+            quote = "" if c == quote else quote
+        elif track_quotes and c in "'\"":
+            quote = c
+        elif track_quotes and c in "#<" and (not i or text[i - 1] in PS_TOKEN_BREAK):
+            if c == "#":  # a comment to the line's end; the line end stays
+                end = text.find("\n", i)
+                i = n if end < 0 else end
+                continue
+            if text.startswith("<#", i):  # a block comment
+                end = text.find("#>", i + 2)
+                out.append(" ")
+                i = n if end < 0 else end + 2
+                continue
+        elif c == "{" and i and text[i - 1] == "$":
+            end = text.find("}", i)
+            end = n - 1 if end < 0 else end
+            out.append(text[i:end + 1])
+            i = end + 1
+            continue
+        elif c == ")" and subs and not subs[-1]:  # the end of a `$(` in a string: back inside the string
+            subs.pop()
+            quote = '"'
+            out.append(' ; "')
+            i += 1
+            continue
+        elif c in "{}()":
+            if subs:
+                subs[-1] += 1 if c == "(" else -1 if c == ")" else 0
+            # `(` leaves a word in its place, as its value: `--body-file (Join-Path . b.md)` keeps a value to judge
+            out.append(" __value__ ; " if c == "(" else " ; ")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return None if quote or subs else "".join(out)
+
+
+PS_TOKEN_BREAK = " \t\r\n;|&(){}"  # what may come right before a comment's `#` or `<#`
+
+
+PS_IEX_CALL = re.compile(r"(?i)\b(iex|invoke-expression)\s*@?\(\s*")
+PS_IEX_COMMAND = re.compile(r"(?i)\b(iex|invoke-expression)\s+-c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?(?::|(?=[\s('\"]))")
 
 
 # Claude Code's shell tools: Bash, and on Windows PowerShell (where Git Bash isn't installed). Both carry the command
@@ -666,6 +839,10 @@ def _split(command: str) -> tuple[list[str], list[str], dict[int, str]]:
             quote = None if quote == '"' else '"'
         elif c == "'" and quote is None:
             quote = "'"
+        elif quote is None and c == "#" and (not i or command[i - 1] in " \t\r\n;&|()"):
+            end = command.find("\n", i)  # a comment, to the line's end: a quote in it opens nothing
+            i = n if end < 0 else end
+            continue
         elif quote is None:
             m = HEREDOC.match(command, i) if command.startswith("<<", i) and not command.startswith("<<<", i) else None
             if m:
@@ -737,7 +914,9 @@ GIT_BUILTINS = {"add", "am", "apply", "archive", "bisect", "blame", "branch", "b
                 "update-index", "update-ref", "version", "worktree", "lfs", "credential", "hash-object", "maintenance"}
 GH_MUTATIONS = re.compile(r"mergePullRequest|enablePullRequestAutoMerge|dismissPullRequestReview|"
                           r"approvePullRequest")
-GH_APPROVE = re.compile(r"(?i)(?:add|submit)PullRequestReview[\s\S]*\bAPPROVE\b|event[\"']?\s*[=:]\s*[\"']?APPROVE\b")
+GH_REVIEW_MUTATION = re.compile(r"(?i)(?:add|submit)PullRequestReview")
+APPROVE_WORD = re.compile(r"(?i)\bAPPROVE\b")
+GH_APPROVE_EVENT = re.compile(r"(?i)event[\"']?\s*[=:]\s*[\"']?APPROVE\b")
 GH_DISMISS = re.compile(r"(?:^|/)pulls/[^/\s]+/reviews/[^/\s]+/dismissals/?$")
 ATLASSIAN_URL = re.compile(r"(?i)^(?:https?://)?[^/\s]*(?:atlassian\.net|atlassian\.com|jira|confluence)[^/\s]*(?:/|$)"
                            r"|/rest/api/|/rest/agile/|/wiki/rest/|/wiki/api/")
@@ -755,6 +934,7 @@ class _Ctx:
         self.vars: dict[str, str] = {}
         self.ps_vars: dict[str, str] = {}  # PowerShell's, by lower-case name: its variable names ignore case
         self.stdin: str | None = None  # the heredoc body the current command reads
+        self.scanned: list[str | None] = []  # _scan of the whole call, once: each bare iex asks again
 
 
 def _canon(text: str) -> str:
@@ -849,6 +1029,7 @@ def _judge(command: str, ctx: _Ctx, depth: int) -> str | None:
     """The reason to block a shell command line, judging every command in it, nested ones included."""
     if depth > 6:
         return "the command nests shells, scripts and substitutions too deeply to be checked"
+    _in_time()
     command = CONTINUATION.sub(" ", command)
     try:
         segments, subs, bodies = _split(command)
@@ -859,6 +1040,7 @@ def _judge(command: str, ctx: _Ctx, depth: int) -> str | None:
         if reason:
             return reason
     for k, segment in enumerate(segments):
+        _in_time()
         ctx.stdin = bodies.get(k)
         reason = _segment(_expand(segment.strip(), ctx), ctx, depth)
         if reason:
@@ -896,9 +1078,9 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
             if m:
                 ctx.aliases[m.group(1)] = m.group(2)
         return None
-    if prog in ("iex", "invoke-expression"):  # PowerShell's eval
+    if prog in ("iex", "invoke-expression"):  # PowerShell's eval; with no argument, the code comes down the pipeline
         return _judge(" ".join(words[1:]), ctx, depth + 1) or \
-            (_scan(ctx.full, ctx) if re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
+            (_scan_full(ctx) if len(words) == 1 or re.search(r"\$[({A-Za-z_]", " ".join(words[1:])) else None)
     if prog == "cmd":
         code = next((i for i, w in enumerate(words[1:], 1) if w.lower() in ("/c", "/k", "/r")), None)
         return _judge(" ".join(words[code + 1:]), ctx, depth + 1) if code else None
@@ -906,7 +1088,7 @@ def _segment(segment: str, ctx: _Ctx, depth: int) -> str | None:
         return _start_process(words, ctx, depth)
     if prog == "eval":
         code = " ".join(words[1:])
-        return _judge(code, ctx, depth + 1) or (_scan(ctx.full, ctx) if re.search(r"\$[({A-Za-z_]|`", code) else None)
+        return _judge(code, ctx, depth + 1) or (_scan_full(ctx) if re.search(r"\$[({A-Za-z_]|`", code) else None)
     if prog in ("source", ".") and len(words) > 1:
         return _script(words[1], ctx, depth, "shell")
     if prog in SHELLS:
@@ -965,7 +1147,7 @@ def _program(word: str, ctx: _Ctx, depth: int) -> str | None:
     name = re.escape(re.split(r"[\\/]", word)[-1])
     if name and re.search(rf"(?:>|\btee\b[^|;&\n]*?|\b(?:cp|mv|install|ln)\b[^|;&\n]*?)\s*['\"]?[^\s'\"|;&]*{name}\b",
                           ctx.full):
-        return _scan(ctx.full, ctx)
+        return _scan_full(ctx)
     return None
 
 
@@ -1060,12 +1242,22 @@ def _interpreter(prog: str, words: list[str], ctx: _Ctx, depth: int) -> str | No
 
 def _script(path: str, ctx: _Ctx, depth: int, kind: str | None) -> str | None:
     """A script file the call runs, judged by its contents: shell scripts command by command, other code scanned. A
-    script the hook cannot read (written by this same call, say) is judged by scanning the whole call."""
+    script the hook cannot read (written by this same call, say) is judged by scanning the whole call. A file is
+    judged once for each state of the call (directory, variables, aliases) it runs in: running it again costs nothing."""
+    key = (os.path.realpath(_path(path, ctx.cwd)), kind, ctx.cwd, ctx.stdin,
+           *(tuple(sorted(d.items())) for d in (ctx.vars, ctx.ps_vars, ctx.aliases, ctx.git_aliases)))
+    scripts = _CALL["scripts"]  # the same file judged in the same state gets the same verdict
+    if key not in scripts:
+        scripts[key] = _script_verdict(path, ctx, depth, kind)
+    return scripts[key]
+
+
+def _script_verdict(path: str, ctx: _Ctx, depth: int, kind: str | None) -> str | None:
     try:
         with open(_path(path, ctx.cwd), "rb") as fh:
             data = fh.read(MAX_SCRIPT)
     except OSError:
-        return _scan(ctx.full, ctx)
+        return _scan_full(ctx)
     if b"\x00" in data[:4096]:
         return None  # a binary: not a script
     text = _text(data)
@@ -1134,16 +1326,25 @@ def _wrapped(prog: str, words: list[str], ctx: _Ctx, depth: int) -> str | None:
     return None
 
 
+def _scan_full(ctx: _Ctx) -> str | None:
+    """_scan of the whole call, worked out once per call, so many commands that read hidden code stay linear."""
+    if not ctx.scanned:
+        ctx.scanned.append(_scan(ctx.full, ctx))
+    return ctx.scanned[0]
+
+
 def _scan(text: str, ctx: _Ctx) -> str | None:
     """Code the hook cannot parse as shell (python -c, a script file, stdin) scanned for what it would run: a git or gh
     command written as words or a list (`["gh", "pr", "merge", n]`), an HTTP write to Jira or Confluence, and GitHub's
     merge and approve endpoints and mutations."""
+    _in_time()
     text = _canon(text)
     for line in re.split(r"[\r\n;]+", text):
         toks = re.findall(r"[^\s'\"`,\[\](){}]+", line)
         for i, t in enumerate(toks):
             p = _prog(t)
             if p in ("git", "gh"):
+                _in_time()
                 reason = _command(toks[i:i + 16], ctx, scan=True)
             elif p in HTTP_CLIENTS:
                 reason = _http(toks[i:i + 40])
@@ -1152,16 +1353,42 @@ def _scan(text: str, ctx: _Ctx) -> str | None:
             if reason:
                 return reason
     if MERGE_RULE != "allowed":
-        if GH_MUTATIONS.search(text) or re.search(r"pulls/[^\s'\"]*/merge\b", text):
+        if GH_MUTATIONS.search(text) or any(_after(t, "pulls/", MERGE_TAIL, 6) for t in _runs(text)):
             return NEVER_MERGE
         if re.search(r"(?i)PullRequestReview", text) and re.search(r"\bAPPROVE\b", text):
             return NEVER_APPROVE
-    if re.search(r"(?i)https?://[^\s'\"]*(?:atlassian\.net|jira|confluence)[^\s'\"]*", text) and \
+    if any(_after(t.lower(), "http", ATLASSIAN_HOST, 0, r"https?://") for t in _runs(text)) and \
             (re.search(r"(?i)/transitions\b", text) or
              re.search(r"(?i)\b(?:post|put|patch|delete)\b|method\s*[=:]|--data|--json|\bdata\s*=|\bjson\s*=", text)):
         return ("this code writes to Jira or Confluence over HTTP, past the tracker and wiki rules: use the tracker "
                 "MCP tools, or ask a person")
     return None
+
+
+MERGE_TAIL = re.compile(r"/merge\b")
+ATLASSIAN_HOST = re.compile(r"atlassian\.net|jira|confluence")
+
+
+def _runs(text: str):
+    """The runs of text between whitespace and quotes, which a URL or an API path can't cross."""
+    return (m.group(0) for m in re.finditer(r"[^\s'\"]+", text))
+
+
+def _after(word: str, start: str, tail: re.Pattern, gap: int, head: str | None = None) -> bool:
+    """Whether `tail` occurs in `word` at or after `gap` characters past the first `start` (that also matches `head`
+    there). Linear: a regex like `pulls/[^\\s]*/merge` restarts at every `pulls/` and is quadratic on a long word,
+    which could hold the hook past its timeout."""
+    i = word.find(start)
+    while i >= 0 and head and not re.match(head, word[i:i + 8]):
+        i = word.find(start, i + 1)
+    return i >= 0 and tail.search(word, i + gap) is not None
+
+
+def _approves(payload: str) -> bool:
+    """GH_APPROVE without its quadratic `[\\s\\S]*`: APPROVE after the first addPullRequestReview or
+    submitPullRequestReview, or an `event: APPROVE` field."""
+    m = GH_REVIEW_MUTATION.search(payload)
+    return bool(m and APPROVE_WORD.search(payload, m.end())) or bool(GH_APPROVE_EVENT.search(payload))
 
 
 def _http(words: list[str], stdin: str = "") -> str | None:
@@ -1204,7 +1431,7 @@ def _http(words: list[str], stdin: str = "") -> str | None:
         if MERGE_RULE != "allowed" and "github" in url.lower():
             if GH_API_MERGE.search(path) or GH_MUTATIONS.search(payload):
                 return NEVER_MERGE
-            if GH_DISMISS.search(path) or (path.rstrip("/").endswith("/reviews") and GH_APPROVE.search(payload)):
+            if GH_DISMISS.search(path) or (path.rstrip("/").endswith("/reviews") and _approves(payload)):
                 return NEVER_APPROVE
         if ATLASSIAN_URL.search(url) and write:
             return ("a write to Jira or Confluence over HTTP skips the tracker and wiki rules: use the tracker MCP "
@@ -1311,7 +1538,7 @@ def _command(words: list[str], ctx: _Ctx, scan: bool = False, hops: int = 0) -> 
     if args[:1] == ["alias"] and args[1:2] == ["set"] and len(args) > 3:
         return _alias_value("gh", args[3], [], ctx, scan, hops, shell="--shell" in args or "-s" in args)
     if args[:1] == ["alias"] and args[1:2] == ["import"]:
-        return _script(args[2], ctx, 0, "code") if len(args) > 2 and args[2] != "-" else _scan(ctx.full, ctx)
+        return _script(args[2], ctx, 0, "code") if len(args) > 2 and args[2] != "-" else _scan_full(ctx)
     if args and args[0] not in GH_BUILTINS and hops < 3:
         value = _gh_aliases().get(args[0])
         if value is not None:
@@ -1362,7 +1589,7 @@ def _gh_api(args: list[str], ctx: _Ctx) -> str | None:
     endpoints = [w for w in args if not w.startswith("-") and w not in fields]
     if any(GH_API_MERGE.search(w) for w in endpoints) or GH_MUTATIONS.search(payload):
         return NEVER_MERGE
-    if any(GH_DISMISS.search(w) for w in endpoints) or GH_APPROVE.search(payload):
+    if any(GH_DISMISS.search(w) for w in endpoints) or _approves(payload):
         return NEVER_APPROVE
     return None
 
@@ -1394,8 +1621,23 @@ def _main() -> int:
 
 
 def _block(reason: str) -> int:
+    # Exit 2 with the reason on stderr is the verdict: Claude Code blocks the call and shows the agent the reason.
+    # PowerShell's -Command turns a native exit 2 into 1, so the installer's Windows hook commands end in
+    # `exit $LASTEXITCODE` to keep the 2. The same reason also goes to stdout as a PreToolUse deny, which Claude Code
+    # reads alongside exit 2. Where a shell turns the 2 into 1 anyway, valid JSON decides the call, except on Windows
+    # without Git Bash, where any code but 0 or 2 is a hook failure. If something else writes to stdout (a shell
+    # profile) the JSON is not read, and the non-zero exit still blocks.
+    message = f"blocked by the work-system hook: {reason}."
+    deny = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": message}}
+    try:
+        sys.stdout.flush()
+        sys.stdout.buffer.write(json.dumps(deny, ensure_ascii=True).encode("ascii") + b"\n")
+        sys.stdout.buffer.flush()
+    except (OSError, ValueError):
+        pass  # the exit code below still blocks
     sys.stderr.flush()
-    sys.stderr.buffer.write(f"blocked by the work-system hook: {reason}.\n".encode("utf-8"))
+    sys.stderr.buffer.write((message + "\n").encode("utf-8"))
     sys.stderr.buffer.flush()
     return 2
 
