@@ -200,14 +200,22 @@ def build(root: Path, note: str) -> list[str]:
         digest = hl.harness_digest(lock)
         if digest != before:
             (d / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
-        want = render_envs.render(d)
+        try:
+            want = render_envs.render(d)
+        except SystemExit as e:
+            # a clone without stable's release history renders stable with main's bindings, which may not fit
+            # stable's lock (a renamed server, KAN-459): refuse that as a stable change, after building the rest
+            if not stable_frozen(root, d, lock["name"]):
+                raise
+            refused.append(f"{d.relative_to(root).as_posix()}/env.stable.yaml ({e})")
+            want = {}
         for f in ENV_FILES:
             if f in want and (not (d / f).is_file() or (d / f).read_text(encoding="utf-8") != want[f]):
                 if f == "env.stable.yaml" and stable_frozen(root, d, lock["name"]):
                     refused.append(f"{d.relative_to(root).as_posix()}/{f}")
                     continue
                 (d / f).write_text(want[f], encoding="utf-8", newline="\n")
-            elif f not in want and (d / f).is_file():
+            elif f not in want and (d / f).is_file() and want:
                 (d / f).unlink()
         if digest != before:
             text = f"r{lock['revision']}: {note}"
