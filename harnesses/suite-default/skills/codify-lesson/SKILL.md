@@ -95,9 +95,10 @@ Never open two PRs for one lesson.
   entry whose pattern matches it; every changed file must give the same entry, and that entry must name exactly
   one person (`@login`; a team `@org/name` or an email is not one). That person is the reviewer. When there is no
   such file or entry, the files give different entries, the entry names no person or more than one, or the person
-  is the PR's own author (GitHub refuses that request), guess no one: leave the PR a draft, add the label
-  `needs-owner-review`, put the line `Owner review: Sean must review this before it merges.` in the body, and
-  name it under Flags. Never mark it ready yourself. With no ticket, open nothing and say so under Flags. The body
+  is the PR's own author (GitHub refuses that request), guess no one: open the PR as a draft with the line
+  `Owner review: Sean must review this before it merges.` in its body, add the label `needs-owner-review` and
+  name it under Flags. If the label can't be added, stop there and say so under Flags; never create it. Never mark
+  it ready yourself. With no ticket, open nothing and say so under Flags. The body
   holds a `Lesson: <lesson id>` line. Quote the lesson's "what to do next time" line only when it has no `label`;
   otherwise cite the id alone. Open it only in a harness repository the rules above allow. No records change.
 

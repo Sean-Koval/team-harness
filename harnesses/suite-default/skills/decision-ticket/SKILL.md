@@ -10,6 +10,9 @@ stop. Ask one question per ticket, so each one can close.
 
 ## Filing one
 
+Use the tools `jira-ticket` names. A Decision needs its work type, fields and a link, which ai-dlc's
+`tracker_create` doesn't set yet: file it on the tracker server, and comment with `tracker_comment` or that server.
+
 Create an issue with work type **Decision** in the work ticket's project, under the same epic, and fill its fields:
 
 | Field | What goes in it |
@@ -22,7 +25,7 @@ Create an issue with work type **Decision** in the work ticket's project, under 
 | Chosen | Empty until it is ruled on |
 | Rationale | Empty until it is ruled on |
 | Description | The context: what you found, with links to the code, logs or docs that show it |
-| Labels | `exec:human`, the work ticket's `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it; assign it to Sean |
+| Labels | `decision`, `human-decision` (the label Sean's decisions view filters on), `exec:human`, the work ticket's `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it; assign it to Sean |
 
 Then:
 
