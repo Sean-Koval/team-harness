@@ -21,9 +21,10 @@ permissions:
   contents: read
 
 env:
-  # ai-dlc main with the evidence rule (KAN-466/KAN-478): knowledge check refuses a record citing an expiring
-  # Source without quote, speaker and at or permalink in its sources entry (KAN-485)
-  AI_DLC_REF: c10ba3b321b4e568f27504cc20f6622b793d4bf1
+  # environments/agent.yaml's pin (tests/test_knowledge_skills.py holds them equal). It has the evidence rule
+  # (KAN-466/KAN-478): knowledge check refuses a record citing an expiring Source without quote, speaker and at or
+  # permalink in its sources entry (KAN-485)
+  AI_DLC_REF: 67323a98e5426b067ca017f1dfcc023bbcf12906
 
 jobs:
   # Fails when the skill is registered but missing; otherwise says whether there is anything to measure.

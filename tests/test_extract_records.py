@@ -1,9 +1,10 @@
 """The extract-records skill (KAN-435): its seams, and the example sources with expected records.
 
 The fixture cases under tests/fixtures/extract-records/ are reused by the extraction eval (KAN-464). These tests check
-the cases are consistent on their own; with ai-dlc importable they also run `knowledge check` over each tree.
+the cases are consistent on their own and run `ai-dlc knowledge check` over each tree (failing in CI without it).
 """
 
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -101,7 +102,15 @@ def test_case_is_consistent(case):
 
 @pytest.mark.parametrize("case", MANIFEST, ids=[c["id"] for c in MANIFEST])
 def test_case_passes_knowledge_check(case):
-    check = pytest.importorskip("ai_dlc.documentation.knowledge_check")
+    """Through the `ai-dlc knowledge check` CLI, as the eval grades (scripts/extract_grade.py). A skip here once hid
+    four failing cases (KAN-485), so CI fails instead: check.yml puts the CLI on PATH at AI_DLC_REF."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import extract_grade
+
+    if extract_grade._ai_dlc() is None:
+        if os.environ.get("CI"):
+            pytest.fail("CI installs the ai-dlc CLI at AI_DLC_REF (.github/workflows/check.yml); it is not on PATH")
+        pytest.skip("needs the ai-dlc CLI")
     for side in ("before", "after"):
-        result = check.check_records(CASES / case["id"] / side)
-        assert result["failures"] == [], (side, result["failures"])
+        failures = extract_grade.knowledge_check(CASES / case["id"] / side)
+        assert failures == [], (side, failures)

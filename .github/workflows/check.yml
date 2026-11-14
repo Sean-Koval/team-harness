@@ -30,7 +30,7 @@ jobs:
           pip install "hangar @ git+https://github.com/Sean-Koval/hangar@${HANGAR_REF}" \
                       "flightdeck @ git+https://github.com/Sean-Koval/flightdeck@${FLIGHTDECK_REF}" pytest
       # ai-dlc in its own venv (its mcp pin and hangar's disagree); only its CLI goes on PATH, for the env-only
-      # knowledge query test, which fails rather than skips when CI lacks it
+      # knowledge query test and the extract-records fixtures' knowledge check, which fail rather than skip without it
       - name: Install the ai-dlc CLI at the pinned ref
         run: |
           python -m venv "$RUNNER_TEMP/ai-dlc"
