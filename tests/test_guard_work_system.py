@@ -661,7 +661,8 @@ def test_a_stale_hook_copy_still_guards_the_renamed_server(tmp_path, stale, tool
     assert r.returncode == 2, (tool, r.stderr)
 
 
-@pytest.mark.parametrize("tool", ["mcp__ai-dlc__tracker_create", "mcp__tickets__tracker_create"])
+@pytest.mark.parametrize("tool", ["mcp__ai-dlc__tracker_create", "mcp__tickets__tracker_create",
+                                  "mcp__ai-dlc__tracker_create_decision"])
 def test_exec_agent_is_refused_on_any_tracker_role_create(tool):
     args = {"project": "KAN", "summary": "x", "labels": ["exec:agent", "repo:x"]}
     r = run_bound({"tool_name": tool, "tool_input": args}, FAKE)

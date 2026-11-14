@@ -1,6 +1,6 @@
 ---
 name: decision-ticket
-description: Use whenever you need {{owner}} to choose something (a missing or contradictory requirement, two reasonable designs, a scope question, anything you would otherwise ask in chat or stop on), and when {{owner}} rules on an open Decision in chat or a comment ("go with option 1"). Files a Decision that blocks the work and stops; after a ruling, drafts Chosen and Rationale and lists the tickets to move for confirmation.
+description: Use whenever you need {{owner}} to choose something (a missing or contradictory requirement, two reasonable designs, a scope question, anything you would otherwise ask in chat or stop on), and when {{owner}} rules on an open Decision in chat or a comment ("go with option 1"). Files a Decision that blocks the work, only through ai-dlc's tracker role, and stops; after a ruling, drafts Chosen and Rationale, lists the tickets to move for confirmation, and once the Decision is closed proposes its decision record to the knowledge repository.
 ---
 
 # Decision tickets
@@ -10,8 +10,14 @@ stop. Ask one question per ticket, so each one can close.
 
 ## Filing one
 
-Use the tools `jira-ticket` names. A Decision needs its work type, fields and a link, which ai-dlc's
-`tracker_create` doesn't set yet: file it on the tracker server, and comment with `tracker_comment` or that server.
+File it with ai-dlc's `tracker_create_decision`: `question` (the summary), `blocks` (the work ticket), `options`,
+`recommendation`, `default`, `scope`, `due`, `body` (the description), `labels` and `parent` (the work ticket's epic).
+It sets the work type and fields, links the Decision as blocking the work and reads the link back; a repeat returns
+the same Decision. Comment with `tracker_comment`.
+
+If it is missing or answers `refused` (the tracker cannot file a decision), stop. Report the question, with the
+fields below, to {{owner}} as your result and say the Decision could not be filed. Never file it another way: the
+tracker role is the only write path.
 
 {{decision_filing}}
 
@@ -29,7 +35,8 @@ Use the tools `jira-ticket` names. A Decision needs its work type, fields and a 
 
 Then:
 
-1. **Link it.** The Decision **blocks** the work ticket. Every Decision blocks at least one ticket.
+1. **Check the link.** The Decision **blocks** the work ticket (`tracker_create_decision` makes the link). Every
+   Decision blocks at least one ticket. Automation moves started work to Needs Decision; you don't.
 2. **Comment on the work ticket:** `Needs a decision: <DECISION-KEY> <the question>`.
 3. **Stop.** Report the Decision key as your result. Do not keep working on the part the question decides.
 
@@ -54,6 +61,19 @@ directly.
    ruling is not a confirmation.
 
 An answered Decision is frozen. Changing it means filing a new Decision that supersedes it.
+
+## Record the outcome
+
+Once {{owner}} has closed the Decision (Done, with Chosen filled), it becomes a decision record, so
+`ai-dlc knowledge why <DECISION-KEY>` answers it later. Skip this for a Decision closed as Wont Do.
+
+1. Check it isn't recorded yet: `ai-dlc knowledge why <DECISION-KEY>`. If a record answers, stop.
+2. Write the Decision as a Source: its question, options, recommendation, Chosen, Rationale and the ruling's quote
+   or link (`ai-dlc knowledge records template source`). A customer project's Decision goes to that customer's
+   knowledge repository, never the team's.
+3. Follow `extract-records` on that Source. It yields one `accepted` decision record `derived_from` the Source, with
+   `owner` the person who ruled. Name the branch and PR after the Decision key.
+4. Comment on the Decision with the records PR. The PR's review, not you, makes it part of the record.
 
 If the answer binds code or architecture, the PR that implements it adds an ADR under the repo's `docs/decisions/`, and
 its body says `Decision: <DECISION-KEY>` (`work-docs`).
