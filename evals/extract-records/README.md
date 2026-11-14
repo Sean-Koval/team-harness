@@ -8,12 +8,15 @@ Measures the `extract-records` skill (KAN-435) on fixed sources with expected re
   `run.json` says who made them and against which `SKILL.md`.
 - **Grader:** `scripts/extract_grade.py`, deterministic. It pairs records of one type on their verbatim source quote;
   the title only breaks ties. A pair whose title says another day, number or a negated verb is wrong. It counts
-  edits to title, status, scope, owner, date, `valid_to`, links and quote, and a description that is empty or
+  edits to title, status, scope, owner, date, `valid_to`, links, quote and evidence, and a description that is empty or
   copies the title, and any record `knowledge check` refuses. Whether a description gives the why needs a person: `run.json`'s `needs_human` lists those.
   Cases in `run.json`'s `pending` have no recording yet and are reported, not graded. It runs ai-dlc's
   `knowledge check` on the result.
+- **Evidence** (KAN-485): a record from an expiring Source keeps its quote, speaker and `at` or `permalink` in
+  `sources`. The grader checks the quote is the Source's own words, said by that speaker. It grades this only where
+  the expected record keeps evidence.
 - **Severity** (KAN-474): each edited or dropped record is substantive or cosmetic. Substantive: a wrong type, scope,
-  boundary, status, owner, date, `valid_to` or link; a quote that is not verbatim; a record the check refuses; a
+  boundary, status, owner, date, `valid_to` or link; a quote that is not verbatim; missing evidence; a record the check refuses; a
   contradicting claim; a deletion. Cosmetic: title or description wording. A `needs_human` record is its own class.
   `classify_pr_edit` applies the same rules to a live records PR, for `knowledge stats` (KAN-467).
 - **Gates** (`config.yaml`, from north-star outcome O3): recall at least 80%; under 10% of records need a substantive
@@ -40,6 +43,9 @@ type. Precision and recall are 100%, and no record needs an edit. Over all cases
 
 The one substantive edit is case 07's missing `belongs_to` link; the cosmetic one is case 08's reworded title. Cases
 01–09 are not blind: their author saw the case list. `baseline.json` holds these numbers; it is not a gate.
+
+The evidence in `recorded/` was copied by script from each record's own body quote (KAN-485), with no model run. A
+live re-record is the first measure of the skill's evidence step.
 
 ## Next step for Sean
 

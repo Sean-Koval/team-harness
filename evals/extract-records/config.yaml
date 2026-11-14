@@ -5,7 +5,7 @@ profile: shared/work-system/profiles/suite-default.yaml   # fills the skill's {{
 model: claude-sonnet-5-5
 price_usd_per_mtok: {input: 2, output: 10}               # list price of that model, for the cost estimate
 # O3 of the north star (Confluence 7307265): 8 of 10 expected records correct. KAN-474 gates on substantive edits
-# (type, scope, status, owner, dates, links, quote, check, contradiction, deletion) under 10%.
+# (type, scope, status, owner, dates, links, quote, evidence, check, contradiction, deletion) under 10%.
 thresholds:
   recall_min: 0.80
   substantive_max: 0.10

@@ -227,8 +227,9 @@ def ai_dlc_ref() -> str:
 def test_one_ai_dlc_pin_everywhere():
     ref = ai_dlc_ref()
     assert re.fullmatch(r"[0-9a-f]{40}", ref)
-    ci = yaml.safe_load((ROOT / ".github/workflows/check.yml").read_text())
-    assert ci["env"]["AI_DLC_REF"] == ref
+    for workflow in ("check.yml", "extract-eval.yml"):
+        ci = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
+        assert ci["env"]["AI_DLC_REF"] == ref, workflow
     want = f"ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@{ref}"
     bindings = yaml.safe_load((ROOT / "bindings/suite-default.yaml").read_text())
     assert want in bindings["dependencies"]["pip"]

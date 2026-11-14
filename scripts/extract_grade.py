@@ -33,7 +33,9 @@ import yaml
 
 QUOTE_MIN = 0.6  # share of the shorter quote that must appear verbatim in the other
 TITLE_MIN = 0.6  # below this title similarity, a reviewer rewrites the title
-FIELDS = ("type", "title", "statement", "status", "scope", "boundary", "owner", "date", "valid_to", "links", "quote")
+FIELDS = (
+    "type", "title", "statement", "status", "scope", "boundary", "owner", "date", "valid_to", "links", "quote", "evidence",
+)  # fmt: skip
 # Severity of an edited field (KAN-474). Anything not cosmetic is substantive, so a new field fails safe.
 # `check`: knowledge check refuses the record; `contradiction`: it claims another day, number or a negated verb;
 # `drop`: the reviewer deletes it. Whether a description gives the why is `needs_human` (run.json), never graded here.
@@ -209,8 +211,51 @@ def _quoted_from(rec: dict, source_text: str) -> bool:
     return bool(quotes) and all(_quote_core(q) in folded for q in quotes)
 
 
+def _evidence(rec: dict) -> list[dict]:
+    """The `sources` entries of a record that carry evidence: a quote, its speaker and `at` or `permalink` (KAN-485)."""
+    return [e for e in rec["head"].get("sources") or [] if isinstance(e, dict) and e.get("quote")]
+
+
+SAID = re.compile(r"^\[?(?:\d{1,3}:)?\d{1,2}:\d{2}\]?\s+(?P<who>[^:]+?):\s")
+
+
+def speakers(source_text: str, quote: str) -> set[str]:
+    """Who said `quote` in the Source: the speaker of each `[time] name:` line holding it, case folded."""
+    quote = " ".join(quote.split())
+    out = set()
+    for line in source_text.splitlines():
+        hit = SAID.match(line)
+        if hit and quote in " ".join(line.split()):
+            out.add(hit["who"].strip().casefold())
+    return out
+
+
+def evidence_ok(got: dict, want: dict, source_text: str) -> bool:
+    """Whether `got` keeps evidence for each Source that `want` quotes in `sources`.
+
+    ai-dlc's knowledge check refuses a link to an expiring Source without a quote, speaker and `at` or `permalink`
+    in the citing entry. The grader also asks what the check cannot: that the quote is the Source's own words and its
+    speaker is who said them, from the Source's `[time] name:` line, or the expected speaker where it has none.
+    """
+    folded = " ".join(source_text.split())
+    entries = [e for e in got["head"].get("sources") or [] if isinstance(e, dict)]
+
+    def kept(entry: dict, wanted: dict) -> bool:
+        quote = " ".join(str(entry.get("quote") or "").split())
+        if not quote or quote not in folded or not (entry.get("at") or entry.get("permalink")):
+            return False
+        said_by = speakers(source_text, quote) or {str(wanted.get("speaker") or "").casefold()}
+        return str(entry.get("speaker") or "").casefold() in said_by
+
+    for wanted in _evidence(want):
+        keys = {wanted.get("id"), wanted.get("resource")} - {None}
+        if not any(keys & {e.get("id"), e.get("resource")} and kept(e, wanted) for e in entries):
+            return False
+    return True
+
+
 def compare(got: dict, want: dict, rename: dict[str, str], source_text: str | None) -> list[str]:
-    """Fields of `got` a reviewer would edit to reach `want`. Without `source_text` the quote is not graded."""
+    """Fields of `got` a reviewer would edit to reach `want`. Without `source_text` quote and evidence are not graded."""
     edits = []
     if str(got["head"].get("type") or "") != str(want["head"].get("type") or ""):
         edits.append("type")
@@ -225,6 +270,8 @@ def compare(got: dict, want: dict, rename: dict[str, str], source_text: str | No
         edits.append("links")
     if source_text is not None and _quotes(want) and not _quoted_from(got, source_text):
         edits.append("quote")
+    if source_text is not None and not evidence_ok(got, want, source_text):
+        edits.append("evidence")
     return edits
 
 

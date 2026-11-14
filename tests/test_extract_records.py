@@ -1,9 +1,10 @@
 """The extract-records skill (KAN-435): its seams, and the example sources with expected records.
 
 The fixture cases under tests/fixtures/extract-records/ are reused by the extraction eval (KAN-464). These tests check
-the cases are consistent on their own; with ai-dlc importable they also run `knowledge check` over each tree.
+the cases are consistent on their own and run `ai-dlc knowledge check` over each tree (failing in CI without it).
 """
 
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -18,6 +19,8 @@ SKILL = ROOT / "shared/work-system/skills/extract-records/SKILL.md"
 CASES = ROOT / "tests/fixtures/extract-records"
 MANIFEST = yaml.safe_load((CASES / "cases.yaml").read_text())["cases"]
 # Vendor tools and products the skill must not name: it calls ai-dlc roles only.
+# Source kinds whose payload expires (ai-dlc KAN-466): a record citing one keeps its evidence in `sources`.
+EXPIRING = {"transcript", "chat", "meeting", "thread"}
 VENDORS = re.compile(r"jira|confluence|atlassian|mcp__|github|\bgh\b|zoom|google meet|symphony|slack|notion", re.I)
 
 
@@ -55,7 +58,8 @@ def test_skill_keeps_the_trial_1_rules():
     for rule in ("untrusted data", "owner: unknown", "Never write to the wiki", "never merges",
                  "never `team` by default", "Never a copy of the title", "never a ticket key",
                  "quotable sentence", "Restated rules produce nothing", "would a reviewer delete this?",
-                 "Ceilings per Source", "Default: fold it into the decision record"):
+                 "Ceilings per Source", "Default: fold it into the decision record",
+                 "**Evidence in that entry.**", "`speaker`: who said it", "The quote stays in the body too"):
         assert rule in text, rule
 
 
@@ -87,11 +91,26 @@ def test_case_is_consistent(case):
         if path not in old:
             assert {"type": "derived_from", "target": source["id"]} in record["links"], path
             assert any(e.get("id") == source["id"] and e.get("hash") for e in record["sources"]), path
+            if EXPIRING & {source.get("provider"), *source.get("tags", [])}:
+                said = " ".join((before / case["source"]).read_text().split("---\n", 2)[2].split())
+                assert any(
+                    e.get("id") == source["id"] and e.get("quote") and " ".join(e["quote"].split()) in said
+                    and e.get("speaker") and (e.get("at") or e.get("permalink"))
+                    for e in record["sources"]
+                ), f"{path}: an expiring Source's evidence (quote, speaker, at) belongs in its sources entry"
 
 
 @pytest.mark.parametrize("case", MANIFEST, ids=[c["id"] for c in MANIFEST])
 def test_case_passes_knowledge_check(case):
-    check = pytest.importorskip("ai_dlc.documentation.knowledge_check")
+    """Through the `ai-dlc knowledge check` CLI, as the eval grades (scripts/extract_grade.py). A skip here once hid
+    four failing cases (KAN-485), so CI fails instead: check.yml puts the CLI on PATH at AI_DLC_REF."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import extract_grade
+
+    if extract_grade._ai_dlc() is None:
+        if os.environ.get("CI"):
+            pytest.fail("CI installs the ai-dlc CLI at AI_DLC_REF (.github/workflows/check.yml); it is not on PATH")
+        pytest.skip("needs the ai-dlc CLI")
     for side in ("before", "after"):
-        result = check.check_records(CASES / case["id"] / side)
-        assert result["failures"] == [], (side, result["failures"])
+        failures = extract_grade.knowledge_check(CASES / case["id"] / side)
+        assert failures == [], (side, failures)
