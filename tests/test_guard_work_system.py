@@ -25,6 +25,44 @@ def bash(command: str, cwd: Path | None = None) -> int:
     return run(event).returncode
 
 
+NEUTRAL_BRANCH = "KAN-501-guard-tests"
+
+
+@pytest.fixture(scope="module")
+def neutral_repo(tmp_path_factory) -> Path:
+    d = tmp_path_factory.mktemp("neutral")
+    subprocess.run(["git", "init", "-q", "-b", NEUTRAL_BRANCH, str(d)], check=True)
+    return d
+
+
+@pytest.fixture(autouse=True)
+def _off_the_checkout(neutral_repo, monkeypatch):
+    """KAN-501: an event with no `cwd` is judged in the hook's own working directory, which was this checkout. So a
+    case such as `git commit -m ...` passed on a feature branch and failed on main, where the hook rightly refuses
+    the commit. Every case runs in a fresh repository on a keyed branch instead; a case about a branch passes its own
+    `cwd`. The hook's rules are unchanged."""
+    monkeypatch.chdir(neutral_repo)
+
+
+@pytest.mark.parametrize("head", ["main", "detached"])
+def test_the_cases_pass_on_a_main_or_detached_checkout(tmp_path, head):
+    """KAN-501: the post-merge build runs these tests on main. Copy this file and the hook into a repository whose
+    HEAD is main, or detached at main, and run the cases that once read the checkout's branch."""
+    for rel in ("tests/test_guard_work_system.py", "shared/work-system/hooks/guard_work_system.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes((ROOT / rel).read_bytes())
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "--no-verify", "-m", "main"], check=True)
+    if head == "detached":
+        subprocess.run([*git, "checkout", "-q", "--detach"], check=True)
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                        "tests/test_guard_work_system.py", "-k", "harmless_iex or commit_allowed or push_allowed"],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
+
+
 @pytest.fixture
 def repo(tmp_path):
     def make(branch: str) -> Path:
