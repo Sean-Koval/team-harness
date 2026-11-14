@@ -821,15 +821,16 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
 
     out = []
     for m in (h.lock.get("binding") or {}).get("mcp") or []:
-        words = ["claude", "mcp", "add", "--scope", scope, "--transport", m.get("transport") or "stdio"]
+        # --env and --header take several values, so the name goes before them or claude reads it as one more
+        words = ["claude", "mcp", "add", "--scope", scope, "--transport", m.get("transport") or "stdio", m["name"]]
         if m.get("transport") == "http":
-            words += [m["name"], m["endpoint"]]
+            words.append(m["endpoint"])
             for k in m.get("header_names") or []:
                 words += ["--header", quoted(f"{k}: ", _var(m["name"], k, binding))]
         else:
             for k in m.get("env_names") or []:
                 words += ["--env", quoted(f"{k}=", k)]
-            words += [m["name"], "--", m.get("command") or "", *map(str, m.get("args") or [])]
+            words += ["--", m.get("command") or "", *map(str, m.get("args") or [])]
         out.append(" ".join(words))
     return out
 
