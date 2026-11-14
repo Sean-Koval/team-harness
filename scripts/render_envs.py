@@ -12,7 +12,7 @@ lock's `harness_digest`:
   thaws that lock and runs the environment's hooks, so they must be the release copy's: after a hook edit on main, a
   stable session keeps the promoted hooks until the next promotion, and turn 1 reports no drift (KAN-477).
 - `env.candidate.yaml` (environment `<name>-candidate`): the current lock in full, plugins too (loaded from hangar's
-  read-only plugin seed, hangar docs/harnesses.md#plugins), whenever `stable` isn't the current lock or the lock has
+  read-only plugin seed, hangar docs/harnesses.md#plugins), whenever `stable` has a release copy or the lock has
   plugins. Sessions on another channel, and flightdeck's environment-based candidate arm, run on it.
 
 Each `settings.json` is provided with `env.HARNESS_NATIVE_DIGEST`: one digest of the harness's other native files (the
@@ -110,8 +110,9 @@ def _as_locked(src: Path, lock: dict[str, Any], runtime: str, provided: dict[str
 
 
 def stable_dir(root: Path) -> Path:
-    """The directory of the lock `stable` names: the harness itself when it is the current lock (or the harness has
-    no `stable` channel yet), else its release copy. Release copies are found by digest, as hangar's thaw finds them."""
+    """The directory of the lock `stable` names: its release copy, found by digest as hangar's thaw finds it, even when
+    it is also the current lock, so env.stable.yaml stays byte for byte when candidate later moves on (KAN-508); the
+    harness itself only when it has no `stable` channel yet, or stable is the current lock with no release copy."""
     from hangar import harness_lock as hl
 
     import promote  # needs hangar too; imported here so native_files needs neither
@@ -120,9 +121,11 @@ def stable_dir(root: Path) -> Path:
     channels = next((p / "channels.yaml" for p in root.resolve().parents if (p / "channels.yaml").is_file()), None)
     chans = ((yaml.safe_load(channels.read_text(encoding="utf-8")) or {}).get(lock["name"]) or {}) if channels else {}
     digest = chans.get("stable")
-    if not digest or hl.harness_digest(hl.load(root)) == digest:
+    if not digest:
         return root
     rel = promote.find_release(root, digest)
+    if rel is None and hl.harness_digest(hl.load(root)) == digest:
+        return root
     if rel is None:
         raise SystemExit(f"{root}: stable ({digest}) is neither the current lock nor a release copy under "
                          f"{root / promote.RELEASES}/ (scripts/promote.py writes one)")

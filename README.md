@@ -56,7 +56,7 @@ harnesses/work-default/
     hooks/guard_work.py              PreToolUse: no terraform apply or real backends, no shared databases, no
                                      cluster changes, no edits under /workspace/deploy
     hooks/guard_work_system.py       PreToolUse: the shared work-system hook (see below); refuses every merge here
-  harness.lock, env.stable.yaml      as for team-default; `stable` and `candidate` are both r3 (11 components)
+  harness.lock, env.stable.yaml      as for team-default; `stable` and `candidate` are both r17 at promotion (KAN-508)
 environments/
   roles/{infra,code,database,deploy}.yaml   role-infra, role-code, role-database, role-deploy: work-default + each role's tools
   work-multirepo.yaml                one image with the infra, code and database roles' tools, for change sets

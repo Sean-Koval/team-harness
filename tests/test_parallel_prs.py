@@ -221,6 +221,9 @@ def test_stable_env_changes_only_with_a_promotion(tmp_path):
     data = yaml.safe_load(b.read_text())
     data.setdefault("dependencies", {}).setdefault("pip", []).append("example-tool==1.0")
     b.write_text(yaml.safe_dump(data, sort_keys=False))
+    # and a file, so the lock moves past stable even when stable is the current lock (KAN-508)
+    skill = full / "shared/work-system/skills/whats-next/SKILL.md"
+    skill.write_text(skill.read_text() + "\nOne more line.\n")
     _build_and_commit(full, "KAN-1: a dependency")  # full history: stable keeps the bindings of its release
     stable = (full / env).read_text()
     assert "example-tool" not in stable
