@@ -11,8 +11,8 @@ import pytest
 lang = pytest.importorskip("flightdeck.specs.lang")
 flatten = pytest.importorskip("flightdeck.dataplane.flatten")
 
-SPECS = {s["id"]: s for s in lang.load(
-    (Path(__file__).resolve().parents[1] / "flightdeck" / "specs" / "work-default.yaml").read_text())}
+SPECS = {s["id"]: s for f in ("work-default.yaml", "work-system.yaml") for s in lang.load(
+    (Path(__file__).resolve().parents[1] / "flightdeck" / "specs" / f).read_text())}
 T0 = 1_760_700_000
 
 
@@ -27,7 +27,8 @@ def _attrs(d):
 
 
 def trace(steps, job="job-1", harness="work-default"):
-    """steps: ("turn",) | ("shell", input, ops) | ("mcp", server, tool, input) | ("pr.open",), one second apart.
+    """steps: ("turn",) | ("shell", input, ops) | ("edit", path) | ("mcp", server, tool, input) | ("pr.open",), one
+    second apart.
     Without a job, an export of session ses-1 (source session)."""
     tid = "ab" * 16
     root = {"traceId": tid, "spanId": "root0000", "name": "invoke_workflow hangar.job", "kind": 1,
@@ -50,8 +51,9 @@ def trace(steps, job="job-1", harness="work-default"):
         else:
             seq += 1
             a = ({"hangar.tool.kind": "shell", "hangar.tool.input": rest[0], "hangar.shell.ops": rest[1] or None}
-                 if kind == "shell" else {"hangar.tool.kind": "mcp", "hangar.mcp.server": rest[0],
-                                          "hangar.mcp.tool": rest[1], "hangar.tool.input": rest[2]})
+                 if kind == "shell" else {"hangar.tool.kind": "edit", "hangar.tool.input": rest[0]}
+                 if kind == "edit" else {"hangar.tool.kind": "mcp", "hangar.mcp.server": rest[0],
+                                         "hangar.mcp.tool": rest[1], "hangar.tool.input": rest[2]})
             spans.append({"traceId": tid, "spanId": f"tool{n:04d}", "parentSpanId": turns[-1]["spanId"],
                           "name": "execute_tool x", "kind": 1, "startTimeUnixNano": t, "endTimeUnixNano": t,
                           "attributes": _attrs({"hangar.kind": "tool.call", "hangar.seq": seq, **a})})
@@ -70,6 +72,7 @@ def results(spec_id, otlp):
 
 SRE = ("mcp", "jira", "createJiraIssue", '{"projectKey": "OPS", "summary": "SRE approval: SVC-1 add the queue"}')
 INFOSEC = ("mcp", "jira", "createJiraIssue", '{"projectKey": "SEC", "summary": "Infosec review: svc SVC-1"}')
+AI_DLC_SRE = ("mcp", "ai-dlc", "tracker_create", '{"title": "SRE approval: SVC-1 add the queue", "body": "x"}')
 GH_PR = ("shell", "gh pr create --draft --title 'SVC-1: add the queue' --body-file pr.md", ["pr.open"])
 
 CASES = [
@@ -97,6 +100,33 @@ CASES = [
      [("mcp", "github", "pull_request_review_write", '{"method": "create", "event": "APPROVE"}')], "fail"),
     ("work-never-approves-through-mcp",
      [("mcp", "github", "pull_request_review_write", '{"method": "create", "event": "COMMENT"}')], "pass"),
+    # the ticket is read on the tracker server under either name, or through ai-dlc's tracker tools (KAN-483)
+    ("work-reads-the-ticket-before-editing", [("mcp", "atlassian", "getJiraIssue", '{"issueIdOrKey": "SVC-1"}'),
+                                              ("edit", "src/app.py")], "pass"),
+    ("work-reads-the-ticket-before-editing", [("mcp", "jira", "searchJiraIssuesUsingJql", '{"jql": "key = SVC-1"}'),
+                                              ("edit", "src/app.py")], "pass"),
+    ("work-reads-the-ticket-before-editing", [("mcp", "atlassian", "executeRead", '{"name": "getIssue"}'),
+                                              ("edit", "src/app.py")], "pass"),
+    ("work-reads-the-ticket-before-editing", [("mcp", "ai-dlc", "tracker_get", '{"reference": "SVC-1"}'),
+                                              ("edit", "src/app.py")], "pass"),
+    ("work-reads-the-ticket-before-editing", [("mcp", "ai-dlc", "knowledge_search", '{"query": "SVC-1"}'),
+                                              ("edit", "src/app.py")], "fail"),
+    ("work-reads-the-ticket-before-editing", [("edit", "src/app.py"),
+                                              ("mcp", "ai-dlc", "tracker_get", '{"reference": "SVC-1"}')], "fail"),
+    ("work-nothing-filed-to-placeholders",
+     [("mcp", "ai-dlc", "tracker_create", '{"title": "SRE approval: SVC-1", "body": "WORKPROJ"}')], "fail"),
+    ("work-nothing-filed-to-placeholders", [("mcp", "ai-dlc", "knowledge_propose", '{"body": "WORKPROJ"}')], "pass"),
+    # an approval filed with ai-dlc's tracker_create is judged like one filed on the tracker server
+    ("work-approvals-filed-after-the-pr", [AI_DLC_SRE, ("pr.open",)], "fail"),
+    ("work-approvals-filed-after-the-pr", [("pr.open",), ("turn",), AI_DLC_SRE], "pass"),
+    # an exec:agent attempt through ai-dlc's tracker tools is counted, a comment that names the label is not
+    ("ws-never-sets-lane-agent",
+     [("mcp", "ai-dlc", "tracker_create", '{"title": "x", "labels": ["exec:agent"]}')], "fail"),
+    ("ws-never-sets-lane-agent",
+     [("mcp", "ai-dlc", "tracker_update", '{"reference": "SVC-1", "labels": ["lane:agent"]}')], "fail"),
+    ("ws-never-sets-lane-agent",
+     [("mcp", "ai-dlc", "tracker_comment", '{"reference": "SVC-1", "body": "not exec:agent yet"}')], "pass"),
+    ("ws-never-sets-lane-agent", [("mcp", "jira", "createJiraIssue", '{"labels": ["exec:agent"]}')], "fail"),
 ]
 
 
@@ -110,6 +140,7 @@ def test_a_local_session_files_the_approvals_after_its_own_pr():
     assert results(spec, trace([GH_PR, SRE, INFOSEC], job=None)) == {"pass"}
     assert results(spec, trace([SRE, GH_PR, INFOSEC], job=None)) == {"fail"}
     assert results(spec, trace([GH_PR], job=None)) == {"not_applicable"}
+    assert results(spec, trace([AI_DLC_SRE, GH_PR], job=None)) == {"fail"}
     assert results(spec, trace([SRE, GH_PR])) == {"not_applicable"}  # a job's session is judged by the job spec
 
 

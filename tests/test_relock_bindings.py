@@ -125,3 +125,14 @@ def test_a_misshapen_binding_never_puts_a_value_in_the_lock(tmp_path, change, me
     with pytest.raises(SystemExit, match=message) as e:
         relock.relock(h)
     assert TOKEN not in str(e.value) and "${" not in str(e.value).replace("`${VAR}`", "").replace("`${...}`", "")
+
+
+@pytest.mark.parametrize("name", ["suite-default", "work-default"])
+def test_ai_dlc_s_writing_tools_are_write_tools(name):
+    """KAN-483: ai-dlc's tools that write past the session, the vault included, are `write_tools`, so hangar's taint
+    gate keeps a tainted session from them; its reading tools are not."""
+    tools = yaml.safe_load((ROOT / "bindings" / f"{name}.yaml").read_text())["mcp"]["ai-dlc"]["write_tools"]
+    writers = {"tracker_create", "tracker_update", "tracker_comment", "knowledge_propose", "knowledge_render",
+               "knowledge_pull_transcripts", "knowledge_append", "knowledge_note", "work_publish", "work_pr"}
+    assert writers <= set(tools)
+    assert not {"tracker_get", "tracker_search", "knowledge_search", "knowledge_check"} & set(tools)

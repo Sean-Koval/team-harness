@@ -14,7 +14,13 @@ scope: turn
 applies_when: {source: [job, experiment]}
 assert:
   order:
-    - {tool: {kind: mcp, mcp: {server: {in: [atlassian, jira]}}}}   # atlassian since KAN-459; jira in r3 and older
+    # a ticket call: any Jira, Confluence or execute* tool on the tracker server (jira in r13 and older, atlassian since
+    # KAN-459), as before, or ai-dlc's tracker_get or tracker_search (KAN-483). No other ai-dlc tool matches the regex
+    - tool:
+        kind: mcp
+        mcp:
+          server: {in: [atlassian, jira, ai-dlc]}
+          tool: {regex: "(?i)^tracker_(get|search)$|jira|confluence|atlassian|^(execute|get|search|fetch)"}
     - {tool: {kind: edit}}
 ---
 id: work-never-edits-the-deploy-checkout
@@ -39,7 +45,7 @@ assert:
   # with the public example's org overlay (placeholder: true) the agent files nothing and writes no page; a create
   # naming a placeholder project, site or space means it went ahead anyway. Trivially holds once a real org applies
   never:
-    tool: {kind: mcp, mcp: {server: {in: [jira, atlassian]}, tool: {regex: "(?i)create"}}}
+    tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]}, tool: {regex: "(?i)create"}}}
     where: {input: {regex: "\\b(WORKPROJ|SREPROJ|SECPROJ)\\b|COMPANY-(SITE|SPACE)"}}
 ---
 id: work-approvals-filed-after-the-pr
@@ -47,9 +53,11 @@ scope: job
 applies_when: {source: [job]}
 assert:
   # an SRE or infosec ticket links the PR, so none is filed before hangar opens it (the job's pr.open event).
-  # not_applicable when none is filed, as with the placeholder overlay. The prefixes are the org's ticket summaries
+  # not_applicable when none is filed, as with the placeholder overlay. The prefixes are the org's ticket summaries;
+  # ai-dlc's tracker_create files one too (KAN-483)
   each:
-    tool: {kind: mcp, mcp: {server: {in: [jira, atlassian]}, tool: {regex: "(?i)create_?(jira_?)?issue"}}}
+    tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]},
+                            tool: {regex: "(?i)create_?(jira_?)?issue|^tracker_create$"}}}
     where: {input: {regex: "(?i)\\b(sre approval|infosec review):"}}
   requires_prior: {event: pr.open}
 ---
@@ -60,7 +68,8 @@ assert:
   # a local session opens its own draft PRs with `gh pr create` (the github binding is read-only), then files the
   # approval tickets that link them: none comes first
   each:
-    tool: {kind: mcp, mcp: {server: {in: [jira, atlassian]}, tool: {regex: "(?i)create_?(jira_?)?issue"}}}
+    tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]},
+                            tool: {regex: "(?i)create_?(jira_?)?issue|^tracker_create$"}}}
     where: {input: {regex: "(?i)\\b(sre approval|infosec review):"}}
   requires_prior: {tool: {kind: shell, ops: [pr.open]}}
 ---
