@@ -10,6 +10,9 @@ stop. Ask one question per ticket, so each one can close.
 
 ## Filing one
 
+Use the tools `jira-ticket` names. A Decision needs its work type, fields and a link, which ai-dlc's
+`tracker_create` doesn't set yet: file it on the tracker server, and comment with `tracker_comment` or that server.
+
 Create the question in the work ticket's project, under the same epic. If the project has a **Decision** work type, use it and fill its fields. If it does not, create a **Task** labelled `type:decision` and put each field below as a heading in its description:
 
 | Field | What goes in it |
