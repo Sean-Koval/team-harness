@@ -153,6 +153,12 @@ def test_unknown_harness_and_bad_key_are_refused(repo, skill):
     ("Logs on log-1.lan and wiki.team.intranet.", "log-1.lan"),
     ("Ask db.prod.corp for a dump.", "db.prod.corp"),
     ("ssh build-02.local", "build-02.local"),
+    ("Open initech.corp:8443 in a browser.", "initech.corp:8443"),
+    ("The API is on initech.local:8080.", "initech.local:8080"),
+    ("Its name is initech.internal.", "initech.internal"),
+    ("Tickets live on jira.corp.", "jira.corp"),
+    ("Run `curl https://initech.corp:8443/health`.", "initech.corp"),
+    ("Run `curl jira.corp:8443/health`.", "jira.corp:8443"),
 ])
 def test_a_private_network_host_is_refused_bare(line, host):
     problems = add_skill.content_problems({"SKILL.md": line + "\n"}, set(), [])
@@ -168,7 +174,8 @@ MUST_PASS = [
     "Read `config.internal` and `app.local`; `self.corp(x)` is a call.",
     "See https://docs.example.com/x, {{kb_site}} and git@github.com:org/repo.git.",
     "Log it with `logger.info(\"done\")`, then `df.info()` and `request.app.state.db`.",
-    "Pin it in requirements.in; local overrides go in settings.local.",
+    "Pin it in requirements.in; local overrides go in `settings.local`.",
+    "`settings.local.x`, `config.internal(` and `env.corp.get(\"X\")` are code.",
     "`pd.io.json.dumps(x)` and `client.ai(x)` are calls, not hosts.",
     "Read https://docs.python.org/3/library/re.html and https://code.claude.com/docs/en/skills.",
     "Install from https://pypi.org/project/pyyaml/ or https://api.github.com/repos/o/r.",
