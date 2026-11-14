@@ -896,7 +896,7 @@ def test_a_customer_checkout_extracts_only_its_own_marked_sources(repo: Path, tm
 
 def test_a_customer_run_names_its_sources_by_id_only(repo: Path, tmp_path: Path, capsys) -> None:
     alpha = customer_checkout(tmp_path, "alpha")
-    good, broken = customer_source(alpha, "alpha"), customer_source(alpha, "alpha", name="symphony-alpha-0002")
+    good, broken = customer_source(alpha, "alpha"), another_source(alpha, "alpha", "symphony-alpha-0002")
     customer_source(alpha, "beta", name="symphony-beta-0003")
     list_customers(repo, "alpha")
 
@@ -978,3 +978,295 @@ def test_a_customer_checkout_after_its_run_passes_knowledge_check(repo: Path, tm
     assert (alpha / "processed/symphony-alpha-0001.md").is_file()
     run = subprocess.run(["ai-dlc", "knowledge", "check", str(alpha)], capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+# --- one records PR per night per repository (KAN-510) --------------------------------------------------------------
+
+NIGHT = datetime(2026, 11, 14, 4, 0, tzinfo=UTC)
+
+
+def another_source(root: Path, project: str, name: str) -> str:
+    """A further customer Source with a hash of its own (state keys a Source by its payload's hash)."""
+    customer_source(root, project, name=name)
+    record = root / f"inbox/{name}.md"
+    old = record.read_text().split('"hash": "', 1)[1].split('"', 1)[0]
+    record.write_text(record.read_text().replace(old, cb.sha256(name.encode())))
+    return name
+
+
+class FakeGitHub:
+    """subprocess.run for a whole run with the real claude_runner: the session, ai-dlc, git and gh, all fakes.
+
+    Each knowledge checkout's origin is github.com/example/<name>; a PR keeps its branch's records, body and state.
+    """
+
+    def __init__(self, roots: dict[Path, str], team: Path) -> None:
+        self.roots, self.team = {r.resolve(): n for r, n in roots.items()}, team.resolve()
+        self.prs: list[dict] = []
+        self.saw: dict[str, list[str]] = {}  # Source id -> the night's records its session's copy held
+        self.proposes: list[list[str]] = []
+        self.pushes: list[tuple[str, str]] = []
+        self.trees: dict[Path, dict] = {}
+        self.checks: list[list[str]] = []
+        self.accepted: dict[str, str] = {}  # accepted records on the base: path -> text a check holds them to
+        self.fail_edits = 0  # this many `gh pr edit` calls fail
+        self.sessions = 0
+
+    def pr(self, url: str) -> dict:
+        return next(p for p in self.prs if p["url"] == url)
+
+    def branch(self, repo: str, branch: str) -> dict | None:
+        return next((p for p in self.prs if p["repo"] == repo and p["branch"] == branch), None)
+
+    def __call__(self, command, **kwargs):
+        def ok(out: str = "") -> subprocess.CompletedProcess:
+            return subprocess.CompletedProcess(command, 0, out, "")
+
+        name = Path(command[0]).name
+        if name == "claude":
+            scratch = Path(kwargs["cwd"])
+            source_id = kwargs["input"].split("Source id: ", 1)[1].split("\n", 1)[0]
+            self.sessions += 1
+            self.saw[source_id] = sorted(p.name for p in (scratch / "records").glob("*.md"))
+            (scratch / "records").mkdir(exist_ok=True)
+            (scratch / f"records/{source_id}.md").write_text(f"---\nid: {source_id}\n---\n")
+            (scratch / ".capture").mkdir(exist_ok=True)
+            (scratch / ".capture/pr-body.md").write_text(f"what {source_id} holds")
+            reply = {"result": "done", "is_error": False, "usage": {"input_tokens": 10, "output_tokens": 5}}
+            return ok(json.dumps(reply))
+        if name == "ai-dlc" and command[1:4] == ["knowledge", "records", "propose"]:
+            self.proposes.append(command)
+            root = Path(command[command.index("--root") + 1]).resolve() if "--root" in command else self.team
+            repo, branch = self.roots[root], command[command.index("--branch") + 1]
+            if self.branch(repo, branch):
+                return subprocess.CompletedProcess(command, 1, "", f"branch {branch} already exists on the remote")
+            paths = [command[i + 1] for i, a in enumerate(command) if a == "--path"]
+            files = {p: Path(command[4 + i]).read_text() for i, p in enumerate(paths)}
+            body = Path(command[command.index("--body-file") + 1]).read_text() if "--body-file" in command else ""
+            url = f"https://github.com/example/{repo}/pull/{len(self.prs) + 1}"
+            self.prs.append({"url": url, "repo": repo, "branch": branch, "files": files, "body": body,
+                             "state": "OPEN", "title": command[command.index("--title") + 1]})  # fmt: skip
+            return ok(json.dumps({"status": "proposed", "pull_request": url}))
+        if name == "ai-dlc":  # knowledge check of the updated tree, against the PR's base as propose does
+            assert command[1:3] == ["knowledge", "check"], command
+            self.checks.append(command)
+            tree = Path(command[3])
+            if command[4:] == ["--base", "origin/main"] and not any(
+                    (tree / f).is_file() and (tree / f).read_text() != text for f, text in self.accepted.items()):
+                return ok()
+            return subprocess.CompletedProcess(command, 1, "", "an accepted decision changed: supersede it")
+        if name == "gh":
+            pr = self.pr(command[3])
+            if command[1:3] == ["pr", "view"]:
+                info = {"state": pr["state"], "headRefName": pr.get("head", pr["branch"]), "baseRefName": "main",
+                        "body": pr["body"]}  # fmt: skip
+                return ok(json.dumps({k: info[k] for k in command[5].split(",")}))
+            if self.fail_edits:
+                self.fail_edits -= 1
+                return subprocess.CompletedProcess(command, 1, "", "HTTP 502")
+            pr["body"] = Path(command[command.index("--body-file") + 1]).read_text()
+            return ok()
+        assert name == "git", command
+        where, args = Path(command[2]).resolve(), command[3:]
+        if where in self.trees:
+            tree = self.trees[where]
+            if args[0] == "add":
+                tree["added"] = args[2:]
+            elif args[:2] == ["diff", "--cached"]:
+                return ok("\n".join(f for f in tree["added"]
+                                    if tree["pr"]["files"].get(f) != (where / f).read_text()))
+            elif "push" in args:
+                assert "--force" not in args and "-f" not in args
+                self.pushes.append((tree["pr"]["repo"], args[-1].removeprefix("HEAD:refs/heads/")))
+                tree["pr"]["files"].update({f: (where / f).read_text() for f in tree["added"]})
+            return ok()
+        repo = self.roots[where]
+        if args[:3] == ["remote", "get-url", "origin"]:
+            return ok(f"https://github.com/example/{repo}.git\n")
+        if args[0] == "fetch" and args[-1].startswith("+refs/heads/"):  # the PR's base, for the check
+            return ok()
+        if args[0] == "fetch":
+            self.fetched = self.branch(repo, args[-1])
+            assert self.fetched, f"no branch {args[-1]} in {repo}"
+            return ok()
+        if args[:2] == ["rev-parse", "FETCH_HEAD"]:
+            return ok(f"sha-{self.fetched['branch']}\n")
+        if args[0] == "diff":
+            return ok("\n".join(self.fetched["files"]))
+        if args[0] == "show":
+            return ok(self.fetched["files"][args[1].split(":", 1)[1]])
+        if args[:2] == ["worktree", "add"]:
+            Path(args[-2]).mkdir(parents=True)
+            self.trees[Path(args[-2]).resolve()] = {"pr": self.fetched, "added": []}
+            return ok()
+        if args[:2] == ["worktree", "remove"]:
+            return ok()
+        raise AssertionError(command)
+
+
+@pytest.fixture
+def night(repo: Path, tmp_path: Path, monkeypatch):
+    """The team fixture (7 Sources to extract), alpha with two Sources and beta with one, all on the fake GitHub."""
+    alpha, beta = customer_checkout(tmp_path, "alpha"), customer_checkout(tmp_path, "beta")
+    customer_source(alpha, "alpha")
+    another_source(alpha, "alpha", "symphony-alpha-0002")
+    customer_source(beta, "beta")
+    list_customers(repo, "alpha", "beta")
+    project = tmp_path / "project"
+    install_skill(project)
+    fake = FakeGitHub({repo: "knowledge", alpha: "alpha", beta: "beta"}, repo)
+    monkeypatch.setattr(cb.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cb.subprocess, "run", fake)
+    environ = {"KNOWLEDGE_REPO_ALPHA": str(alpha), "KNOWLEDGE_REPO_BETA": str(beta)}
+
+    def run(now: datetime = NIGHT) -> dict:
+        return cb.run_batch(repo, pulls=False, project=project, now=now, environ=environ)
+
+    return fake, run, {"knowledge": repo, "alpha": alpha, "beta": beta}
+
+
+def test_one_records_pr_per_night_per_repository(night) -> None:
+    fake, run, roots = night
+    log = run()
+    assert sorted(p["repo"] for p in fake.prs) == ["alpha", "beta", "knowledge"], "one PR per repository, no more"
+    assert all(p["branch"] == "records-2026-11-14" and p["title"] == "records: capture 2026-11-14" for p in fake.prs)
+    team = fake.branch("knowledge", "records-2026-11-14")
+    assert len(team["files"]) == 7 and not [f for f in team["files"] if "alpha" in f or "beta" in f], \
+        "every team record in the team PR, and no customer's"
+    for name, ids in (("alpha", ["symphony-alpha-0001", "symphony-alpha-0002"]), ("beta", ["symphony-beta-0001"])):
+        pr = fake.branch(name, "records-2026-11-14")
+        assert sorted(pr["files"]) == [f"records/{i}.md" for i in ids], "a customer's records in its own PR only"
+        assert all(f"## {i}\n\nwhat {i} holds" in pr["body"] for i in ids), "each Source has its section"
+        customer = next(c for c in log["customers"] if c["project"] == name)
+        assert customer["records_prs"] == [{"pr": pr["url"], "sources": ids}]
+        [entry] = run_log(roots[name])
+        assert {e["id"] for e in entry["sources"]} == set(ids)
+        assert {e["pull_request"] for e in entry["sources"]} == {int(pr["url"].rsplit("/", 1)[1])}, \
+            "the run log lists the Sources the night's PR holds"
+    assert [p for p in fake.proposes if "--root" in p] == [p for p in fake.proposes if p is not fake.proposes[0]]
+    assert len(fake.pushes) == 6 + 1, "every later Source of a repository is pushed onto its night's branch"
+    assert {b for _, b in fake.pushes} == {"records-2026-11-14"}
+    assert all(c[4:] == ["--base", "origin/main"] for c in fake.checks) and len(fake.checks) == 7
+    assert fake.saw["symphony-alpha-0002"] == ["symphony-alpha-0001.md"], "a later session sees the night's records"
+    assert fake.saw["symphony-beta-0001"] == [], "and never another repository's"
+    [team_line] = log["records_prs"]
+    assert team_line["pr"] == team["url"] and len(team_line["sources"]) == 7
+
+
+def test_a_rerun_that_night_updates_the_open_pr_and_the_next_night_opens_another(night) -> None:
+    fake, run, roots = night
+    run()
+    first = fake.branch("alpha", "records-2026-11-14")
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    log = run(NIGHT + timedelta(hours=2))
+    assert len(fake.prs) == 3, "a re-run opens no PR"
+    assert "records/symphony-alpha-0003.md" in first["files"] and "## symphony-alpha-0003" in first["body"]
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert customer["records_prs"] == [{"pr": first["url"], "sources": ["symphony-alpha-0003"]}]
+    state = json.loads((roots["alpha"] / cb.STATE).read_text())
+    assert state["nights"]["2026-11-14"]["sources"] == [f"symphony-alpha-000{n}" for n in (1, 2, 3)]
+    beta = json.loads((roots["beta"] / cb.STATE).read_text())["nights"]["2026-11-14"]
+    assert beta["sources"] == ["symphony-beta-0001"] and "/example/beta/" in beta["pr"], "each checkout its own night"
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0004")
+    run(NIGHT + timedelta(days=1))
+    assert fake.branch("alpha", "records-2026-11-15")["files"] == {"records/symphony-alpha-0004.md":
+                                                                    "---\nid: symphony-alpha-0004\n---\n"}
+
+
+def test_a_night_pr_merged_before_a_rerun_starts_the_nights_next_round(night) -> None:
+    fake, run, roots = night
+    run()
+    fake.branch("alpha", "records-2026-11-14")["state"] = "MERGED"
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    run(NIGHT + timedelta(hours=2))
+    second = fake.branch("alpha", "records-2026-11-14-2")
+    assert second and list(second["files"]) == ["records/symphony-alpha-0003.md"]
+    assert fake.saw["symphony-alpha-0003"] == [], "a merged PR's records are on main, not overlaid"
+
+
+def test_a_night_pr_outside_the_checkouts_origin_is_never_pushed(night) -> None:
+    fake, run, roots = night
+    run()
+    state_file = roots["alpha"] / cb.STATE
+    state = json.loads(state_file.read_text())
+    state["nights"]["2026-11-14"]["pr"] = fake.branch("knowledge", "records-2026-11-14")["url"]
+    state_file.write_text(json.dumps(state))
+    pushes = len(fake.pushes)
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    log = run(NIGHT + timedelta(hours=2))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0003"] and customer["extracted"] == []
+    assert len(fake.pushes) == pushes and len(fake.prs) == 3, "nothing reaches the team repository"
+    assert "symphony-alpha-0003" not in json.dumps(fake.branch("knowledge", "records-2026-11-14"))
+
+
+def test_process_now_still_opens_a_pr_of_its_own(repo: Path, tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    install_skill(project)
+    fake = FakeGitHub({repo: "knowledge"}, repo)
+    monkeypatch.setattr(cb.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cb.subprocess, "run", fake)
+    cb.process_now(repo, "zoom-20261110-572815a920", project=project)
+    [pr] = fake.prs
+    assert pr["branch"].startswith("records-zoom-20261110-572815a920-") and "nights" not in json.loads(
+        (repo / cb.STATE).read_text())
+
+
+def test_the_push_target_is_the_prs_own_records_branch_never_state(night) -> None:
+    """capture/state.json can be edited by anything with the checkout: a branch there is never pushed to."""
+    fake, run, roots = night
+    run()
+    state_file = roots["alpha"] / cb.STATE
+    state = json.loads(state_file.read_text())
+    state["nights"]["2026-11-14"]["branch"] = "main"
+    state_file.write_text(json.dumps(state))
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    run(NIGHT + timedelta(hours=2))
+    assert fake.pushes[-1] == ("alpha", "records-2026-11-14"), "the PR's head, not state's branch"
+    pushes = len(fake.pushes)
+    fake.branch("alpha", "records-2026-11-14")["head"] = "main"  # a PR whose head is the default branch
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0004")
+    log = run(NIGHT + timedelta(hours=3))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0004"] and len(fake.pushes) == pushes
+    assert not [b for _, b in fake.pushes if b == "main"]
+
+
+def test_an_edit_to_an_accepted_record_is_refused_before_the_push(night, monkeypatch) -> None:
+    fake, run, roots = night
+    run()
+    fake.accepted = {"records/symphony-alpha-0001.md": "---\nid: symphony-alpha-0001\n---\n"}
+    pushes = len(fake.pushes)
+    original = cb.subprocess.run
+
+    def editing(command, **kwargs):  # this session rewrites the night's first record
+        done = original(command, **kwargs)
+        if Path(command[0]).name == "claude":
+            edited = "---\nid: symphony-alpha-0001\nx: 1\n---\n"
+            (Path(kwargs["cwd"]) / "records/symphony-alpha-0001.md").write_text(edited)
+        return done
+
+    monkeypatch.setattr(cb.subprocess, "run", editing)
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    log = run(NIGHT + timedelta(hours=2))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0003"]
+    assert fake.checks[-1][4:] == ["--base", "origin/main"] and len(fake.pushes) == pushes, "refused, not pushed"
+
+
+def test_a_failed_body_edit_after_the_push_still_lists_the_source_on_a_rerun(night) -> None:
+    fake, run, roots = night
+    run()
+    pr = fake.branch("alpha", "records-2026-11-14")
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    fake.fail_edits = 1
+    log = run(NIGHT + timedelta(hours=2))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0003"]
+    assert "records/symphony-alpha-0003.md" in pr["files"] and "## symphony-alpha-0003" not in pr["body"]
+    sessions = fake.sessions
+    log = run(NIGHT + timedelta(hours=3))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [r["id"] for r in customer["extracted"]] == ["symphony-alpha-0003"] and customer["no_pr"] == []
+    assert customer["extracted"][0]["pr"] == pr["url"] and "## symphony-alpha-0003" in pr["body"]
+    assert fake.sessions == sessions and len(fake.prs) == 3, "no second session, no second PR"

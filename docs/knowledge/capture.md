@@ -25,7 +25,8 @@ One job pulls cheaply and extracts once a day, so token use stays predictable (d
 2. sets aside chat threads with fewer than 5 messages and no decision word (decided, agreed, going forward, we will).
    Their Source records move from `inbox/` to `processed/` unchanged;
 3. runs `extract-records` once per remaining Source, one Claude Code session each, on a throwaway copy of the
-   repository. The batch then proposes what the session wrote as one draft records PR. Nothing merges.
+   repository. Each session's records join the night's one draft records PR for that repository. A re-run that
+   night adds to it. Nothing merges.
 
 A Source whose session finished moves to `processed/` too, so `inbox/` holds only what is left. The run stops before
 it would pass the nightly token ceiling and lists the Sources it left. The next run starts with them. A Source of any
@@ -68,7 +69,7 @@ Each run appends a line to `capture/runs.jsonl` in the knowledge repository's wo
 format (`contracts/capture-run.schema.json`). It lists each Source filtered, extracted, failed or left at the ceiling,
 with tokens, cost and its draft PR. Usage nobody reported, such as a failed session's, is left unknown rather than 0. A transcript also carries its length, so `ai-dlc knowledge stats` can give a cost
 per transcript hour. It holds Source ids, never titles, paths or pull output, which go only to the terminal.
-The batch commits and pushes nothing; records reach the repository only through their PRs. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
+Records reach the repository only through the night's draft PR. The batch pushes only to that PR's own `records-<date>` branch, never forced and only after `ai-dlc knowledge check` against the PR's base. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
 makes no model call. Tune the filter and the ceiling in `knowledge.toml`:
 
 ```toml
@@ -144,7 +145,7 @@ own knowledge repository, `{{customer_repo}}`, never to `{{knowledge_repo}}`. Cr
 `knowledge.toml`, and set `KNOWLEDGE_REPO_<NAME>` to its local checkout.
 
 The nightly batch then runs once more per listed customer, in that customer's checkout. It exports that customer's
-chat there, extracts there and opens the draft records PRs in the customer's repository. That checkout keeps its own
+chat there, extracts there and opens that night's draft records PR in the customer's repository. That checkout keeps its own
 run log. A customer whose variable is unset, or whose checkout does not declare `[repo] boundary = "customer"` and
 that `project`, is skipped with a reason. Nothing falls back to the team repository. The night's token ceiling is the
 team repository's, shared by all runs. Run `process-now` for a customer Source with `--repo` set to its checkout.
