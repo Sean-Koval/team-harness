@@ -54,11 +54,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin" && ln -s "$RUNNER_TEMP/ai-dlc/bin/ai-dlc" "$RUNNER_TEMP/bin/ai-dlc"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Build
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          # a merge commit's subject is "Merge pull request #N ..."; its body's first line is the PR title
+          # the note is the merged change's changelog fragments (KAN-509); without any, the PR title: a merge
+          # commit's subject is "Merge pull request #N ...", its body's first line the title (empty when merged by
+          # the API with no message); with neither, build_generated.py's default
+          since="$BEFORE"
+          git cat-file -e "${since:-none}^{commit}" 2>/dev/null || since="HEAD^1"
           note="$(git log -1 --format=%s)"
-          case "$note" in "Merge pull request"*) note="$(git log -1 --format=%b | head -n 1)";; esac
-          python scripts/build_generated.py --note "$note"
+          case "$note" in "Merge pull request"*) note="$(git log -1 --format=%b | sed '/^$/d' | head -n 1)";; esac
+          python scripts/build_generated.py --since "$since" --note "$note"
       - name: Check the build as PR CI would
         run: |
           for d in harnesses/*/; do hangar harness check "$d"; done

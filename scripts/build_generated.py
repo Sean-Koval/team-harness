@@ -16,6 +16,8 @@ written with (`stable_frozen`).
     python scripts/build_generated.py                       # build in place, to test a change locally
     python scripts/build_generated.py --restore             # then put the generated files back as committed
     python scripts/build_generated.py --note "KAN-123: ..."  # the channels.yaml note for a moved candidate
+    python scripts/build_generated.py --since BASE          # the note from the changes/ fragments added since BASE
+                                                            # (generated.yml: the push's before), else --note
     python scripts/build_generated.py --guard origin/main   # CI: fail when the PR commits generated files
     python scripts/build_generated.py --drift origin/main   # CI, after the build: fail when a generated file the
                                                             # PR commits differs from the built one
@@ -37,6 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import collect_changes  # noqa: E402
 import promote  # noqa: E402
 import relock  # noqa: E402
 import render_envs  # noqa: E402
@@ -45,6 +48,8 @@ import yaml  # noqa: E402
 from hangar import harness_lock as hl  # noqa: E402
 
 NOTE_LIMIT = 1200  # characters of a channels.yaml comment; older history is in git
+CHANGE_LIMIT = 300  # characters of one revision's note; the full entry is in the changelog
+DEFAULT_NOTE = "built from sources by scripts/build_generated.py"
 ENV_FILES = ("env.stable.yaml", "env.candidate.yaml")
 CHANNEL_LINE = re.compile(r"^\s+candidate:")
 AGENT_LINE = re.compile(r"^\s*AGENT_ENV_HARNESS_DIGEST:")
@@ -138,6 +143,34 @@ def restore(root: Path) -> list[str]:
     return done
 
 
+def one_line(text: str) -> str:
+    """`text` fit for a channels.yaml comment: one line, no comment marker, no trailing full stop (the build adds
+    the stop between revisions, so "r17: ." meant an empty note, KAN-509)."""
+    return " ".join(text.replace("#", "").split()).rstrip(". ")
+
+
+def fragment_note(root: Path, base: str) -> str:
+    """The changelog fragments that HEAD adds or changes since `base`, as one line: "KAN-1: a; b. KAN-2: c", each
+    key's bullets in order, cut at CHANGE_LIMIT. "" when there are none (KAN-509)."""
+    by_key: dict[str, list[str]] = {}
+    names = _git(root, "diff", "--name-only", "--diff-filter=AM", base, "HEAD", "--", "changes/").splitlines()
+    for rel in sorted(names):
+        m = collect_changes.NAME.match(Path(rel).name)
+        if not m or Path(rel).name == "README.md" or not (root / rel).is_file():
+            continue
+        text = (root / rel).read_text(encoding="utf-8")
+        bullets = [one_line(b) for b in re.split(r"^- ", text, flags=re.MULTILINE)]
+        by_key.setdefault(m.group("key"), []).extend(b for b in bullets if b)
+    parts = []
+    for key, bullets in by_key.items():
+        body = "; ".join(bullets)
+        parts.append(body if body.startswith(f"{key}:") else f"{key}: {body}")
+    note = ". ".join(p for p in parts if p)
+    if len(note) > CHANGE_LIMIT:
+        note = note[:CHANGE_LIMIT - 1].rstrip(" ;.,") + "…"
+    return note
+
+
 def old_comment(channels_file: Path, name: str, channel: str) -> str:
     """The comment on `name.channel`'s line in channels.yaml, or ""."""
     inside = False
@@ -218,7 +251,7 @@ def build(root: Path, note: str) -> list[str]:
             elif f not in want and (d / f).is_file() and want:
                 (d / f).unlink()
         if digest != before:
-            text = f"r{lock['revision']}: {note}"
+            text = f"r{lock['revision']}: {one_line(note) or DEFAULT_NOTE}"
             prev = old_comment(channels_file, lock["name"], "candidate")
             full = f"{text}. {prev}" if prev else text
             if len(full) > NOTE_LIMIT:  # drop the oldest revisions whole
@@ -237,8 +270,10 @@ def build(root: Path, note: str) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--note", default="built from sources by scripts/build_generated.py",
+    ap.add_argument("--note", default=DEFAULT_NOTE,
                     help="what changed, for the channels.yaml line of each moved candidate")
+    ap.add_argument("--since", metavar="BASE", help="take the note from the changes/ fragments HEAD adds since BASE; "
+                    "--note when there are none")
     ap.add_argument("--restore", action="store_true", help="put the generated files back as HEAD has them")
     ap.add_argument("--guard", metavar="BASE", help="fail when HEAD changes generated files or lines since BASE")
     ap.add_argument("--drift", metavar="BASE", help="after a build: fail when a generated file HEAD changed since "
@@ -260,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
                   "python scripts/build_generated.py --restore). A lock frozen from a run: label the PR "
                   "generated-files", file=sys.stderr)
         return 1 if bad else 0
-    note = " ".join(a.note.replace("#", "").split())  # one line, and no second comment marker
+    note = (fragment_note(ROOT, a.since) if a.since else "") or one_line(a.note) or DEFAULT_NOTE
     for line in build(ROOT, note):
         print(f"candidate -> {line}", file=sys.stderr)
     return 0
