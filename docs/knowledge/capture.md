@@ -69,7 +69,7 @@ Each run appends a line to `capture/runs.jsonl` in the knowledge repository's wo
 format (`contracts/capture-run.schema.json`). It lists each Source filtered, extracted, failed or left at the ceiling,
 with tokens, cost and its draft PR. Usage nobody reported, such as a failed session's, is left unknown rather than 0. A transcript also carries its length, so `ai-dlc knowledge stats` can give a cost
 per transcript hour. It holds Source ids, never titles, paths or pull output, which go only to the terminal.
-The batch commits and pushes nothing; records reach the repository only through their PRs. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
+Records reach the repository only through the night's draft PR. The batch pushes only to that PR's own `records-<date>` branch, never forced and only after `ai-dlc knowledge check` against the PR's base. `capture/state.json` remembers every Source by its hash, so a second run with nothing new
 makes no model call. Tune the filter and the ceiling in `knowledge.toml`:
 
 ```toml

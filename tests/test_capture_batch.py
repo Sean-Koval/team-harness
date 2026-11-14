@@ -1007,6 +1007,10 @@ class FakeGitHub:
         self.proposes: list[list[str]] = []
         self.pushes: list[tuple[str, str]] = []
         self.trees: dict[Path, dict] = {}
+        self.checks: list[list[str]] = []
+        self.accepted: dict[str, str] = {}  # accepted records on the base: path -> text a check holds them to
+        self.fail_edits = 0  # this many `gh pr edit` calls fail
+        self.sessions = 0
 
     def pr(self, url: str) -> dict:
         return next(p for p in self.prs if p["url"] == url)
@@ -1022,6 +1026,7 @@ class FakeGitHub:
         if name == "claude":
             scratch = Path(kwargs["cwd"])
             source_id = kwargs["input"].split("Source id: ", 1)[1].split("\n", 1)[0]
+            self.sessions += 1
             self.saw[source_id] = sorted(p.name for p in (scratch / "records").glob("*.md"))
             (scratch / "records").mkdir(exist_ok=True)
             (scratch / f"records/{source_id}.md").write_text(f"---\nid: {source_id}\n---\n")
@@ -1042,12 +1047,23 @@ class FakeGitHub:
             self.prs.append({"url": url, "repo": repo, "branch": branch, "files": files, "body": body,
                              "state": "OPEN", "title": command[command.index("--title") + 1]})  # fmt: skip
             return ok(json.dumps({"status": "proposed", "pull_request": url}))
-        if name == "ai-dlc":  # knowledge check of the updated tree
-            return ok()
+        if name == "ai-dlc":  # knowledge check of the updated tree, against the PR's base as propose does
+            assert command[1:3] == ["knowledge", "check"], command
+            self.checks.append(command)
+            tree = Path(command[3])
+            if command[4:] == ["--base", "origin/main"] and not any(
+                    (tree / f).is_file() and (tree / f).read_text() != text for f, text in self.accepted.items()):
+                return ok()
+            return subprocess.CompletedProcess(command, 1, "", "an accepted decision changed: supersede it")
         if name == "gh":
             pr = self.pr(command[3])
             if command[1:3] == ["pr", "view"]:
-                return ok(pr["state"] + "\n" if command[5] == "state" else pr["body"] + "\n")
+                info = {"state": pr["state"], "headRefName": pr.get("head", pr["branch"]), "baseRefName": "main",
+                        "body": pr["body"]}  # fmt: skip
+                return ok(json.dumps({k: info[k] for k in command[5].split(",")}))
+            if self.fail_edits:
+                self.fail_edits -= 1
+                return subprocess.CompletedProcess(command, 1, "", "HTTP 502")
             pr["body"] = Path(command[command.index("--body-file") + 1]).read_text()
             return ok()
         assert name == "git", command
@@ -1060,14 +1076,15 @@ class FakeGitHub:
                 return ok("\n".join(f for f in tree["added"]
                                     if tree["pr"]["files"].get(f) != (where / f).read_text()))
             elif "push" in args:
-                assert args[-1] == f"HEAD:refs/heads/{tree['pr']['branch']}", "the night's branch only, unforced"
                 assert "--force" not in args and "-f" not in args
-                self.pushes.append((tree["pr"]["repo"], tree["pr"]["branch"]))
+                self.pushes.append((tree["pr"]["repo"], args[-1].removeprefix("HEAD:refs/heads/")))
                 tree["pr"]["files"].update({f: (where / f).read_text() for f in tree["added"]})
             return ok()
         repo = self.roots[where]
         if args[:3] == ["remote", "get-url", "origin"]:
             return ok(f"https://github.com/example/{repo}.git\n")
+        if args[0] == "fetch" and args[-1].startswith("+refs/heads/"):  # the PR's base, for the check
+            return ok()
         if args[0] == "fetch":
             self.fetched = self.branch(repo, args[-1])
             assert self.fetched, f"no branch {args[-1]} in {repo}"
@@ -1128,6 +1145,8 @@ def test_one_records_pr_per_night_per_repository(night) -> None:
             "the run log lists the Sources the night's PR holds"
     assert [p for p in fake.proposes if "--root" in p] == [p for p in fake.proposes if p is not fake.proposes[0]]
     assert len(fake.pushes) == 6 + 1, "every later Source of a repository is pushed onto its night's branch"
+    assert {b for _, b in fake.pushes} == {"records-2026-11-14"}
+    assert all(c[4:] == ["--base", "origin/main"] for c in fake.checks) and len(fake.checks) == 7
     assert fake.saw["symphony-alpha-0002"] == ["symphony-alpha-0001.md"], "a later session sees the night's records"
     assert fake.saw["symphony-beta-0001"] == [], "and never another repository's"
     [team_line] = log["records_prs"]
@@ -1191,3 +1210,63 @@ def test_process_now_still_opens_a_pr_of_its_own(repo: Path, tmp_path: Path, mon
     [pr] = fake.prs
     assert pr["branch"].startswith("records-zoom-20261110-572815a920-") and "nights" not in json.loads(
         (repo / cb.STATE).read_text())
+
+
+def test_the_push_target_is_the_prs_own_records_branch_never_state(night) -> None:
+    """capture/state.json can be edited by anything with the checkout: a branch there is never pushed to."""
+    fake, run, roots = night
+    run()
+    state_file = roots["alpha"] / cb.STATE
+    state = json.loads(state_file.read_text())
+    state["nights"]["2026-11-14"]["branch"] = "main"
+    state_file.write_text(json.dumps(state))
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    run(NIGHT + timedelta(hours=2))
+    assert fake.pushes[-1] == ("alpha", "records-2026-11-14"), "the PR's head, not state's branch"
+    pushes = len(fake.pushes)
+    fake.branch("alpha", "records-2026-11-14")["head"] = "main"  # a PR whose head is the default branch
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0004")
+    log = run(NIGHT + timedelta(hours=3))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0004"] and len(fake.pushes) == pushes
+    assert not [b for _, b in fake.pushes if b == "main"]
+
+
+def test_an_edit_to_an_accepted_record_is_refused_before_the_push(night, monkeypatch) -> None:
+    fake, run, roots = night
+    run()
+    fake.accepted = {"records/symphony-alpha-0001.md": "---\nid: symphony-alpha-0001\n---\n"}
+    pushes = len(fake.pushes)
+    original = cb.subprocess.run
+
+    def editing(command, **kwargs):  # this session rewrites the night's first record
+        done = original(command, **kwargs)
+        if Path(command[0]).name == "claude":
+            edited = "---\nid: symphony-alpha-0001\nx: 1\n---\n"
+            (Path(kwargs["cwd"]) / "records/symphony-alpha-0001.md").write_text(edited)
+        return done
+
+    monkeypatch.setattr(cb.subprocess, "run", editing)
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    log = run(NIGHT + timedelta(hours=2))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0003"]
+    assert fake.checks[-1][4:] == ["--base", "origin/main"] and len(fake.pushes) == pushes, "refused, not pushed"
+
+
+def test_a_failed_body_edit_after_the_push_still_lists_the_source_on_a_rerun(night) -> None:
+    fake, run, roots = night
+    run()
+    pr = fake.branch("alpha", "records-2026-11-14")
+    another_source(roots["alpha"], "alpha", "symphony-alpha-0003")
+    fake.fail_edits = 1
+    log = run(NIGHT + timedelta(hours=2))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [f["id"] for f in customer["failed"]] == ["symphony-alpha-0003"]
+    assert "records/symphony-alpha-0003.md" in pr["files"] and "## symphony-alpha-0003" not in pr["body"]
+    sessions = fake.sessions
+    log = run(NIGHT + timedelta(hours=3))
+    customer = next(c for c in log["customers"] if c["project"] == "alpha")
+    assert [r["id"] for r in customer["extracted"]] == ["symphony-alpha-0003"] and customer["no_pr"] == []
+    assert customer["extracted"][0]["pr"] == pr["url"] and "## symphony-alpha-0003" in pr["body"]
+    assert fake.sessions == sessions and len(fake.prs) == 3, "no second session, no second PR"

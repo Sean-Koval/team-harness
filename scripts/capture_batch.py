@@ -540,6 +540,10 @@ def git(where: Path, *args: str) -> str:
     return run.stdout
 
 
+NIGHT_BRANCH = re.compile(r"records-\d{4}-\d{2}-\d{2}(?:-[1-9]\d*)?")
+BRANCH = re.compile(r"[A-Za-z0-9][\w./-]{0,199}")
+
+
 def gh(*args: str, cwd: Path) -> str:
     exe = shutil.which("gh")
     if not exe:
@@ -558,14 +562,27 @@ def home_pr(repo: Path, night: dict) -> None:
         raise RuntimeError(f"the night's records PR {night['pr']} is not in this knowledge repository's origin")
 
 
+def night_pr(repo: Path, night: dict) -> dict:
+    """The night's PR as GitHub has it (state, head and base branch, body), after refusing anything but a
+    `records-<night>[-n]` head branch in this checkout's repository that is not its base. The branch pushed to comes
+    from here, never from capture/state.json, which anything with write access to the checkout can edit."""
+    home_pr(repo, night)
+    info = json.loads(gh("pr", "view", night["pr"], "--json", "state,headRefName,baseRefName,body", cwd=repo))
+    head, base = str(info.get("headRefName") or ""), str(info.get("baseRefName") or "")
+    tonight = NIGHT_BRANCH.fullmatch(head) and head.startswith(f"records-{night['date']}")
+    if not tonight or not BRANCH.fullmatch(base) or head == base:
+        raise RuntimeError(f"the night's records PR {night['pr']} is on {head!r} into {base!r}, not a records-<night> "
+                           "branch: refused")  # fmt: skip
+    night["branch"] = head
+    return info
+
+
 def night_records(repo: Path, night: dict | None) -> dict[str, str]:
     """The records already on the night's PR branch, path -> text, for the next session's copy: it sees them, so it
     builds on them instead of writing a second record. A PR no longer open starts the night's next round: {}."""
     if not night or not night.get("pr"):
         return {}
-    home_pr(repo, night)
-    state = gh("pr", "view", night["pr"], "--json", "state", "--jq", ".state", cwd=repo).strip()
-    if state != "OPEN":
+    if night_pr(repo, night)["state"] != "OPEN":
         night.update(round=night.get("round", 1) + 1, pr=None, branch=None, sources=[])
         return {}
     git(repo, "fetch", "--quiet", "origin", night["branch"])
@@ -575,47 +592,73 @@ def night_records(repo: Path, night: dict | None) -> dict[str, str]:
             if not n.startswith(NOT_PROPOSED) and inside(repo, n) is not None}
 
 
+def add_section(repo: Path, night: dict, info: dict, source_id: str, section: Path | None) -> None:
+    """Add one Source's section to the night's PR body, once."""
+    body = str(info.get("body") or "").rstrip()
+    if f"## {source_id}\n" in body + "\n":
+        return
+    path = section or Path(tempfile.mkdtemp(prefix="capture-body-")) / "body.md"
+    text = section.read_text(encoding="utf-8") if section else (
+        f"## {source_id}\n\nIts records are on this branch; its notes were lost when an earlier body edit failed.\n")
+    path.write_text(f"{body}\n\n{text}", encoding="utf-8")
+    try:
+        gh("pr", "edit", night["pr"], "--body-file", str(path), cwd=repo)
+    finally:
+        if section is None:
+            shutil.rmtree(path.parent, ignore_errors=True)
+
+
+def finish_night(source: dict, repo: Path, night: dict) -> dict:
+    """A Source already pushed onto the night's branch whose body edit failed: add its section, run no session."""
+    info = night_pr(repo, night)
+    if info["state"] == "OPEN":
+        add_section(repo, night, info, source["id"], None)
+    return {"result": f"Updated {night['pr']}", "input": 0, "output": 0, "cost_usd": 0.0}
+
+
 def update_night(source: dict, repo: Path, scratch: Path, files: list[str], config: dict, night: dict) -> str:
     """Push one Source's records onto the night's open PR branch and add its section to the PR body.
 
-    The push is to that branch only, never forced: a branch someone moved fails the Source, which is retried. The
-    whole tree passes `ai-dlc knowledge check` before the push, as `propose` requires.
+    The branch is the PR's own head (night_pr). The push is to that branch only, never forced: a branch someone
+    moved fails the Source, which is retried. The whole tree passes `ai-dlc knowledge check --base origin/<base>`
+    before the push, as `propose` requires, so an edit to an accepted record is refused here too.
     """
-    home_pr(repo, night)
+    info = night_pr(repo, night)
     exe = shutil.which("ai-dlc")
     if not exe:
         raise RuntimeError("the ai-dlc CLI is not on PATH")
-    git(repo, "fetch", "--quiet", "origin", night["branch"])
-    head = git(repo, "rev-parse", "FETCH_HEAD").strip()
-    work = Path(tempfile.mkdtemp(prefix="capture-night-"))
-    tree = work / "tree"
-    try:
-        git(repo, "worktree", "add", "--quiet", "--detach", str(tree), head)
-        for relative in files:
-            target = tree / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes((scratch / relative).read_bytes())
-        git(tree, "add", "--", *files)
-        if git(tree, "diff", "--cached", "--name-only").strip():
-            git(tree, "-c", "user.name=capture batch", "-c", "user.email=capture-batch@localhost",
-                "commit", "--quiet", "-m", f"records: {source['id']}")  # fmt: skip
-            check = subprocess.run([exe, "knowledge", "check", str(tree)], capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace", cwd=config["project"], timeout=600,
-                                   check=False)  # fmt: skip
-            if check.returncode:
-                raise RuntimeError(f"knowledge check failed ({check.returncode}): "
-                                   f"{(check.stderr or check.stdout).strip()[:300]}")  # fmt: skip
-            git(tree, "push", "--quiet", "origin", f"HEAD:refs/heads/{night['branch']}")
-    finally:
-        subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)], capture_output=True,
-                       timeout=120, check=False)  # fmt: skip
-        shutil.rmtree(work, ignore_errors=True)
-    section = pr_body(repo, scratch, files, source["id"])
-    if section is not None:
-        body = gh("pr", "view", night["pr"], "--json", "body", "--jq", ".body", cwd=repo).rstrip()
-        section.write_text(f"{body}\n\n{section.read_text(encoding='utf-8')}", encoding="utf-8")
-        gh("pr", "edit", night["pr"], "--body-file", str(section), cwd=repo)
-    night.setdefault("sources", []).append(source["id"])
+    base = info["baseRefName"]
+    if files:
+        git(repo, "fetch", "--quiet", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}")
+        git(repo, "fetch", "--quiet", "origin", night["branch"])
+        head = git(repo, "rev-parse", "FETCH_HEAD").strip()
+        work = Path(tempfile.mkdtemp(prefix="capture-night-"))
+        tree = work / "tree"
+        try:
+            git(repo, "worktree", "add", "--quiet", "--detach", str(tree), head)
+            for relative in files:
+                target = tree / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((scratch / relative).read_bytes())
+            git(tree, "add", "--", *files)
+            if git(tree, "diff", "--cached", "--name-only").strip():
+                git(tree, "-c", "user.name=capture batch", "-c", "user.email=capture-batch@localhost",
+                    "commit", "--quiet", "-m", f"records: {source['id']}")  # fmt: skip
+                check = subprocess.run([exe, "knowledge", "check", str(tree), "--base", f"origin/{base}"],
+                                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                       cwd=config["project"], timeout=600, check=False)  # fmt: skip
+                if check.returncode:
+                    raise RuntimeError(f"knowledge check failed ({check.returncode}): "
+                                       f"{(check.stderr or check.stdout).strip()[:300]}")  # fmt: skip
+                git(tree, "push", "--quiet", "origin", f"HEAD:refs/heads/{night['branch']}")
+        finally:
+            subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)], capture_output=True,
+                           timeout=120, check=False)  # fmt: skip
+            shutil.rmtree(work, ignore_errors=True)
+    # On the branch now: a body edit that fails below leaves the Source failed, and its retry only adds the section.
+    if source["id"] not in night.setdefault("sources", []):
+        night["sources"].append(source["id"])
+    add_section(repo, night, info, source["id"], pr_body(repo, scratch, files, source["id"]))
     return f"Updated {night['pr']}"
 
 
@@ -627,7 +670,10 @@ def claude_runner(source: dict, repo: Path, config: dict) -> dict:
     skill = Path(config["project"]) / SKILL
     if not skill.is_file():
         raise RuntimeError(f"{skill} is missing")
-    overlay = night_records(repo, config.get("night"))
+    night = config.get("night")
+    if night and night.get("pr") and source["id"] in night.get("sources", []):
+        return finish_night(source, repo, night)
+    overlay = night_records(repo, night)
     scratch = scratch_copy(repo)
     try:
         for relative, text in overlay.items():  # the night's records so far, as the PR branch has them
@@ -955,7 +1001,9 @@ def run_repo(repo: Path, config: dict, *, dry_run: bool, runner: Runner, pulls: 
         date = f"{started:%Y-%m-%d}"
         for old in sorted(nights)[:-7]:
             nights.pop(old)
-        config = {**config, "night": nights.setdefault(date, {"date": date})}
+        night = nights.setdefault(date, {})
+        night["date"] = date
+        config = {**config, "night": night}
     since = windows(state, config, started, steps)
     before = {s["path"] for s in find_sources(repo)}
     log: dict[str, Any] = {"run_id": new_run_id(started), "started": started.isoformat(timespec="seconds"),
