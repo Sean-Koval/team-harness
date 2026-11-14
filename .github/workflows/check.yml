@@ -76,21 +76,46 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # as the Linux job: the build resolves channels through each harness.lock's history
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test tools
         run: python -m pip install pytest pyyaml
-      - name: Build the shared layer's copies (the rest needs hangar; the Linux job builds it, KAN-481)
-        run: python scripts/sync_shared.py
+      # The installer refuses a harness whose files don't match its lock, so a PR that edits a hook needs the locks
+      # built here too, not only the shared layer's copies (KAN-481). hangar goes in a venv of its own, used to build
+      # and for the digest tests: the other tests still run without it, as before.
+      - name: Build generated files (hangar in its own venv)
+        env:
+          PYTHONUTF8: "1"   # text opened without an encoding (in hangar, say) is UTF-8, as on Linux, not cp1252
+        run: |
+          python -m venv "$env:RUNNER_TEMP\hangar"
+          & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pip install --quiet "hangar @ git+https://github.com/Sean-Koval/hangar@$env:HANGAR_REF"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" scripts/build_generated.py --note "built in CI"
+          exit $LASTEXITCODE
       - name: Hook tests
         run: >-
           python -m pytest -q -rs tests/test_guard_work_system.py tests/test_guard_work.py
           tests/test_guard_readonly.py tests/test_sync_shared.py tests/test_session_hooks.py
+      # each test step runs even when an earlier one failed, so one failure can't hide the others' results
       - name: SessionEnd hook tests
+        if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_knowledge_skills.py -k hook
       - name: Installer tests
+        if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_install_local.py
+      # The installer's own digests against hangar's, on a Windows checkout (CRLF conversion on): the tests above
+      # skip these, as their interpreter has no hangar, so they run here with the build's venv.
+      - name: Installer digests match hangar's
+        if: ${{ !cancelled() }}
+        run: |
+          & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pip install --quiet pytest
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP\hangar\Scripts\python.exe" -m pytest -q -rs tests/test_install_local.py -k test_digests_match_hangar
+          exit $LASTEXITCODE
       # the teammate guide's PowerShell: every block parses, and quickstart step 3 runs (KAN-469)
       - name: Guide PowerShell
+        if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_guide_powershell.py

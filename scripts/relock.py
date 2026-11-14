@@ -84,7 +84,7 @@ def relock(root: Path, *, without_plugins: bool = False, rekey: bool = False
     """(new lock, previous lock) for the harness directory `root`. `rekey`: the files must be the previous lock's;
     only the digest is recomputed and the revision stays."""
     lock_file = root / hl.LOCK_FILE
-    prev = yaml.safe_load(lock_file.read_text()) if lock_file.is_file() else None
+    prev = yaml.safe_load(lock_file.read_text(encoding="utf-8")) if lock_file.is_file() else None
     if prev is None:
         raise SystemExit(f"{lock_file}: start from a lock (hangar harness freeze, or a skeleton with runtime, model "
                          "and binding and `components: []`)")
@@ -174,7 +174,7 @@ def main() -> int:
         print(digest)
         return 0
     if a.write:
-        (a.harness / hl.LOCK_FILE).write_text(hl.dump(lock))
+        (a.harness / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
         print(f"{lock['name']} r{lock['revision']} {digest}", file=sys.stderr)
     else:
         sys.stdout.write(hl.dump(lock))

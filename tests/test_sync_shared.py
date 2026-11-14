@@ -80,8 +80,17 @@ def test_work_default_carries_no_personal_rules():
     for p in (ROOT / "harnesses/work-default").rglob("*"):
         if p.is_file():
             text = p.read_text(encoding="utf-8").lower()
-            for word in ("sean", "needs-sean", "second brain", "seanmkoval", "kan-"):
+            for word in ("sean", "needs-sean", "human-decision", "second brain", "seanmkoval", "kan-"):
                 assert word not in text, f"{p.relative_to(ROOT)} mentions {word!r}"
+
+
+def test_suite_default_decisions_carry_the_human_decision_label():
+    """Sean's decisions view filters on `human-decision` (KAN-484): a Decision filed by the skill must carry it."""
+    skill = (ROOT / "harnesses/suite-default/skills/decision-ticket/SKILL.md").read_text(encoding="utf-8")
+    labels = next((line for line in skill.splitlines() if line.startswith("| Labels |")), "")
+    assert labels, "the decision-ticket skill has no Labels row"
+    for label in ("`decision`", "`human-decision`", "assign it to Sean"):
+        assert label in labels, label
 
 
 def test_merge_rules_differ_by_harness():
@@ -90,6 +99,28 @@ def test_merge_rules_differ_by_harness():
     assert "you may merge" in suite and "Merging: never." in work
     assert (ROOT / "harnesses/work-default/skills/release-approvals/SKILL.md").is_file()
     assert not (ROOT / "harnesses/suite-default/skills/release-approvals").exists()
+
+
+def test_needs_owner_review_prs_stay_drafts_and_unmerged():
+    # codify-lesson leaves a PR a draft labelled needs-owner-review when its owner can't be asked to review it (KAN-470).
+    # Neither the ready step nor the merge rule may undo that (KAN-488).
+    def skill(harness):
+        text = (ROOT / f"harnesses/{harness}/skills/github-pr/SKILL.md").read_text(encoding="utf-8")
+        return " ".join(text.split())
+
+    for harness in ("suite-default", "work-default"):
+        text = skill(harness)
+        assert "unless it carries the label `needs-owner-review` or its body has an `Owner review:` line" in text, \
+            harness
+        assert "gh pr view <n> --json labels,body" in text, harness
+        assert "never mark it ready, remove the label, drop its `Owner review:` line or open a new PR for its branch" \
+            " yourself" in text, harness
+    assert "stays a draft until Sean has reviewed it" in skill("suite-default")
+    assert "stays a draft until the ticket's owner has reviewed it" in skill("work-default")
+    suite = skill("suite-default")
+    assert "A draft, a PR labelled `needs-owner-review` or one whose body has an `Owner review:` line counts as one" \
+        " somebody asked to review" in suite
+    assert "never merge such a PR or turn on auto-merge for it" in suite and "--json isDraft,labels,body" in suite
 
 
 def test_ticket_template_is_the_one_the_skill_ships():

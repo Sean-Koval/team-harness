@@ -16,8 +16,8 @@ params:
     Create an issue with work type **Decision** in the work ticket's project, under the same epic, and fill its
     fields:
   decision_labels: >-
-    `exec:human`, the work ticket's `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it;
-    assign it to Sean
+    `decision`, `human-decision` (the label Sean's decisions view filters on), `exec:human`, the work ticket's
+    `repo:` label, and `needs-sean` until the label cleanup (KAN-326) retires it; assign it to Sean
   # The guard hook's MCP roles: which servers this harness binds as the tracker and the wiki (names from
   # harness.lock binding.mcp; a test holds them equal), and the ai-dlc server. JSON.
   mcp_bindings: '{"tracker": ["atlassian"], "wiki": ["atlassian"], "ai-dlc": ["ai-dlc"]}'
@@ -26,8 +26,11 @@ params:
   merge_mode: "allowed"
   merge_rule: >-
     **Merging (suite repositories only):** you may merge your own PR once every required check is green, every review
-    thread is answered, and nobody asked to review it first (Sean's rule, 2026-11-08; KAN-278 for hangar). Squash and
-    delete the branch: `gh pr merge <n> --squash --delete-branch`. In a hangar job, hangar lands it. Never use
+    thread is answered, and nobody asked to review it first (Sean's rule, 2026-11-08; KAN-278 for hangar). A draft, a PR
+    labelled `needs-owner-review` or one whose body has an `Owner review:` line counts as one somebody asked to review:
+    read all three first (`gh pr view <n> --json isDraft,labels,body`), and never merge such a PR or turn on
+    auto-merge for it; Sean does. Squash and delete the
+    branch: `gh pr merge <n> --squash --delete-branch`. In a hangar job, hangar lands it. Never use
     `--admin`, never bypass branch protection, and never merge a PR you were told to leave for review. The merge moves
     the ticket to Done.
   scope_map: >-
