@@ -11,7 +11,7 @@ permissions:
 
 env:
   # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
-  HANGAR_REF: 353c917b876b65aada4cd6291ad70136d88ebd13
+  HANGAR_REF: ee176d11931f5db459c1c00d7c24905bf93137ef
   FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
   AI_DLC_REF: 72327f45d698a255cc6959b68b107a88f6fa421d   # environments/agent.yaml's pin; the knowledge tests run against it
 
