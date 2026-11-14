@@ -4,6 +4,7 @@
     python scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO"            # nightly, or on demand
     python scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO" --dry-run  # report only: no writes, no model
     python scripts/capture_batch.py process-now <source id> --repo "$KNOWLEDGE_REPO"
+    python scripts/capture_batch.py process-now <source id> --repo "$KNOWLEDGE_REPO_ACME"  # in a customer checkout
 
 Run it from the ai-dlc project that configures the knowledge and transcripts roles (or pass --project): the pulls and
 `propose` run there, and each session gets that project's installed extract-records skill as text, while it works in a
@@ -18,6 +19,17 @@ copy of the knowledge repository. `run` does, in order:
    copy of the repository;
 5. proposes what that session wrote as one draft records PR through `ai-dlc knowledge records propose`, run here
    with the project's own knowledge role; the session itself cannot propose. Nothing here merges.
+
+Then, for each customer the team repository's `knowledge.toml` lists under `[[transcripts.customers]]` (the table
+ai-dlc's transcript pull routes by, KAN-475), the same steps run in that customer's own checkout (KAN-492): the path is
+read from the entry's `repo_env` variable (`KNOWLEDGE_REPO_<PROJECT>` by default), its export is
+`work-copilot export --to <customer checkout> ... --scope project` (transcripts already route themselves), and its
+Sources are filtered, extracted and proposed there, with `propose --root <customer checkout>`, so each draft records
+PR opens in the customer's repository and its run log and state stay in that checkout. A customer whose variable is
+unset, or whose checkout does not declare `[repo] boundary = "customer"` and that `project`, is skipped with its
+reason; nothing falls back to the team repository. A team run never extracts a Source marked `boundary: customer`,
+and a customer run extracts only Sources marked with its own project. The night's token ceiling is the team
+repository's, shared by every run. What the batch prints about a customer names its Sources by id only.
 
 A session that writes no records is listed under `no_pr` and its Source stays in the inbox for a person to look at
 (`process-now` runs it again).
@@ -43,6 +55,7 @@ the batch machine run anything else or widen what a session may do.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -89,6 +102,8 @@ RUN_LOG_KINDS = {"transcript": "transcript", "chat": "chat", "notes": "note", "o
 MODEL_NAME = re.compile(r"^[A-Za-z0-9][\w.:-]{0,79}$")
 LOGIN = re.compile(r"^[A-Za-z0-9][\w.@-]{0,99}$")
 SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")  # ai-dlc's project slug
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # The session: `--restricted` (no user, project or local settings; file tools confined to its working directory),
 # `--disable-slash-commands` (no skill or command loads, whatever it or the repository writes), no MCP servers, and the
 # batch's own rules through `--settings` with mode dontAsk (anything they do not allow is denied). Its working
@@ -163,7 +178,50 @@ def load_config(repo: Path) -> dict[str, Any]:
         config["owner"] = owner if isinstance(owner, str) else ""
     if config["owner"] and not LOGIN.match(config["owner"]):
         raise Refused("knowledge.toml [capture] owner is not a login")
+    config["customer"] = declared_customer(parsed)
     return config
+
+
+def declared_customer(parsed: dict) -> str | None:
+    """The project a customer repository declares in `[repo]` (ai-dlc KAN-475), or None for a team repository.
+
+    The same reading as ai-dlc's `repo_boundary`: a `[repo]` table that is not exactly `boundary = "customer"` and a
+    project slug is refused, never taken for a team repository.
+    """
+    table = parsed.get("repo")
+    if table is None:
+        return None
+    project = table.get("project") if isinstance(table, dict) else None
+    if not isinstance(table, dict) or table.get("boundary") != "customer" or not isinstance(project, str) \
+            or not SLUG.fullmatch(project):
+        raise Refused('knowledge.toml [repo] must declare boundary = "customer" and a project slug')
+    return project
+
+
+def customer_routes(repo: Path) -> list[dict]:
+    """The team repository's `[[transcripts.customers]]`: {project, repo_env} each, as ai-dlc's transcripts read them.
+
+    One table routes both pulls (KAN-475, KAN-489, KAN-492): `repo_env` names the variable that holds the customer
+    checkout's local path, `KNOWLEDGE_REPO_<PROJECT>` by default. Paths stay in the environment, never in the file.
+    """
+    parsed = tomllib.loads((repo / "knowledge.toml").read_text(encoding="utf-8"))
+    transcripts = parsed.get("transcripts")
+    entries = transcripts.get("customers") if isinstance(transcripts, dict) else None
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise Refused("knowledge.toml [[transcripts.customers]] must be a list of tables")
+    routes = []
+    for number, entry in enumerate(entries, 1):
+        where = f"knowledge.toml [[transcripts.customers]] entry {number}"
+        project = entry.get("project") if isinstance(entry, dict) else None
+        if not isinstance(project, str) or not SLUG.fullmatch(project):
+            raise Refused(f"{where}: project must be a project name (a slug)")
+        variable = entry.get("repo_env", "KNOWLEDGE_REPO_" + project.upper().replace("-", "_"))
+        if not isinstance(variable, str) or not ENV_NAME.fullmatch(variable):
+            raise Refused(f"{where}: repo_env must name an environment variable")
+        routes.append({"project": project, "repo_env": variable})
+    return routes
 
 
 def frontmatter(path: Path) -> dict | None:
@@ -246,6 +304,8 @@ def find_sources(repo: Path, folder: str = "inbox") -> list[dict]:
                 "transcript": "transcript" in tags,
                 "payload": first.get("resource") if isinstance(first.get("resource"), str) else "",
                 "observed_at": str(header.get("observed_at") or header.get("date") or ""),
+                "boundary": str(header.get("boundary") or ""),
+                "project": str(header.get("project") or ""),
             }
         )
     return sorted(found, key=lambda s: (s["observed_at"], s["path"]))
@@ -428,6 +488,10 @@ def propose(source: dict, repo: Path, scratch: Path, files: list[str], config: d
     for relative in files:
         command += ["--path", relative]
     command += ["--branch", f"records-{source['id']}-{stamp}", "--title", f"records: {source['id']}"]
+    if config.get("customer"):
+        # `--root` at a knowledge checkout makes ai-dlc propose into that checkout's repository, whatever the project's
+        # knowledge role names: a customer's records never ride the team repository's role.
+        command += ["--root", str(repo)]
     body = pr_body(repo, scratch, files)
     if body is not None:
         command += ["--body-file", str(body)]
@@ -605,11 +669,11 @@ def new_run_id(started: datetime) -> str:
 # --- the run ------------------------------------------------------------------------------------------------------
 
 
-def windows(state: dict, config: dict, started: datetime) -> dict[str, str]:
+def windows(state: dict, config: dict, started: datetime, steps: tuple[str, ...] = PULL_STEPS) -> dict[str, str]:
     """Each pull's --since: its last successful pull less the overlap, or first_since, or a day ago."""
     first = config["first_since"] or (started - timedelta(days=1)).isoformat(timespec="seconds")
     since = {}
-    for step in PULL_STEPS:
+    for step in steps:
         last = state["last_pull"].get(step)
         if last:
             moment = datetime.fromisoformat(last) - timedelta(hours=config["overlap_hours"])
@@ -619,14 +683,24 @@ def windows(state: dict, config: dict, started: datetime) -> dict[str, str]:
     return since
 
 
-def pull(repo: Path, config: dict, since: dict[str, str], dry_run: bool) -> list[dict]:
+def pull_commands(repo: Path, config: dict, since: dict[str, str]) -> dict[str, list[str]]:
+    """The fixed pull commands for the steps in `since`. A customer checkout gets the chat export only.
+
+    Transcripts route themselves: the team pull sends a customer's to its checkout (KAN-475). Chat export writes only
+    into `--to`, so each customer checkout gets an export of its own, which takes only that customer's Sources
+    (KAN-489).
+    """
     commands = {
-        "ai-dlc": ["ai-dlc", "knowledge", "pull-transcripts", "--since", since["ai-dlc"], "--into", str(repo)],
-        "work-copilot": ["work-copilot", "export", "--to", str(repo), "--since", since["work-copilot"],
+        "ai-dlc": ["ai-dlc", "knowledge", "pull-transcripts", "--since", since.get("ai-dlc", ""), "--into", str(repo)],
+        "work-copilot": ["work-copilot", "export", "--to", str(repo), "--since", since.get("work-copilot", ""),
                          "--owner", config["owner"], "--scope", config["scope"]],
     }  # fmt: skip
+    return {name: command for name, command in commands.items() if name in since}
+
+
+def pull(repo: Path, config: dict, since: dict[str, str], dry_run: bool) -> list[dict]:
     results = []
-    for name, command in commands.items():
+    for name, command in pull_commands(repo, config, since).items():
         exe = shutil.which(name)
         if dry_run:
             results.append({"step": name, "status": "would run", "command": command})
@@ -651,13 +725,110 @@ def pull(repo: Path, config: dict, since: dict[str, str], dry_run: bool) -> list
     return results
 
 
+def out_of_bounds(source: dict, config: dict) -> str | None:
+    """Why a Source may not be extracted in this repository, or None.
+
+    A customer checkout extracts only Sources marked `boundary: customer` with its own project; a team repository
+    never extracts a customer Source. Either one is left where it is for a person to move, never proposed here.
+    """
+    customer = config.get("customer")
+    if customer:
+        if source["boundary"] != "customer" or source["project"] != customer:
+            return "not marked boundary: customer for this repository's project; left in the inbox"
+        return None
+    if source["boundary"] == "customer":
+        return "a customer Source in the team repository; move it to its customer repository"
+    return None
+
+
 def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runner, pulls: bool = True,
-              project: Path | None = None, now: datetime | None = None) -> dict:  # fmt: skip
+              project: Path | None = None, now: datetime | None = None,
+              environ: dict[str, str] | None = None) -> dict:  # fmt: skip
+    """The team repository's run, then one run per customer checkout its `[[transcripts.customers]]` lists."""
     repo = repo.resolve()
     config = {**load_config(repo), "project": str((project or Path.cwd()).resolve())}
-    state = read_state(repo)
+    if config["customer"]:
+        raise Refused("--repo is a customer repository: run the batch on the team repository, which lists customers")
+    routes = customer_routes(repo)
     started = (now or datetime.now(UTC)).astimezone(UTC)
-    since = windows(state, config, started)
+    log = run_repo(repo, config, dry_run=dry_run, runner=runner, pulls=pulls, started=started,
+                   budget=config["token_ceiling"])  # fmt: skip
+    budget = config["token_ceiling"] - log["tokens"]
+    log["customers"] = []
+    for route in routes:
+        result = run_customer(repo, route, config, dry_run=dry_run, runner=runner, pulls=pulls, started=started,
+                              budget=budget, environ=os.environ if environ is None else environ)  # fmt: skip
+        budget -= result.get("tokens", 0)
+        log["customers"].append(result)
+    return log
+
+
+def customer_checkout(route: dict, team: Path, environ: dict[str, str] | Any) -> Path | str:
+    """The customer's local checkout, or why it cannot be used. There is no fallback to the team repository."""
+    location = str(environ.get(route["repo_env"], "")).strip()
+    if not location:
+        return f"not configured: set {route['repo_env']} to its local checkout"
+    root = Path(location).expanduser().resolve()
+    if root == team or root.is_relative_to(team) or team.is_relative_to(root):
+        return f"{route['repo_env']} names the team checkout or a folder that overlaps it"
+    if not (root / "knowledge.toml").is_file() or (root / "knowledge.toml").is_symlink():
+        return f"{route['repo_env']} does not name a knowledge repository checkout"
+    try:
+        declared = declared_customer(tomllib.loads((root / "knowledge.toml").read_text(encoding="utf-8")))
+    except (Refused, tomllib.TOMLDecodeError, UnicodeDecodeError):
+        declared = None
+    if declared != route["project"]:
+        return (f'{route["repo_env"]} names a repository that does not declare [repo] boundary = "customer" and '
+                f'project = "{route["project"]}"')  # fmt: skip
+    return root
+
+
+def run_customer(team: Path, route: dict, team_config: dict, *, dry_run: bool, runner: Runner, pulls: bool,
+                 started: datetime, budget: int, environ: dict[str, str] | Any) -> dict:  # fmt: skip
+    """One customer's run in its own checkout: its export, filter, extraction and draft PRs, its own run log.
+
+    What reaches stdout names the customer's Sources by id only: no path, title, or session or pull text.
+    """
+    summary: dict[str, Any] = {"project": route["project"]}
+    root = customer_checkout(route, team, environ)
+    if isinstance(root, str):
+        summary["status"] = f"skipped: {root}"
+        print(f"capture: customer {route['project']} skipped: {root}", file=sys.stderr)
+        return summary
+    try:
+        config = {**load_config(root), "project": team_config["project"]}
+    except (Refused, tomllib.TOMLDecodeError) as exc:
+        summary["status"] = f"skipped: {exc}"
+        return summary
+    # Its Sources are project-scoped and carry the customer boundary, whatever --scope says (KAN-489).
+    config.update(scope="project", owner=config["owner"] or team_config["owner"])
+    try:
+        with contextlib.nullcontext() if dry_run else Lock(root):
+            log = run_repo(root, config, dry_run=dry_run, runner=runner, pulls=pulls, started=started,
+                           budget=max(budget, 0), steps=("work-copilot",))  # fmt: skip
+    except Refused as exc:
+        summary["status"] = f"skipped: {str(exc).replace(str(root), '<checkout>')}"
+        return summary
+    summary["status"] = "ok"
+    summary["pulls"] = log["pulls"]
+    for key in ("pulled", "filtered", "already", "unprocessed"):
+        summary[key] = log[key]
+    summary["skipped"] = [{"id": s["id"], "reason": s["reason"]} for s in log["skipped"]]
+    keep = ("id", "pr", "tokens", "input_tokens", "output_tokens", "cost_usd", "estimated_tokens")
+    for key in ("extracted", "no_pr"):
+        summary[key] = [{k: r[k] for k in keep if k in r} for r in log[key]]
+    summary["failed"] = [{"id": r["id"], "error": str(r.get("error", "")).split(":", 1)[0][:80]} for r in log["failed"]]
+    for key in ("stopped", "tokens", "cost_usd", "model_calls"):
+        if key in log:
+            summary[key] = log[key]
+    return summary
+
+
+def run_repo(repo: Path, config: dict, *, dry_run: bool, runner: Runner, pulls: bool, started: datetime,
+             budget: int, steps: tuple[str, ...] = PULL_STEPS) -> dict:  # fmt: skip
+    """Pull, filter and extract in one knowledge checkout, team or customer, writing its own state and run log."""
+    state = read_state(repo)
+    since = windows(state, config, started, steps)
     before = {s["path"] for s in find_sources(repo)}
     log: dict[str, Any] = {"run_id": new_run_id(started), "started": started.isoformat(timespec="seconds"),
                            "since": since, "dry_run": dry_run}  # fmt: skip
@@ -678,6 +849,10 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
     for source in sources:
         if not SOURCE_ID.match(source["id"]):
             skip(source, "id is not a plain slug; left in the inbox")
+            continue
+        refused = out_of_bounds(source, config)
+        if refused:
+            skip(source, refused)
             continue
         seen = state["sources"].get(source["key"], {})
         if seen.get("status") in ("extracted", "filtered"):
@@ -717,14 +892,16 @@ def run_batch(repo: Path, *, dry_run: bool = False, runner: Runner = claude_runn
                 continue
         queue.append((source, what))
 
-    used, ceiling = 0, config["token_ceiling"]
+    # One ceiling for the night: the team run and every customer run after it share the team repository's budget.
+    used, ceiling = 0, min(config["token_ceiling"], budget)
     for number, (source, what) in enumerate(queue):
         need = estimate(repo, source, config)
-        if need > ceiling:
-            skip(source, f"estimated at {need} tokens, over the ceiling of {ceiling} alone; use process-now")
+        if need > config["token_ceiling"]:
+            skip(source, f"estimated at {need} tokens, over the ceiling of {config['token_ceiling']} alone; "
+                         "use process-now")  # fmt: skip
             continue
         if used + need > ceiling:
-            left = [(s, w) for s, w in queue[number:] if estimate(repo, s, config) <= ceiling]
+            left = [(s, w) for s, w in queue[number:] if estimate(repo, s, config) <= config["token_ceiling"]]
             log["unprocessed"] = [s["id"] for s, _ in left]
             entries += [run_entry(repo, s, w, "deferred") for s, w in left]
             log["stopped"] = (f"token ceiling {ceiling} reached ({used} used, next Source estimated at {need}); "
@@ -762,6 +939,9 @@ def process_now(repo: Path, source_id: str, *, force: bool = False, runner: Runn
     if not matches:
         raise Refused(f"no raw Source with id {source_id} in inbox/ or processed/")
     source = matches[0]
+    refused = out_of_bounds(source, config)
+    if refused:
+        raise Refused(f"{source_id}: {refused}")
     if state["sources"].get(source["key"], {}).get("status") == "extracted" and not force:
         raise Refused(f"{source_id} was already extracted ({state['sources'][source['key']].get('pr')}); add --force")
     started = datetime.now(UTC)
@@ -872,7 +1052,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"capture: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
-    failed = result.get("failed") or [p for p in result.get("pulls", []) if p["status"].startswith("failed")]
+    runs = [result, *[c for c in result.get("customers", []) if c["status"] == "ok"]]
+    failed = [r for run in runs for r in run.get("failed", [])]
+    failed += [p for run in runs for p in run.get("pulls", []) if p["status"].startswith("failed")]
     return 1 if failed else 0
 
 

@@ -139,8 +139,15 @@ KAN-450 sign-off.
 ## Customer meetings
 
 What you learn inside a customer's systems stays with that customer. Its Sources and records go to that customer's
-own knowledge repository, `{{customer_repo}}`, never to `{{knowledge_repo}}`. Creating one is open work (KAN-475);
-until it exists, don't capture customer meetings.
+own knowledge repository, `{{customer_repo}}`, never to `{{knowledge_repo}}`. Create one with
+`ai-dlc knowledge init --customer <name>`, list it under `[[transcripts.customers]]` in the team repository's
+`knowledge.toml`, and set `KNOWLEDGE_REPO_<NAME>` to its local checkout.
+
+The nightly batch then runs once more per listed customer, in that customer's checkout. It exports that customer's
+chat there, extracts there and opens the draft records PRs in the customer's repository. That checkout keeps its own
+run log. A customer whose variable is unset, or whose checkout does not declare `[repo] boundary = "customer"` and
+that `project`, is skipped with a reason. Nothing falls back to the team repository. The night's token ceiling is the
+team repository's, shared by all runs. Run `process-now` for a customer Source with `--repo` set to its checkout.
 
 In a customer repository, records are `scope: project` with `boundary: customer`, under `projects/<customer>/`.
 `ai-dlc knowledge check` refuses a customer record outside its project. It also refuses a link to it from outside, and
