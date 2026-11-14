@@ -9,7 +9,9 @@ two PRs never both edit a lock, a rendered copy or `channels.yaml`, and one's me
 In order: `sync_shared.py` writes the layer's copies; for every harness with a `harness.lock`, `relock.py` re-pins its
 files (a new revision only when something changed) and `render_envs.py` writes its `env.*.yaml`; when a harness's
 digest changed, its `candidate` line in `channels.yaml` moves to the new digest, the note prepended to the old
-comment, and `environments/agent.yaml`'s `AGENT_ENV_HARNESS_DIGEST` follows when it names that harness. `stable` and the `releases/` copies are left alone: only `promote.py` changes them.
+comment, and `environments/agent.yaml`'s `AGENT_ENV_HARNESS_DIGEST` follows when it names that harness. `stable` and the `releases/` copies are left alone: only `promote.py` changes them. Nor does stable's environment
+change without a promotion: the build refuses to rewrite an `env.stable.yaml` whose `stable` is the one it was last
+written with (`stable_frozen`).
 
     python scripts/build_generated.py                       # build in place, to test a change locally
     python scripts/build_generated.py --restore             # then put the generated files back as committed
@@ -164,12 +166,32 @@ def repin_agent_env(root: Path, name: str, digest: str, revision: int) -> None:
     f.write_text(new, encoding="utf-8", newline="\n")
 
 
+def stable_frozen(root: Path, harness: Path, name: str) -> bool:
+    """Whether `harness`'s env.stable.yaml must stay as committed: it is committed, and channels.yaml names the same
+    `stable` now as in the commit that last changed it. Stable's lock, its release copy and the bindings it renders
+    with all move only by a promotion, so a rendering that differs without one is a build fault (ac72dd6: a shallow
+    clone rendered stable with main's bindings). A renderer change that should reach stable goes in a PR labelled
+    generated-files, which commits the new env.stable.yaml for review (KAN-481)."""
+    rel = (harness / "env.stable.yaml").relative_to(root).as_posix()
+    last = _git(root, "log", "-1", "--format=%H", "--", rel).strip()
+    if not last:
+        return False
+    try:
+        then = yaml.safe_load(_git(root, "show", f"{last}:channels.yaml")) or {}
+    except subprocess.CalledProcessError:
+        return False
+    now = yaml.safe_load((root / "channels.yaml").read_text(encoding="utf-8")) or {}
+    stable = (now.get(name) or {}).get("stable")
+    return stable is not None and stable == (then.get(name) or {}).get("stable")
+
+
 def build(root: Path, note: str) -> list[str]:
-    """Build in place; return one line per harness whose lock moved."""
+    """Build in place; return one line per harness whose lock moved. Refuses, after building the rest, to change a
+    stable environment with no promotion since it was last written (stable_frozen)."""
     if sync_shared.main([]) != 0:
         raise SystemExit("sync_shared.py failed: fix the shared layer first")
     channels_file = root / "channels.yaml"
-    moved = []
+    moved, refused = [], []
     for d in sorted((root / "harnesses").iterdir()):
         if not (d / hl.LOCK_FILE).is_file():
             continue
@@ -179,8 +201,11 @@ def build(root: Path, note: str) -> list[str]:
         if digest != before:
             (d / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
         want = render_envs.render(d)
-        for f in ("env.stable.yaml", "env.candidate.yaml"):
+        for f in ENV_FILES:
             if f in want and (not (d / f).is_file() or (d / f).read_text(encoding="utf-8") != want[f]):
+                if f == "env.stable.yaml" and stable_frozen(root, d, lock["name"]):
+                    refused.append(f"{d.relative_to(root).as_posix()}/{f}")
+                    continue
                 (d / f).write_text(want[f], encoding="utf-8", newline="\n")
             elif f not in want and (d / f).is_file():
                 (d / f).unlink()
@@ -194,6 +219,11 @@ def build(root: Path, note: str) -> list[str]:
             promote.set_channel(channels_file, lock["name"], "candidate", digest, full)
             repin_agent_env(root, lock["name"], digest, lock["revision"])
             moved.append(f"{lock['name']} r{lock['revision']} {digest}")
+    if refused:
+        raise SystemExit("\n".join(
+            f"error: {f}: the build would change stable's environment with no promotion (its stable digest in "
+            "channels.yaml is the one it was last written with). Build from a full clone (fetch-depth: 0); a "
+            "renderer change for stable goes in a PR labelled generated-files (KAN-481)" for f in refused))
     return moved
 
 
