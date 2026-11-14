@@ -6,7 +6,7 @@ you check each record against its quote, not against your memory of the meeting.
 ## Find what waits on you
 
 Work Copilot puts records PRs that wait on you in **Needs you**, each due 48 hours after it opened. It also lists your
-records past their `stale_after` and inbox Sources about to expire. Use `--review assigned` for a team repository.
+records past their `stale_after` and inbox Sources near their 30-day deletion date. Use `--review assigned` for a team repository.
 
 macOS:
 
@@ -40,8 +40,9 @@ Open the processed Source in the PR beside each record and ask:
 4. **Evidence.** The quote appears in the Source character for character, and it supports the claim on its own.
 5. **Owner and date.** The owner is who decided, owes or must answer. A due date sits in `stale_after`.
 
-From ai-dlc #266 on, each `sources` entry also carries `quote`, `speaker` and `at`. The check then fails a record
-without them, so you no longer check that by eye.
+A record made from a meeting or chat Source also carries `quote`, `speaker` and `at` (or a `permalink`) in its
+`sources` entry, because the raw payload doesn't last: policy is to delete it by hand after 30 days. The check fails
+a record without them, so you don't check that by eye.
 
 ## Fix, drop or mark a duplicate
 

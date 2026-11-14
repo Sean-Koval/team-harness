@@ -14,8 +14,8 @@ What's open on the svc project?
 ```
 
 The `query-knowledge` skill searches record headers and text, reads the matching records and cites their ids. The
-`whats-next` skill lists a project's open questions, proposed decisions and unowned actions. Both arrive with
-team-harness #32 (KAN-431), which is still open. Until it merges, use the commands below.
+`whats-next` skill lists a project's open questions, proposed decisions and unowned actions. Both ship in the
+harness's `candidate` channel (#32). On `stable`, or outside a session, use the commands below.
 
 ## Search from the command line
 
@@ -45,20 +45,23 @@ two distinctive words. `get` takes a numbered id or the slug the record had as a
 
 - An `accepted` decision and an `active` convention bind. A `proposed` decision does not yet.
 - A `superseded` decision is history. The `superseded_by` column of its directory's `index.md` names its successor.
+- A `retracted` decision was accepted by mistake. A later decision `retracts` it and says why; `retracted_by` in the
+  index names that decision. Treat it as never accepted.
 - The quote at the top of the body is the evidence. The `sources` entry names the Source record it came from.
-- The raw transcript or thread expires after 30 days. The Source record and the quote stay.
+- The policy is to delete the raw transcript or thread after 30 days, though no job does it yet. The Source record
+  and the quote stay.
 
 ## Reconstruct a decision with `knowledge why`
 
-`ai-dlc knowledge why <id>` is open work (ai-dlc #266, KAN-466). It prints the decision and the chain of what it
-replaced and what replaced it. Each step comes with its reason and its quotes. It also lists linked conventions,
-lessons and tickets. For each Source, it says whether the raw payload is still present or expired.
+`ai-dlc knowledge why <id>` prints the decision and the chain of what it replaced and what replaced it, and any
+decision that retracts it. Each step comes with its reason and its quotes. It also lists linked conventions,
+lessons and tickets. For each Source, it says whether the raw payload is still present or already deleted.
 
 ```sh
 ai-dlc knowledge why DEC-0012
 ```
 
-Until it merges, follow `supersedes` and `superseded_by` by hand with `records get`.
+If your ai-dlc has no `knowledge why` yet, follow `supersedes` and `superseded_by` by hand with `records get`.
 
 ## The wiki view
 

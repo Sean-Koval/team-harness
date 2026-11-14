@@ -12,8 +12,8 @@ proposes records from each one as a pull request. Nothing becomes a record until
 | Recorded meetings | A transcript provider lands the transcript (KAN-457); the [nightly batch](#the-nightly-batch) proposes records (KAN-458) | Both on main, neither tried against a live meeting account yet. You schedule the batch yourself (no cloud runner until KAN-432) |
 
 Everything else stays out: unmarked note lines, rooms you did not pick, meetings nobody recorded, and direct
-messages. Raw payloads in `inbox/` and `processed/` are deleted after 30 days. The Source record and the records
-made from it stay.
+messages. The policy is to delete raw payloads in `inbox/` and `processed/` after 30 days. No job does that yet, so
+until one does, a person deletes them by PR. The Source record and the records made from it stay.
 
 ## The nightly batch
 
@@ -37,7 +37,7 @@ Run these from your project, with this harness cloned where the [quickstart](qui
 ```sh
 python3 ~/src/team-harness/scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO" --dry-run   # writes nothing
 python3 ~/src/team-harness/scripts/capture_batch.py run --repo "$KNOWLEDGE_REPO"
-python3 ~/src/team-harness/scripts/capture_batch.py process-now <source id> --repo "$KNOWLEDGE_REPO"
+python3 ~/src/team-harness/scripts/capture_batch.py process-now SOURCE-ID --repo "$KNOWLEDGE_REPO"
 ```
 
 Windows (untested):
@@ -45,11 +45,11 @@ Windows (untested):
 ```powershell
 py -3 $HOME\src\team-harness\scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO --dry-run
 py -3 $HOME\src\team-harness\scripts\capture_batch.py run --repo $env:KNOWLEDGE_REPO
-py -3 $HOME\src\team-harness\scripts\capture_batch.py process-now <source id> --repo $env:KNOWLEDGE_REPO
+py -3 $HOME\src\team-harness\scripts\capture_batch.py process-now SOURCE-ID --repo $env:KNOWLEDGE_REPO
 ```
 
 Your project is the ai-dlc project that configures the knowledge and transcripts roles, with the harness installed
-at project scope; pass `--project <dir>` to run from elsewhere. `process-now` extracts one Source at once, including
+at project scope; pass `--project <dir>` to run from elsewhere. `process-now` extracts one Source at once (`SOURCE-ID` is its `id`), including
 a thread the filter set aside. Schedule `run` nightly with cron, launchd or Task Scheduler, on a machine signed in to Claude Code and
 GitHub.
 
@@ -131,7 +131,7 @@ captured. Until then:
 - don't record the meeting, or don't pick its room;
 - don't mark its notes with `>>`;
 - if a Source arrives anyway, tell `{{convention_owner}}`. Close its records PR unmerged. A PR can delete the raw
-  payload before its 30 days run out.
+  payload at once; nothing deletes it automatically yet.
 
 Ask everyone in a recorded meeting whether it may be captured. Whether participants must be told is part of the
 KAN-450 sign-off.

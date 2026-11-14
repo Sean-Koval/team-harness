@@ -91,3 +91,6 @@ jobs:
         run: python -m pytest -q -rs tests/test_knowledge_skills.py -k hook
       - name: Installer tests
         run: python -m pytest -q -rs tests/test_install_local.py
+      # the teammate guide's PowerShell: every block parses, and quickstart step 3 runs (KAN-469)
+      - name: Guide PowerShell
+        run: python -m pytest -q -rs tests/test_guide_powershell.py
