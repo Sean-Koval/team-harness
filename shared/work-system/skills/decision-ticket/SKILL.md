@@ -1,6 +1,6 @@
 ---
 name: decision-ticket
-description: Use whenever you need {{owner}} to choose something (a missing or contradictory requirement, two reasonable designs, a scope question, anything you would otherwise ask in chat or stop on), and when {{owner}} rules on an open Decision in chat or a comment ("go with option 1"). Files a Decision that blocks the work, through ai-dlc's tracker role, and stops; after a ruling, drafts Chosen and Rationale, lists the tickets to move for confirmation, and once the Decision is closed proposes its decision record to the knowledge repository.
+description: Use whenever you need {{owner}} to choose something (a missing or contradictory requirement, two reasonable designs, a scope question, anything you would otherwise ask in chat or stop on), and when {{owner}} rules on an open Decision in chat or a comment ("go with option 1"). Files a Decision that blocks the work, only through ai-dlc's tracker role, and stops; after a ruling, drafts Chosen and Rationale, lists the tickets to move for confirmation, and once the Decision is closed proposes its decision record to the knowledge repository.
 ---
 
 # Decision tickets
@@ -15,8 +15,9 @@ File it with ai-dlc's `tracker_create_decision`: `question` (the summary), `bloc
 It sets the work type and fields, links the Decision as blocking the work and reads the link back; a repeat returns
 the same Decision. Comment with `tracker_comment`.
 
-Only when it answers `refused` because the tracker cannot file a decision, file it on the tracker server with the
-fields below, link it, and say in your report that you did.
+If it is missing or answers `refused` (the tracker cannot file a decision), stop. Report the question, with the
+fields below, to {{owner}} as your result and say the Decision could not be filed. Never file it another way: the
+tracker role is the only write path.
 
 {{decision_filing}}
 
