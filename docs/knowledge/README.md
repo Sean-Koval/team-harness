@@ -28,6 +28,27 @@ Words in double braces are specific to your company. Replace them in your team's
 | `{{wiki_space}}` | The wiki space the records are rendered into |
 | `{{customer_repo}}` | How a customer's own knowledge repository is named |
 
+## Add a team work skill
+
+A team skill reaches teammates in one command and one PR. Run it from a checkout of this repository, on a branch
+named for your ticket. Keep company and customer names in a deny-list file on your own machine, one per line.
+
+```sh
+TEAM_HARNESS_DENY=~/.team-harness-deny python3 scripts/add_skill.py ~/skills/deploy-notes --harness work-default --key KAN-123
+```
+
+```powershell
+$env:TEAM_HARNESS_DENY = "$HOME\.team-harness-deny"
+py -3 scripts\add_skill.py "$HOME\skills\deploy-notes" --harness work-default --key KAN-123
+```
+
+The script refuses a skill without a `name` and `description`. It also refuses a vendor tool name, a secret, a
+person, a site or a deny-list word: use a `{{placeholder}}` instead. A skill holds text files only, not images. It copies the skill to `shared/work-system/skills/` and
+writes a changelog fragment. Commit only those two.
+
+After merge the skill ships in the next `candidate` revision. `stable` moves only by `scripts/promote.py`, with a
+flightdeck verdict and a second approver.
+
 ## What is not on main yet
 
 Some steps rely on work that is still open. Each such step says so where it appears.

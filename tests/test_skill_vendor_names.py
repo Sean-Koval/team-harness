@@ -12,21 +12,21 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-from test_skill_tool_names import ATLASSIAN_TOOL
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from skill_rules import ATLASSIAN_TOOL, VENDOR  # noqa: E402  (one rule for intake and CI, KAN-511)
+
 SHARED_SKILLS = ROOT / "shared/work-system/skills"
 PROFILES = ROOT / "shared/work-system/profiles"
 FIXTURE = ROOT / "tests/fixtures/vendor-skill"
 
-# The vendor's server and connector (atlassian, Rovo), its query languages, and any server-qualified tool name: a
-# skill names a role (tracker, knowledge, wiki, transcripts, scm) and a verb, never where the role is served from.
-VENDOR = re.compile(r"(?i:\batlassian\b|\brovo\b)|\bJQL\b|\bCQL\b|\bmcp__[\w-]+")
 # ai-dlc's role tools, as a skill names them: `tracker_search`, `knowledge_get`.
 AI_DLC_TOOL = re.compile(r"`((?:tracker|knowledge)_[a-z][a-z_]*)`")
 
