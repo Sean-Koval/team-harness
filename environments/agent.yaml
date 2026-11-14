@@ -45,7 +45,7 @@ files:                            # ai-dlc's machine file for `ai-dlc doctor` on
 env:
   AGENT_ENV: agent
   AGENT_ENV_HARNESS: suite-default
-  AGENT_ENV_HARNESS_DIGEST: "sha256:1e11b51259fa532802a6894f3cb9194c50567908f0639a7e67b82c4b6f7242e6"  # r13
+  AGENT_ENV_HARNESS_DIGEST: "sha256:2cea8d00ec2baa5f316716ac7ac9cd3d2e5251f22c0dc066d92fd024a87b19bb"  # r14
   AI_DLC_REF: "72327f45d698a255cc6959b68b107a88f6fa421d"
   KNOWLEDGE_FORMAT_VERSION: "1"   # ai-dlc's knowledge-record FORMAT_VERSION; a knowledge repo pins [format] version
 secrets:                          # ENV_VAR: hangar credential name (values never live here)
