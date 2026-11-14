@@ -122,7 +122,7 @@ def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
     One entry per server in name order: name, transport, then `endpoint` (http) or `command` and `args` (stdio), and
     the names of its headers or env, never their values."""
     f = bindings_file(root, lock["name"])
-    servers = ((yaml.safe_load(f.read_text()) or {}).get("mcp") or {}) if f else {}
+    servers = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("mcp") or {}) if f else {}
     declared = {n for n, s in servers.items() if isinstance(s, dict) and "transport" in s}
     if not declared:
         return lock["binding"].get("mcp") or []
