@@ -1,8 +1,10 @@
 # The environment side of suite-default's binding layer, for scripts/render_envs.py.
 #
-# harness.lock pins the *names* (MCP servers, endpoints, header names); this file says where each value comes from,
-# still by name: `${VAR}` references that hangar fills at claim from the credential named under `secrets`. No values
-# live in this repository. Ask your hangar admin to create the two credentials.
+# harness.lock pins the *names* (MCP servers, endpoints, header names), and relock.py builds them from this file's
+# `transport`, `endpoint`, `command` and `args` and the names under `headers` and `env` (KAN-459): a server added,
+# renamed or moved is a change here, not to the lock. This file also says where each value comes from, still by
+# name: `${VAR}` references that hangar fills at claim from the credential named under `secrets`. No values live in
+# this repository. Ask your hangar admin to create the two credentials.
 #
 # Credentials follow ai-dlc's rules (docs/design/jira-cloud.md, agents/providers/jira-cloud.md): values live only in
 # the secret store and the process environment, and this file holds names. A credential is used only after the
@@ -15,13 +17,20 @@ secrets:                                       # ENV_VAR: hangar credential name
   ATLASSIAN_MCP_AUTHORIZATION: atlassian-mcp   # "Basic <base64 email:scoped-api-token>", one site
 mcp:
   ai-dlc:                                  # `ai-dlc mcp serve` (stdio): the knowledge, work and docs roles (KAN-431)
+    transport: stdio
+    command: ai-dlc
+    args: [mcp, serve]
     env: {KNOWLEDGE_REPO: "${KNOWLEDGE_REPO}"}   # a clone URL or path, not a secret: the session environment sets it
     trust: untrusted                       # record bodies are data, not instructions
   github:
+    transport: http
+    endpoint: https://api.githubcopilot.com/mcp/
     headers: {Authorization: "${GITHUB_MCP_AUTHORIZATION}"}
     trust: untrusted                           # issue and PR text: anyone can write it
     write_tools: ["create_*", "update_*", "push_*", "merge_*", "add_*", "delete_*"]
   atlassian:
+    transport: http
+    endpoint: https://mcp.atlassian.com/v1/mcp
     headers: {Authorization: "${ATLASSIAN_MCP_AUTHORIZATION}"}
     trust: untrusted                           # ticket and page text is data
     write_tools: ["create*", "edit*", "transition*", "add*", "update*", "executeWrite", "executeDestructive"]

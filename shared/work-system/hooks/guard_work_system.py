@@ -16,7 +16,16 @@ and skips the call), for:
   whose verb the hook does not recognise as a read or an ordinary write (fail closed): statuses move by Jira
   automation, hangar and people (skill `jira-ticket`). Roles are read from the profile's `mcp_bindings`, rendered
   below, so a different Jira server is guarded the same; a server named like Atlassian, Jira or Confluence counts as
-  tracker and wiki even when unbound;
+  tracker and wiki even when unbound, and so does a server under any other name whose tool is named for Jira,
+  Confluence or Atlassian, any tool given an Atlassian site (`cloudId`), and a router (`call_tool`, `use_tool`,
+  `RUBE_MULTI_EXECUTE_TOOL`) naming such an operation or server, every operation it names judged. A binding only adds
+  roles: it never takes these away, and bindings the hook cannot read refuse every MCP call (fail closed). A server
+  whose tools are `tracker_*`, or whose name ends in `ai-dlc`, counts as ai-dlc. Not covered: an unbound server whose
+  name, tools and input show no sign of Atlassian (`mcp__tickets2__editIssue`); only the bound server holds the
+  Atlassian credential, so such a server cannot reach the site;
+- on a server bound to the tracker role, a write that sets a status, state, transition or resolution: that moves the
+  ticket as a transition does;
+- an MCP tool making an HTTP write (`fetch {url, method: POST}`) to Jira or Confluence, as through curl;
 - on a server bound to the wiki role, and for ai-dlc's wiki tools, every page or other wiki write: the render job publishes, sessions propose
   records. The profile's `wiki_write_allow` may allow site and space pairs; a write must name both to use one;
 - `gh pr merge` with `--admin`, always; and when the harness's merge rule is `never` (skill `github-pr`), every
@@ -89,9 +98,34 @@ NO_KEY_PREFIXES = ("nokey/", "deps/", "dependabot/", "renovate/", "claude/")
 ROLES = ("tracker", "wiki", "ai-dlc")
 BINDINGS_RENDERED = r"""{{mcp_bindings}}"""
 ATLASSIAN_HINT = r"atlassian|jira|confluence"  # one server holds both: a name alone cannot tell which it serves
-SERVER_HINTS = {"tracker": ATLASSIAN_HINT, "wiki": ATLASSIAN_HINT, "ai-dlc": r"^ai_?dlc$"}  # on normalised names
+SERVER_HINTS = {"tracker": ATLASSIAN_HINT, "wiki": ATLASSIAN_HINT, "ai-dlc": r"(^|_)ai_?dlc$"}  # on normalised names
+AI_DLC_TOOL = re.compile(r"^tracker_")  # ai-dlc's tracker tools, under any server name (`mcp__dlc__tracker_update`)
+# An Atlassian server bound to nothing, under a name with no hint ("corp", "tickets2"), is still Atlassian's when its
+# tools say so: Atlassian names its tools for the product (createJiraIssue, updateConfluencePage) and its dispatchers
+# executeRead, executeWrite and executeDestructive, which take any operation, with or without the site's cloudId. Any
+# call carrying an Atlassian site (a cloudId that is a UUID or a *.atlassian.net host, at any depth) counts, whatever
+# the tool is called (`createIssue`, `updatePage`). A router of another server (`run`, `call_tool`, `callTool`,
+# `use_tool`, Composio's `RUBE_MULTI_EXECUTE_TOOL`) counts when an operation or server it names is Atlassian's.
+ATLASSIAN_TOKENS = {"jira", "confluence", "atlassian"}
+ATLASSIAN_DISPATCHERS = {"executeread", "executewrite", "executedestructive"}
+DISPATCH_WORDS = {"tool", "tools", "operation", "op", "action", "command"}  # `call_tool`, `run_operation`
+ROUTER_VERBS = {"execute", "call", "invoke", "run", "use"}  # with a DISPATCH_WORD: a tool that runs another tool
+# keys (normalised to lower-case letters) under which a router names the operation it runs, and the server it runs on
+OP_KEYS = {"name", "operation", "op", "action", "tool", "toolname", "toolslug", "method", "operationname",
+           "operationid", "actionname", "function", "functionname"}
+SERVER_KEYS = {"server", "servername", "mcpserver", "app", "appname", "toolkit", "integration", "provider"}
+PAYLOAD_KEYS = {"inputs", "input", "arguments", "args", "params", "parameters", "body", "data", "fields", "payload",
+                "update", "query", "jql", "cql"}  # what the operation is given: its values are not operation names
+# keys that change a ticket's status, at any depth of a tracker write's input: statuses move by automation and people
+STATUS_KEYS = {"status", "statusid", "statusname", "state", "stateid", "statename", "transition", "transitionid",
+               "transitionname", "resolution", "resolutionid", "resolutionname", "workflowstate", "column"}
+URL_KEYS = {"url", "uri", "href", "endpoint", "link", "address"}
+ATLASSIAN_SITE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|(^|[./])atlassian\.net\b",
+                            re.IGNORECASE)
 MCP_TOOL = re.compile(r"^mcp__(.+?)__(.+)$")
 DISPATCH = {"execute", "call", "invoke", "run"}  # a generic tool whose operation is named in its input
+BAD_BINDINGS = ("this harness's rendered mcp_bindings (or WORK_SYSTEM_MCP_BINDINGS) is not a JSON object of role -> "
+                "server names, so no MCP call can be judged (fail closed): rebuild the harness or fix the variable")
 READ = {"get", "list", "search", "fetch", "read", "lookup", "find", "query", "discover", "describe", "show", "view",
         "whoami", "info", "home", "check", "preview", "count", "download", "context", "status", "doctor", "inventory",
         "impact", "gate"}
@@ -317,8 +351,9 @@ def _pr_merge(words: list[str]) -> str | None:
     return None
 
 
-def _bindings() -> dict[str, set[str]]:
-    """role -> bound server names (normalised), from the rendered profile and WORK_SYSTEM_MCP_BINDINGS."""
+def _bindings() -> dict[str, set[str]] | None:
+    """role -> bound server names (normalised), from the rendered profile and WORK_SYSTEM_MCP_BINDINGS; None when
+    either is set but is not a JSON object of role -> list of names (the caller refuses: fail closed)."""
     out: dict[str, set[str]] = {r: set() for r in ROLES}
     for raw in (BINDINGS_RENDERED, os.environ.get("WORK_SYSTEM_MCP_BINDINGS") or ""):
         if not raw.strip() or raw.lstrip().startswith("{{"):
@@ -326,9 +361,11 @@ def _bindings() -> dict[str, set[str]]:
         try:
             data = json.loads(raw)
         except ValueError:
-            continue
-        for role, servers in (data.items() if isinstance(data, dict) else ()):
-            if role in out and isinstance(servers, list):
+            return None
+        if not isinstance(data, dict) or not all(isinstance(v, list) for v in data.values()):
+            return None
+        for role, servers in data.items():
+            if role in out:
                 out[role] |= {_norm(str(s)) for s in servers}
     return out
 
@@ -337,11 +374,91 @@ def _norm(server: str) -> str:
     return server.lower().replace("-", "_")
 
 
-def _roles(server: str) -> set[str]:
-    """The roles an MCP server holds: by binding, else by the hints in its name."""
+def _roles(server: str, tool: str = "", args: dict | None = None) -> set[str]:
+    """The roles an MCP server holds: its bindings, plus the roles the hints in its name give, plus tracker and wiki
+    when the call itself looks like Atlassian's. A binding only adds roles, so binding an Atlassian-named server to
+    another role (WORK_SYSTEM_MCP_BINDINGS included) never takes its guard away."""
     n = _norm(server)
-    bound = {role for role, names in _bindings().items() if n in names}
-    return bound or {role for role, hint in SERVER_HINTS.items() if re.search(hint, n)}
+    roles = {role for role, names in (_bindings() or {}).items() if n in names}
+    roles |= {role for role, hint in SERVER_HINTS.items() if re.search(hint, n)}
+    if AI_DLC_TOOL.match(tool):
+        roles.add("ai-dlc")
+    if _atlassian_call(tool, args or {}):
+        roles |= {"tracker", "wiki"}
+    return roles
+
+
+def _atlassian_call(tool: str, args: dict) -> bool:
+    """A call to Atlassian's MCP server under any server name: a tool named for Jira, Confluence or Atlassian, one of
+    its execute dispatchers, any tool given an Atlassian site, or a router naming an Atlassian operation or server."""
+    tokens = _tokens(tool)
+    if ATLASSIAN_TOKENS & set(tokens) or _norm(tool).replace("_", "") in ATLASSIAN_DISPATCHERS:
+        return True
+    if any(ATLASSIAN_SITE.search(v) for v in _site_values(args)):
+        return True  # createIssue {cloudId}, updatePage {cloudId}: the site says whose server this is
+    if not _router(tokens):
+        return False  # `run_workflow`, `call_api`: a tool of its own, judged by its own server's rules
+    return any(ATLASSIAN_TOKENS & set(_op_tokens(v)) for v in _named(args, OP_KEYS | SERVER_KEYS))
+
+
+def _router(tokens: list[str]) -> bool:
+    """A tool that runs another tool named in its input: `run`, `execute`, `call_tool`, `callTool`, `use_tool`,
+    `invoke_operation`, `RUBE_MULTI_EXECUTE_TOOL`. Not `run_workflow` or `call_api`, which are tools of their own."""
+    return bool(ROUTER_VERBS & set(tokens)) and (len(tokens) == 1 or bool(DISPATCH_WORDS & set(tokens)))
+
+
+def _key(k) -> str:
+    return re.sub(r"[^a-z]", "", k.lower()) if isinstance(k, str) else ""
+
+
+def _named(value, keys: set[str], depth: int = 0) -> list[str]:
+    """Every string under one of `keys` (normalised) at any depth of a router's input, except inside what the
+    operation is given (`inputs`, `arguments`, ...), where a `name` is data (a version's or a page's), not an op."""
+    out: list[str] = []
+    if depth > 8:
+        return out
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+    for k, v in items:
+        key = _key(k)
+        if key in PAYLOAD_KEYS:
+            continue
+        if key in keys and isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, (dict, list)):
+            out += _named(v, keys, depth + 1)
+    return out
+
+
+def _op_tokens(name: str) -> list[str]:
+    """`jira.transition_issue`, `jira/transition_issue`, `JIRA_TRANSITION_ISSUE`, `transitionJiraIssue` -> tokens."""
+    return [t for part in re.split(r"[^A-Za-z0-9]+", name) for t in _tokens(part)]
+
+
+def _has_key(value, keys: set[str], depth: int = 0) -> bool:
+    """Whether any key at any depth of the input normalises to one of `keys`."""
+    if depth > 8:
+        return False
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+    for k, v in items:
+        if _key(k) in keys and v not in (None, "", [], {}):
+            return True
+        if isinstance(v, (dict, list)) and _has_key(v, keys, depth + 1):
+            return True
+    return False
+
+
+def _site_values(value, depth: int = 0) -> list[str]:
+    """Every string under a cloudId-like key (any case, `cloud_id` too), at any depth of the call's input."""
+    out: list[str] = []
+    if depth > 8:
+        return out
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+    for k, v in items:
+        if _key(k) == "cloudid" and isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, (dict, list)):
+            out += _site_values(v, depth + 1)
+    return out
 
 
 def _tokens(name: str) -> list[str]:
@@ -355,11 +472,10 @@ def _verb(tokens: list[str]) -> str | None:
         return "destructive"
     if TRANSITION & set(tokens):
         return "transition"
-    for t in tokens:
-        if t in READ:
-            return "read"
-        if t in WRITE:
-            return "write"
+    if WRITE & set(tokens):
+        return "write"  # `get_and_update_issue` writes: a read word never hides a write one
+    if READ & set(tokens):
+        return "read"
     return None
 
 
@@ -368,22 +484,37 @@ def _mcp(tool: str, args: dict) -> str | None:
     m = MCP_TOOL.match(tool)
     if not m:
         return None
-    roles = _roles(m.group(1))
+    if _bindings() is None:
+        return BAD_BINDINGS
+    reason = _mcp_http(args)
+    if reason:
+        return reason
+    roles = _roles(m.group(1), m.group(2), args)
     if not roles:
         return None
-    name = m.group(2)
-    tokens = _tokens(name)
+    tokens = _tokens(m.group(2))
     verb = _verb(tokens)
-    if DISPATCH & set(tokens[:1]):
-        # executeWrite {name: transitionJiraIssue}: the operation named in the input decides, except that a
-        # destructive dispatcher stays destructive. An operation the hook cannot read is refused.
-        name = str(args.get("name") or args.get("operation") or args.get("tool") or "")
-        tokens = _tokens(name)
-        verb = "destructive" if verb == "destructive" else _verb(tokens)
+    if not (DISPATCH & set(tokens[:1]) or _router(tokens)):
+        return _judge_op(roles, m.group(2), m.group(2), tokens, verb, args)
+    # executeWrite {name: transitionJiraIssue}, call_tool {tool_name: jira.transition_issue}: every operation named in
+    # the input is judged, and the first refusal stands, so a harmless `name` beside a transition in `operation` does
+    # not hide it; a destructive dispatcher stays destructive. A router naming no operation is refused.
+    ops = _named(args, OP_KEYS) or [""]
+    for op in ops:
+        op_tokens = _op_tokens(op)
+        op_verb = "destructive" if verb == "destructive" else _verb(op_tokens)
+        reason = _judge_op(roles, m.group(2), op, op_tokens, op_verb, args)
+        if reason:
+            return reason
+    return None
+
+
+def _judge_op(roles: set[str], tool: str, name: str, tokens: list[str], verb: str | None, args: dict) -> str | None:
+    """The verdict for one operation (the tool itself, or one a dispatcher names) on a server holding `roles`."""
     where = " or ".join(sorted(roles))
     # ai-dlc's own wiki-role tools (wiki_upsert, ...) are walled like a wiki server's: any of its tools whose name says
     # wiki, Confluence or page, judged by verb, so a tool added later is covered too.
-    ai_dlc_wiki = "ai-dlc" in roles and bool(WIKI_NOUNS & set(_tokens(m.group(2)) + tokens))
+    ai_dlc_wiki = "ai-dlc" in roles and bool(WIKI_NOUNS & set(_tokens(tool) + tokens))
     if verb in ("write", "transition") and (("wiki" in roles and _is_wiki(roles, tokens)) or ai_dlc_wiki):
         return _wiki_write(args)
     if verb == "destructive":
@@ -393,17 +524,38 @@ def _mcp(tool: str, args: dict) -> str | None:
                 "it runs, and people move the rest. Comment instead, or list the moves for confirmation "
                 "(skills jira-ticket, decision-ticket)")
     if verb is None:
-        return (f"{name or m.group(2)!r} on the {where} server is neither a read nor an ordinary write the hook "
+        return (f"{name or tool!r} on the {where} server is neither a read nor an ordinary write the hook "
                 "knows, so it is refused (fail closed): use the role's read and write tools, or ask a person")
+    # A write that sets a status on a tracker-bound server moves the ticket as surely as a transition does:
+    # `set_status {status: Done}`, `update_ticket {state: closed}`, `editJiraIssue {fields: {status: ...}}`.
+    if verb == "write" and "tracker" in roles and not NOT_LABELS & set(tokens) and \
+            ({"status", "state", "resolution"} & set(tokens) or _has_key(args, STATUS_KEYS)):
+        return ("agents don't move tickets, and a write that sets a status, state or resolution moves one: comment "
+                "instead, or list the moves for confirmation (skills jira-ticket, decision-ticket)")
     # exec:* labels are guarded on every tracker-role write, whatever the tool is called: a bound tracker server's
     # writes, and ai-dlc's tracker and work tools (tracker_create, tracker_update, ...), not its knowledge notes.
-    tracker_write = "tracker" in roles or ("ai-dlc" in roles and _tokens(m.group(2))[:1] in (["tracker"], ["work"]))
+    tracker_write = "tracker" in roles or ("ai-dlc" in roles and _tokens(tool)[:1] in (["tracker"], ["work"]))
     if verb == "write" and tracker_write and not NOT_LABELS & set(tokens):
         text = json.dumps(_canon_obj(args), ensure_ascii=False)  # exec\u200b:agent and exec\uff1aagent too
         if re.search(EXEC + r"\s*agent", text):
             return "only a person sets exec:agent: it decides what runs unattended. File it exec:pair or exec:human"
         if not {"create", "file"} & set(tokens[:2]) and re.search(EXEC, text):
             return "an execution label that is already set is a person's to change: comment instead"
+    return None
+
+
+def _mcp_http(args: dict) -> str | None:
+    """An MCP tool that makes HTTP requests (`fetch {url, method: POST}`) is judged like curl: a write to Jira or
+    Confluence over HTTP skips the tracker and wiki rules, whichever server carries it."""
+    urls = [u for u in _named(args, URL_KEYS) if ATLASSIAN_URL.search(u.strip())]
+    if not urls:
+        return None
+    methods = [v.strip().upper() for v in _named(args, {"method", "httpmethod", "verb"})]
+    body = _has_key(args, {"body", "data", "json", "payload", "form"})
+    write = any(v not in ("GET", "HEAD", "OPTIONS") for v in methods) or (not methods and body)
+    if write:
+        return ("a write to Jira or Confluence over HTTP skips the tracker and wiki rules: use the tracker MCP tools, "
+                "or ask a person")
     return None
 
 

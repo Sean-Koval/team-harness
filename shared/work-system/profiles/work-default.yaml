@@ -27,7 +27,7 @@ params:
     the ticket's owner (its assignee, otherwise its reporter)
   # The guard hook's MCP roles: which servers this harness binds as the tracker and the wiki (names from
   # harness.lock binding.mcp; a test holds them equal), and the ai-dlc server. JSON.
-  mcp_bindings: '{"tracker": ["jira"], "wiki": ["jira"], "ai-dlc": ["ai-dlc"]}'
+  mcp_bindings: '{"tracker": ["atlassian"], "wiki": ["atlassian"], "ai-dlc": ["ai-dlc"]}'
   # Site and space pairs where a session may write wiki pages itself, JSON. Empty: only the render job writes.
   wiki_write_allow: '[]'
   merge_mode: "never"
@@ -46,7 +46,7 @@ params:
   # The MCP credential names this harness binds, for its .env.example (env.example); names only.
   session_env: |
     GITHUB_MCP_AUTHORIZATION=        # binding github: "Bearer <token>"
-    JIRA_MCP_AUTHORIZATION=          # binding jira: unused until a credential method is approved
+    ATLASSIAN_MCP_AUTHORIZATION=     # binding atlassian: unused until a credential method is approved
   # Where the knowledge skills' preflight says ai-dlc comes from. The work environments do not install it: they name
   # no personal account or repository (the wall), and a company installs tools from its own approved source.
   ai_dlc_install: >-
