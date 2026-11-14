@@ -6,7 +6,7 @@ status: open
 date: '2026-11-09'
 owner: unknown
 sources:
-- {id: delivery-sync-2026-11-09, resource: team/sources/delivery-sync-2026-11-09.md, hash: "sha256:e08b689e6628394e64251bedb445a33c5aa51277f694c97098b240604d395a2a"}
+- {id: delivery-sync-2026-11-09, resource: team/sources/delivery-sync-2026-11-09.md, hash: "sha256:e08b689e6628394e64251bedb445a33c5aa51277f694c97098b240604d395a2a", quote: 'Thank you. And someone also needs to tell the support desk the handoff time changed, because they page whoever the schedule says.', speaker: ana-example, at: '00:04:56'}
 links:
 - {type: derived_from, target: delivery-sync-2026-11-09}
 title: Tell the support desk the handoff time changed

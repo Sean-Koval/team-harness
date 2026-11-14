@@ -6,7 +6,7 @@ status: open
 date: '2026-11-12'
 owner: lead-example
 sources:
-- {id: staging-cert-thread, resource: team/sources/staging-cert-thread.md, hash: "sha256:cb1faa7591daadc0d09f3b568195200649d37a61297692ae7966dd5961f92174"}
+- {id: staging-cert-thread, resource: team/sources/staging-cert-thread.md, hash: "sha256:cb1faa7591daadc0d09f3b568195200649d37a61297692ae7966dd5961f92174", quote: 'should staging certificates move to the managed issuer? lead-example, your call.', speaker: dev-example, at: '2026-11-12T14:05:00+00:00'}
 links:
 - {type: derived_from, target: staging-cert-thread}
 title: Move staging certificates to the managed issuer?

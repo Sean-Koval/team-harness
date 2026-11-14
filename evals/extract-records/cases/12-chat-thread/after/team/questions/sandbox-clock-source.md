@@ -6,7 +6,7 @@ status: answered
 date: '2026-11-11'
 owner: ana-example
 sources:
-- {id: token-refresh-flake-thread, resource: team/sources/token-refresh-flake-thread.md, hash: "sha256:767c6d5dd93cffb870ff9cf3007be5f5cd40ca516416cf4b17f6fefc561bc674"}
+- {id: token-refresh-flake-thread, resource: team/sources/token-refresh-flake-thread.md, hash: "sha256:767c6d5dd93cffb870ff9cf3007be5f5cd40ca516416cf4b17f6fefc561bc674", quote: '@Ana Reyes quick q, do you know if the sandbox clock is synced from the host or via NTP? I couldn''t find it in the image docs', speaker: dana-example, at: '2026-11-11T09:09:00+00:00'}
 links:
 - {type: derived_from, target: token-refresh-flake-thread}
 title: How is the sandbox clock synced?

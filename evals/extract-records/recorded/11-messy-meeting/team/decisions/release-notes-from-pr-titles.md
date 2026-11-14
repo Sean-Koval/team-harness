@@ -6,7 +6,7 @@ status: accepted
 date: '2026-11-09'
 owner: chidi-example
 sources:
-  - {id: delivery-sync-2026-11-09, resource: team/sources/delivery-sync-2026-11-09.md, hash: "sha256:e08b689e6628394e64251bedb445a33c5aa51277f694c97098b240604d395a2a"}
+  - {id: delivery-sync-2026-11-09, resource: team/sources/delivery-sync-2026-11-09.md, hash: "sha256:e08b689e6628394e64251bedb445a33c5aa51277f694c97098b240604d395a2a", quote: 'Decided: from the next release on, release notes are generated from PR titles, and we delete the hand-written CHANGELOG.', speaker: chidi-example, at: '00:02:56'}
 links:
   - {type: derived_from, target: delivery-sync-2026-11-09}
 title: Release notes are generated from PR titles; the hand-written CHANGELOG goes

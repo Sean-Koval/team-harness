@@ -6,7 +6,7 @@ status: accepted
 date: '2026-11-12'
 owner: lead-example
 sources:
-- {id: records-merge-thread, resource: team/sources/records-merge-thread.md, hash: "sha256:ba5250b007841296b12e5a4d28de4f2197a806a5bb40f914de6b5f98b3bdf1fa"}
+- {id: records-merge-thread, resource: team/sources/records-merge-thread.md, hash: "sha256:ba5250b007841296b12e5a4d28de4f2197a806a5bb40f914de6b5f98b3bdf1fa", quote: 'Decided: the reviewer merges a records PR, never its author.', speaker: lead-example, at: '2026-11-12T10:00:00+00:00'}
 links:
 - {type: derived_from, target: records-merge-thread}
 title: The reviewer merges a records PR
