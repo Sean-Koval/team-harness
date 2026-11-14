@@ -9,9 +9,6 @@ sources:
 - id: release-sync-2026-11-10
   resource: team/sources/release-sync-2026-11-10.md
   hash: sha256:38e203e8591036d3b6c7611f26da52253ff549a458e37c2a2927b6932e2b0ef6
-  quote: 'Decision one: we release on Thursdays from now on.'
-  speaker: lead-example
-  at: '00:02:10'
 links:
 - type: derived_from
   target: release-sync-2026-11-10

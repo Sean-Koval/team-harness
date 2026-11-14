@@ -6,7 +6,7 @@ status: open
 date: '2026-11-11'
 owner: eli-example
 sources:
-- {id: token-refresh-flake-thread, resource: team/sources/token-refresh-flake-thread.md, hash: "sha256:767c6d5dd93cffb870ff9cf3007be5f5cd40ca516416cf4b17f6fefc561bc674", quote: 'writing this down before we forget it. Lesson: when a time-based test flakes only in sandbox jobs, compare the sandbox clock with the host (`date -u` in both) before rerunning anything. We lost about two weeks rerunning this one.', speaker: eli-example, at: '2026-11-11T09:41:00+00:00'}
+- {id: token-refresh-flake-thread, resource: team/sources/token-refresh-flake-thread.md, hash: "sha256:767c6d5dd93cffb870ff9cf3007be5f5cd40ca516416cf4b17f6fefc561bc674"}
 links:
 - {type: derived_from, target: token-refresh-flake-thread}
 title: Check the sandbox clock before rerunning a time-based flake

@@ -38,6 +38,5 @@
   "skill_by_case": {
     "01-09": "97929d3 sha256:5afad8d3b076426c9b569b572c1218d779bb7d986a62506ba3ec528b4e4d450d",
     "10-12": "#30 abb5fe1 sha256:d08062f272f8bd7b062f29161ab7004f239c9cd29e117826ab243d1c98c17935"
-  },
-  "evidence_added": "KAN-485: sources evidence (quote, speaker, at) added afterwards to every record derived from a meeting or chat Source, not re-extracted. quote is the record's own first quote line without timestamp and speaker; speaker and at come from the Source line it matches. One exception, 05 renew-staging-certificate: its second quote line, the ask the action records. The records are otherwise as extracted."
+  }
 }

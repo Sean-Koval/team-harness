@@ -592,36 +592,3 @@ def test_live_record_marks_the_baseline_live(tmp_path):
     assert not extract_eval.baseline_is_live(path)
     extract_eval.mark_live(path)
     assert extract_eval.baseline_is_live(path) and json.loads(path.read_text())["precision"] == 1.0
-
-
-def _evidence_record(quote: str, speaker: str) -> dict:
-    head = {"type": "decision", "title": "Release on Thursdays", "status": "accepted", "scope": "team",
-            "links": [{"type": "derived_from", "target": "SRC-1"}],
-            "sources": [{"id": "SRC-1", "resource": "inbox/x.md", "hash": "h", "quote": quote, "speaker": speaker,
-                         "at": "00:02:10"}]}
-    return {"head": head, "body": "We release on Thursdays.\n\n> Decision one: we release on Thursdays from now on.\n"}
-
-
-@pytest.mark.parametrize(("quote", "speaker", "edited"), [
-    ("Decision one: we release on Thursdays from now on.", "lead-example", False),
-    ("We release on Fridays from now on.", "lead-example", True),  # not what the Source says
-    ("Decision one: we release on Thursdays from now on.", "someone-else", True),  # not who said it
-])
-def test_the_evidence_in_sources_is_graded_against_the_source(quote, speaker, edited):
-    """ai-dlc's knowledge check sees only that `sources` carries a quote and a speaker; the grader checks that the
-    quote is the Source's words and the speaker the one the expected record names (KAN-485)."""
-    source = "[00:02:10] lead-example: Decision one: we release on Thursdays from now on.\n"
-    want = _evidence_record("Decision one: we release on Thursdays from now on.", "lead-example")
-    edits = grade.compare(_evidence_record(quote, speaker), want, {}, source)
-    assert ("quote" in edits) is edited
-
-
-def test_evidence_for_another_resource_is_not_graded_against_the_source():
-    """A `sources` entry for a ticket or doc the record also rests on quotes that resource, not the Source: only
-    entries for a `derived_from` target are graded."""
-    source = "[00:02:10] lead-example: Decision one: we release on Thursdays from now on.\n"
-    want = _evidence_record("Decision one: we release on Thursdays from now on.", "lead-example")
-    got = _evidence_record("Decision one: we release on Thursdays from now on.", "lead-example")
-    got["head"]["sources"].append({"id": "PLAT-412", "resource": "jira:PLAT-412", "quote": "Ship it weekly.",
-                                   "speaker": "pm-example"})
-    assert "quote" not in grade.compare(got, want, {}, source)

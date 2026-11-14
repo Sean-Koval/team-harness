@@ -121,16 +121,8 @@ Start from the type's template. Header:
 - `date`: when it was decided or raised, from the Source. A blank where a date should be (`on  `, `Name, .`) means
   capture lost it: take it from another part of the Source, otherwise use the Source's `date` and flag it.
 - `owner`: the login of who decided, owes or must answer; `unknown` as above.
-- `sources`: `{id: <Source id>, resource: <Source path>, hash: <Source hash>, quote: <the quote>, speaker: <login>,
-  at: <time>}`, plus any other resource the record rests on. Every record extracted from the Source carries this
-  entry. When the Source's payload expires (a capture under `inbox/` or `processed/`, or a transcript, chat or
-  meeting), its evidence lives here, since `knowledge check` refuses a `derived_from` link without it: `quote` is the
-  quote from section 3 without its timestamp and speaker, `speaker` who said it, and `at` where. `at` is the
-  transcript's `HH:MM:SS` offset as written, or for a chat time (`[09:14]`) the Source's `observed_at` date and
-  offset with that time. Always quote it (`at: '00:41:07'`, `at: '2026-11-12T09:14:00+00:00'`): unquoted, YAML
-  reads it as a timestamp or a number and `knowledge check` refuses it. When the Source gives a link to the message,
-  add it as `permalink`. A `quote` holds at most 500 characters: when the sentence is longer, quote another exact
-  sentence that carries the point, never a shortened one. The quote stays in the body too.
+- `sources`: `{id: <Source id>, resource: <Source path>, hash: <Source hash>}`, plus any other resource the record
+  rests on. Every record extracted from the Source carries this entry.
 - `links`: `derived_from: <Source id>`. It **must** target a Source record, never a ticket, URL or another record
   type. `belongs_to` depends on scope and type, and nothing else gets one:
   - a `project` record always gets `belongs_to: <project>` (so does a `personal` record about a project);

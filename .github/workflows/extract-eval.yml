@@ -21,9 +21,8 @@ permissions:
   contents: read
 
 env:
-  # ai-dlc main after the knowledge train: its knowledge check wants the evidence in `sources` (KAN-485); the same
-  # ref as check.yml's AI_DLC_REF
-  AI_DLC_REF: 67323a98e5426b067ca017f1dfcc023bbcf12906
+  # ai-dlc's knowledge check (KAN-423, ai-dlc #257) until it merges; then pin a main commit
+  AI_DLC_REF: c60d9a1323c5e98bdfbb572c01d3ffdb41a6788d
 
 jobs:
   # Fails when the skill is registered but missing; otherwise says whether there is anything to measure.
