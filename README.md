@@ -199,7 +199,10 @@ when a pin and what it names disagree.
 
 Variables are names only, listed in `environments/agent.env.example`: the inputs `TICKET_KEY`, `CODE_REPO` and
 `KNOWLEDGE_REPO`, and the credentials, the same names locally and in hangar's secret store. Claude's credential is
-`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`, billed to the API. Export them, then:
+`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`, billed to the API. The GitHub and
+Atlassian credentials are the agent's own accounts, never a person's (hangar's `docs/environments/agent-identity.md`).
+`RELEASE_CONFIG` names a file holding `HANGAR_JIRA` (`hangar config list --json > FILE`). hangar refuses to start
+when the agent's Atlassian account is on its `agent_release.people`. Export them, then:
 
 ```sh
 make agent-env          # build, start, clone the inputs, print the pins and `ai-dlc doctor`
