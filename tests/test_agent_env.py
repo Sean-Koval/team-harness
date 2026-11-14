@@ -64,6 +64,30 @@ def test_contract_lists_inputs_and_holds_no_values():
             assert re.match(r"^[A-Z][A-Z0-9_]*=\s*(#.*)?$", line), f"a value in the contract: {line}"
 
 
+def test_contract_names_the_claude_credentials():
+    """KAN-496: the subscription token (`claude setup-token`) and the API key, the two credentials hangar's claude-code
+    harness reads; `make agent-env-check`'s agent probe needs one of them set."""
+    from hangar.harnesses import get_harness
+
+    names = check_registry.contract_names(CONTRACT)
+    assert {c.env_var for c in get_harness("claude-code").credentials} <= set(names)
+    assert names.index("CLAUDE_CODE_OAUTH_TOKEN") < names.index("ANTHROPIC_API_KEY")  # the default comes first
+
+
+def test_ai_dlc_mcp_reads_the_knowledge_checkout():
+    """KAN-496: `make agent-env` clones KNOWLEDGE_REPO to /workspace/knowledge, and hangar writes that path, not the
+    URL, into ai-dlc's MCP server, whose knowledge tools read the checkout."""
+    from hangar import localenv
+
+    spec = check_registry.agent_catalog(ROOT).get(check_registry.AGENT_ENV)
+    clones = localenv.parse_clones(re.findall(r"--clone (\S+)", (ROOT / "Makefile").read_text()))
+    assert ("knowledge", "KNOWLEDGE_REPO") in clones
+    env = {"KNOWLEDGE_REPO": "https://github.com/o/knowledge", "ATLASSIAN_MCP_AUTHORIZATION": "Basic x"}
+    files, servers, _ = localenv.harness_config(spec, localenv.baked_harness(spec, "bake"), env, clones)
+    assert {"ai-dlc", "atlassian"} <= set(servers)
+    assert files[".claude.json"]["mcpServers"]["ai-dlc"]["env"]["KNOWLEDGE_REPO"] == "/workspace/knowledge"
+
+
 def test_no_host_paths_in_the_spec():
     text = (ROOT / "environments" / "agent.yaml").read_text()
     assert "/Users/" not in text and "~/" not in text and "$HOME" not in text

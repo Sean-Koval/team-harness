@@ -1,7 +1,7 @@
 # The agent environment (environments/agent.yaml) on this computer, run by hangar: `hangar env local` (KAN-472;
 # hangar's docs/environments/local-run.md). This repository holds only the definition and its variable contract.
 # Runs with the hangar commit CI pins (.github/workflows/check.yml; tests/test_agent_env.py keeps them equal).
-HANGAR_REF := c7a2de229aecbad9b82d9cddd6112776dc6c9c5a
+HANGAR_REF := 2e40bb379ab68010ee688ed89af5c7bc95555729
 WITH_HANGAR := uv run --no-project --python 3.12 --with "hangar @ git+https://github.com/Sean-Koval/hangar@$(HANGAR_REF)"
 LOCAL := $(WITH_HANGAR) hangar env local
 SPEC := agent --env-dir environments/roles --env-dir environments --harnesses harnesses
@@ -20,6 +20,7 @@ agent-env-pins:       ## the spec's pins agree with what they name (also part of
 agent-env: agent-env-pins  ## build and start it, clone TICKET_KEY's inputs, print the pins and `ai-dlc doctor`
 	$(LOCAL) up $(SPEC) $(INPUTS) $(REPORT) $(ARGS)
 
+# agent-env-check also asks Claude for one answer (`claude -p`) with CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
 agent-env-check: agent-env-pins  ## two fresh instances report the same; nothing mounted; egress and DNS refused off-list
 	$(LOCAL) check $(SPEC) $(INPUTS) $(REPORT) $(ARGS)
 
