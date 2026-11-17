@@ -4,7 +4,8 @@
 The normal way to get a lock is `hangar harness freeze` from a turn that went well. Use this when you change the
 harness's files by hand (a new skill, an edited guide, your own MCP endpoints) and want the lock to pin them before a
 run exists to freeze from: it keeps the lock's runtime, model and binding layer (but MCP servers come from
-`bindings/<name>.yaml` when its servers declare a `transport`), recomputes every component's digest
+`bindings/<name>.yaml` when its servers declare a `transport`, less any marked `local_only`), recomputes every
+component's digest
 (and each skill's `tree`), adds components for unpinned skills, plugins (each `plugins/<marketplace>/` directory marketplace) and native files, and bumps the revision when
 anything changed. `hangar harness check` then passes, and a turn run from the result reports the same
 `harness_digest` once the environment provides the same files.
@@ -66,11 +67,12 @@ def _hooks(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 MCP_SHAPE = {"http": ("endpoint",), "stdio": ("command", "args")}  # what the lock pins of each transport
-MCP_KEYS = {"transport", "endpoint", "command", "args", "headers", "env", "trust", "write_tools"}
+MCP_KEYS = {"transport", "endpoint", "command", "args", "headers", "env", "trust", "write_tools", "local_only"}
 SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:@+=-]+$")  # a command or an arg: one word, no quoting or spaces
+WHOLE_REF = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 SECRET_WORD = re.compile(r"(?i)token|secret|passw|bearer|basic |authorization|api_?key|\$\{")
 
 
@@ -98,6 +100,12 @@ def _shape_problems(name: str, s: dict[str, Any]) -> list[str]:
                 or SECRET_WORD.search(e):
             out.append(f"mcp.{name}.endpoint: an https URL with no user, password, query or fragment, and no token "
                        "or `${...}`; put credentials under headers")
+    if "local_only" in s and not isinstance(s["local_only"], bool):
+        out.append(f"mcp.{name}.local_only: true or false")
+    if s.get("local_only") is True and any(not isinstance(v, str) or not WHOLE_REF.match(v)
+                                           for key in ("headers", "env") if isinstance(s.get(key), dict)
+                                           for v in s[key].values()):
+        out.append(f"mcp.{name}: a local_only server's headers and env are each one `${{VAR}}`, set per machine")
     if s.get("transport") == "stdio":
         words = [s.get("command")] + (s["args"] if isinstance(s.get("args"), list) else [None])
         if "args" in s and not isinstance(s["args"], list):
@@ -120,7 +128,12 @@ def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
     """binding.mcp built from `bindings/<name>.yaml` when its servers declare a `transport` (KAN-459), so a server
     added, renamed or moved is a source change and the build writes the lock; otherwise the lock's, as before.
     One entry per server in name order: name, transport, then `endpoint` (http) or `command` and `args` (stdio), and
-    the names of its headers or env, never their values."""
+    the names of its headers or env, never their values.
+
+    A server marked `local_only: true` (KAN-380) is checked like the others but left out: it runs only on a person's
+    laptop, where install_local.py prints its `claude mcp add` line. hangar's thaw refuses a lock that binds a server
+    its environment doesn't define, and a session's `harness_digest` counts the servers it ran, so a lock may pin only
+    what a sandbox runs."""
     f = bindings_file(root, lock["name"])
     servers = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("mcp") or {}) if f else {}
     declared = {n for n, s in servers.items() if isinstance(s, dict) and "transport" in s}
@@ -137,6 +150,8 @@ def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
         shape = MCP_SHAPE.get(s["transport"])
         if shape is None or any(k not in s for k in shape):
             raise SystemExit(f"{f}: mcp.{name}: transport http needs endpoint; stdio needs command and args")
+        if s.get("local_only"):
+            continue  # a laptop's own server (KAN-380): install_local.py prints it; no sandbox runs it or pins it
         m: dict[str, Any] = {"name": name, "transport": s["transport"]}
         m.update({k: (list(s[k]) if k == "args" else s[k]) for k in shape})
         names = sorted(s.get("headers" if s["transport"] == "http" else "env") or {})

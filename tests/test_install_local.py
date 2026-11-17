@@ -470,7 +470,7 @@ def _mcp_add_positionals(line):
 
 
 @pytest.mark.parametrize(("harness", "servers"), [
-    ("work-default", {"ai-dlc", "atlassian", "github"}),
+    ("work-default", {"ai-dlc", "atlassian", "github", "work-copilot"}),  # work-copilot: this machine only (KAN-380)
     ("suite-default", {"ai-dlc", "atlassian", "github"}),
     ("team-default", {"github", "gke", "jira", "splunk"}),
 ])
@@ -488,6 +488,71 @@ def test_mcp_commands_name_the_server_where_claude_code_reads_it(tmp_path, capsy
         if "--transport stdio" in line:
             assert positionals == positionals[:1], line  # the command and its args come only after --
     assert sorted(named) == sorted(servers)
+
+
+def test_a_local_only_server_is_printed_after_the_lock_s_with_a_placeholder(tmp_path, capsys):
+    """KAN-380: Work Copilot is in no lock (no sandbox runs it); its line comes after the lock's servers, under its own
+    heading, with the data directory as a variable for this machine to fill, never a path."""
+    assert user(WORK, tmp_path) == 0
+    out = capsys.readouterr().out
+    head, _, local = out.partition("MCP servers for this machine only")
+    assert "work-copilot" not in head and local
+    var = "$env:WORK_COPILOT_DATA_DIR" if il.WINDOWS else "$WORK_COPILOT_DATA_DIR"
+    assert (f'claude mcp add --scope user --transport stdio work-copilot --env "WORK_COPILOT_DATA_DIR={var}" '
+            "-- work-copilot mcp") in local
+    assert project(WORK, tmp_path / "p") == 0
+    assert "--env 'WORK_COPILOT_DATA_DIR=${WORK_COPILOT_DATA_DIR}' -- work-copilot mcp" in capsys.readouterr().out
+    assert project(SUITE, tmp_path / "s") == 0
+    assert "this machine only" not in capsys.readouterr().out  # suite-default binds none
+
+
+def _check_report(out: str) -> dict[str, str]:
+    lines = out.splitlines()
+    i = next(n for n, ln in enumerate(lines) if ln.startswith("MCP servers in "))
+    return {ln.strip().split(" ", 1)[0]: ln.strip() for ln in lines[i + 1:] if ln.startswith("  ")}
+
+
+def test_check_reports_each_mcp_server_without_counting_it_as_drift(tmp_path, capsys, monkeypatch):
+    """--check names Work Copilot with the lock's servers: added to Claude Code or not, its command on PATH or not.
+    Neither is drift, as the script never adds a server: a laptop without Work Copilot still checks clean."""
+    home = tmp_path / "home"
+    assert user(WORK, home, "--apply") == 0
+    capsys.readouterr()
+    which = shutil.which
+    monkeypatch.setattr(il.shutil, "which", lambda cmd, *a, **k: None if cmd == "work-copilot" else which(cmd, *a, **k))
+    assert user(WORK, home, "--check") == 0
+    out = capsys.readouterr().out
+    report = _check_report(out)
+    assert set(report) == {"ai-dlc", "atlassian", "github", "work-copilot"}
+    assert "this machine only" in report["work-copilot"] and "not added" in report["work-copilot"]
+    assert "work-copilot is not on PATH" in report["work-copilot"]
+    assert out.splitlines()[-1].startswith("clean:")
+
+    # with Work Copilot installed and added in user scope, as `claude mcp add --scope user` writes it
+    monkeypatch.setattr(il.shutil, "which", which)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tool = bin_dir / ("work-copilot.exe" if os.name == "nt" else "work-copilot")
+    tool.write_text("#!/bin/sh\nexit 0\n")
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"work-copilot": {
+        "type": "stdio", "command": "work-copilot", "args": ["mcp"], "env": {"WORK_COPILOT_DATA_DIR": ""}}}}))
+    assert user(WORK, home, "--check") == 0
+    report = _check_report(capsys.readouterr().out)
+    assert report["work-copilot"].startswith("work-copilot (stdio, this machine only): added; work-copilot at ")
+    assert "not added" in report["github"]
+
+
+def test_check_reads_project_scope_servers_from_mcp_json(tmp_path, capsys):
+    target = tmp_path / "svc"
+    assert project(WORK, target, "--apply") == 0
+    (target / ".mcp.json").write_text(json.dumps({"mcpServers": {"work-copilot": {"command": "work-copilot"}}}))
+    capsys.readouterr()
+    assert project(WORK, target, "--check") == 0
+    out = capsys.readouterr().out
+    assert f"MCP servers in {target / '.mcp.json'} " in out
+    assert ": added" in _check_report(out)["work-copilot"]
 
 
 def test_mcp_and_plugins_are_never_written(tmp_path):

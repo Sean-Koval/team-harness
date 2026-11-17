@@ -38,6 +38,9 @@ What it never does:
 - Install from a checkout that doesn't match its lock: every pinned digest is checked first.
 - Touch MCP servers or credentials. It prints the `claude mcp add` commands for the lock's servers, with each
   credential as a `$VARIABLE` placeholder for you to fill from your secret manager. Plugins are printed the same way.
+  A server `bindings/<harness>.yaml` marks `local_only` (KAN-380: Work Copilot) runs on a laptop only, so no lock
+  pins it; its line is printed after the others. `--check` reports each server, registered with Claude Code or not
+  and, for a stdio one, whether its command is on PATH; neither counts as drift, as this script never adds them.
 - Install two harnesses into one scope: `--uninstall` the first (work and personal harnesses stay apart).
 
 The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the lock's
@@ -808,9 +811,47 @@ def _var(name: str, header: str, binding: dict[str, Any]) -> str:
     return m.group(1) if m else re.sub(r"[^A-Z0-9]+", "_", f"{name}_MCP_{header}".upper())
 
 
-def mcp_commands(h: Harness, scope: str) -> list[str]:
+def _binding(h: Harness) -> dict[str, Any]:
+    """The harness's `bindings/<name>.yaml` (from the same commit when installing from git history), or {}."""
     bfile = h.root.parent.parent / "bindings" / f"{h.name}.yaml"
-    binding = (yaml.safe_load(bfile.read_text()) or {}) if bfile.is_file() else {}
+    try:
+        data = yaml.safe_load(bfile.read_text(encoding="utf-8")) if bfile.is_file() else {}
+    except (OSError, yaml.YAMLError) as e:
+        raise Refused(f"{bfile}: {e}") from None
+    return data if isinstance(data, dict) else {}
+
+
+def local_servers(binding: dict[str, Any]) -> list[dict[str, Any]]:
+    """The binding's `local_only` servers (KAN-380), shaped as lock entries: name, transport, `endpoint` or `command`
+    and `args`, and the names of their headers or env, never the values. relock.py checks their shape and keeps them
+    out of the lock, since no sandbox runs them; a laptop adds them with the line this script prints."""
+    out = []
+    for name, s in sorted((binding.get("mcp") or {}).items(), key=lambda kv: str(kv[0])):
+        if not isinstance(s, dict) or s.get("local_only") is not True:
+            continue
+        http = s.get("transport") == "http"
+        m: dict[str, Any] = {"name": str(name), "transport": "http" if http else "stdio"}
+        if http:
+            m["endpoint"] = s.get("endpoint")
+        else:
+            m["command"], m["args"] = s.get("command"), list(s.get("args") or [])
+        names = sorted(map(str, s.get("headers" if http else "env") or {}))
+        if names:
+            m["header_names" if http else "env_names"] = names
+        out.append(m)
+    return out
+
+
+def mcp_servers(h: Harness) -> list[tuple[dict[str, Any], bool]]:
+    """(server, local_only) for the lock's servers, then the binding's local_only ones."""
+    lock = [(m, False) for m in (h.lock.get("binding") or {}).get("mcp") or []]
+    have = {m.get("name") for m, _ in lock}
+    return lock + [(m, True) for m in local_servers(_binding(h)) if m["name"] not in have]
+
+
+def mcp_commands(h: Harness, scope: str, local_only: bool = False) -> list[str]:
+    """The `claude mcp add` lines for the lock's servers, or with `local_only` for the binding's laptop-only ones."""
+    binding = _binding(h)
     # user scope: your shell fills $VAR when you run the command, so the value lands only in your own ~/.claude.json;
     # project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never commit a token)
     # on Windows the user-scope line is for PowerShell, which reads an environment variable as $env:NAME
@@ -820,7 +861,7 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
         return f"'{text}${{{var}}}'"
 
     out = []
-    for m in (h.lock.get("binding") or {}).get("mcp") or []:
+    for m in (m for m, local in mcp_servers(h) if local == local_only):
         words = ["claude", "mcp", "add", "--scope", scope, "--transport", m.get("transport") or "stdio"]
         if m.get("transport") == "http":
             words += [m["name"], m["endpoint"]]
@@ -852,6 +893,37 @@ def plugin_commands(h: Harness, scope: str) -> list[str]:
 
 
 # --- check, uninstall -------------------------------------------------------------------------------------------
+
+def _registered(scope: str, base: Path) -> tuple[Path, set[str] | None]:
+    """Where Claude Code keeps the servers `claude mcp add --scope <scope>` adds, and their names (None: unreadable).
+    User scope: `mcpServers` in `<home>/.claude.json`; project scope: `mcpServers` in `<target>/.mcp.json`."""
+    f = base.parent / (".claude.json" if scope == "user" else ".mcp.json")
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return f, set()
+    except (OSError, ValueError):
+        return f, None
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return f, set(servers) if isinstance(servers, dict) else set()
+
+
+def mcp_report(h: Harness, scope: str, base: Path) -> tuple[Path, list[str]]:
+    """(the file Claude Code keeps this scope's servers in, one line per MCP server the harness names): added there or
+    not, and for a stdio server whether its command is on PATH. Reported only: this script prints the add lines and
+    never runs them, so a server a person chose not to add (an optional one such as Work Copilot) is not drift."""
+    f, names = _registered(scope, base)
+    out = []
+    for m, local in mcp_servers(h):
+        kind = f"{m.get('transport') or 'stdio'}{', this machine only' if local else ''}"
+        state = ("unknown, the file is unreadable" if names is None else "added" if m["name"] in names else
+                 "not added: the dry run prints its `claude mcp add` line")
+        if m.get("transport") != "http" and m.get("command"):
+            found = shutil.which(str(m["command"]))
+            state += f"; {m['command']} " + (f"at {found}" if found else "is not on PATH")
+        out.append(f"{m['name']} ({kind}): {state}")
+    return f, out
+
 
 def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base: Path,
           channel: str | None = None) -> list[str]:
@@ -1160,6 +1232,12 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
             drift += [f"checkout: {x}" for x in h.problems]
         for d in drift:
             print(f"  {d}")
+        if h is not None:
+            where, servers = mcp_report(h, a.scope, base)
+            if servers:
+                print(f"MCP servers in {where} (reported, not drift: this script never adds them):")
+                for line in servers:
+                    print(f"  {line}")
         print(f"{'drift' if drift else 'clean'}: {name}@{channel} in {base}")
         return 1 if drift else 0
 
@@ -1211,6 +1289,12 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         print(f"MCP servers: run these yourself{where}, after setting each $VARIABLE from your secret manager "
               "(its value is the whole header, such as `Bearer <token>`):")
         for c in cmds:
+            print(f"  {c}")
+    local = mcp_commands(h, a.scope, local_only=True)
+    if local:
+        print(f"MCP servers for this machine only, if you use them (bindings/{h.name}.yaml marks them local_only: "
+              "no sandbox runs them): run these yourself after setting each $VARIABLE to this machine's own value:")
+        for c in local:
             print(f"  {c}")
     plugins = plugin_commands(h, a.scope)
     if plugins:

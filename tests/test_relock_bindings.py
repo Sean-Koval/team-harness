@@ -137,3 +137,59 @@ def test_ai_dlc_s_writing_tools_are_write_tools(name):
                "knowledge_pull_transcripts", "knowledge_append", "knowledge_note", "work_publish", "work_pr"}
     assert writers <= set(tools)
     assert not {"tracker_get", "tracker_search", "knowledge_search", "knowledge_check"} & set(tools)
+
+
+# --- KAN-380: a laptop-only server is declared in bindings, checked, and kept out of the lock and the environments --
+
+def test_work_copilot_is_bound_for_laptops_only():
+    """work-default binds Work Copilot as a stdio server marked local_only: its data directory is one `${VAR}` set per
+    machine, it is untrusted (captured company text), and the lock leaves it out, since no sandbox runs it."""
+    s = yaml.safe_load((ROOT / "bindings" / "work-default.yaml").read_text())["mcp"]["work-copilot"]
+    assert s["transport"] == "stdio" and s["command"] == "work-copilot" and s["args"] == ["mcp"]
+    assert s["env"] == {"WORK_COPILOT_DATA_DIR": "${WORK_COPILOT_DATA_DIR}"}  # a name, never a path
+    assert s["local_only"] is True and s["trust"] == "untrusted"
+    h = ROOT / "harnesses" / "work-default"
+    assert "work-copilot" not in {m["name"] for m in relock._mcp(h, hl.load(h))}
+
+
+def test_work_copilot_s_writing_tools_are_write_tools():
+    """Its tools that change local state (projects, obligations, priorities, vault notes) are write_tools, and its
+    reading tools are not."""
+    tools = yaml.safe_load((ROOT / "bindings" / "work-default.yaml").read_text())["mcp"]["work-copilot"]["write_tools"]
+    assert {"create_project", "track_obligation", "review_obligation", "update_project", "set_priorities",
+            "capture_note"} <= set(tools)
+    assert not {"get_attention", "get_project", "get_source", "get_reply_context", "search_context"} & set(tools)
+
+
+def test_a_local_only_server_never_reaches_the_lock_or_the_environments(tmp_path):
+    """hangar's thaw refuses a lock that binds a server its environment doesn't define, and a session's digest counts
+    the servers it ran: a local_only server stays out of both, and adding one changes neither."""
+    import render_envs
+
+    h, b = _repo(tmp_path, "work-default")
+    _edit(b, lambda mcp: mcp.update({"laptop-tool": {"transport": "stdio", "command": "laptop-tool", "args": ["mcp"],
+                                                     "env": {"LAPTOP_DIR": "${LAPTOP_DIR}"}, "local_only": True}}))
+    before = hl.load(h)
+    lock, _ = relock.relock(h)
+    assert {m["name"] for m in lock["binding"]["mcp"]} == {m["name"] for m in before["binding"]["mcp"]}
+    assert "laptop-tool" not in {m["name"] for m in lock["binding"]["mcp"]} and "work-copilot" not in str(lock)
+    assert hl.harness_digest(lock) == hl.harness_digest(before) and lock["revision"] == before["revision"]
+    (h / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8")
+    for text in render_envs.render(h).values():
+        assert "laptop-tool" not in text and "work-copilot" not in text and "WORK_COPILOT" not in text
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda mcp: mcp["work-copilot"].update({"local_only": "yes"}), "local_only: true or false"),
+    (lambda mcp: mcp["work-copilot"].update({"env": {"WORK_COPILOT_DATA_DIR": "/Users/someone/wc"}}), "one `\\${VAR}`"),
+    (lambda mcp: mcp["work-copilot"].update({"env": {"WORK_COPILOT_DATA_DIR": "${HOME}/wc"}}), "one `\\${VAR}`"),
+    (lambda mcp: mcp["work-copilot"].pop("args"), "stdio needs command and args"),
+    (lambda mcp: mcp["work-copilot"].update({"args": ["mcp", f"--token={TOKEN}"]}), "plain words"),
+])
+def test_a_misshapen_local_only_server_is_refused(tmp_path, change, message):
+    """Left out of the lock, it is still checked: no machine path or token in shared config, and a complete shape."""
+    h, b = _repo(tmp_path, "work-default")
+    _edit(b, change)
+    with pytest.raises(SystemExit, match=message) as e:
+        relock.relock(h)
+    assert TOKEN not in str(e.value) and "/Users/someone" not in str(e.value)

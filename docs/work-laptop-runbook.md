@@ -97,11 +97,11 @@ hooks and deny rules then apply to every Claude Code session on that machine. Us
 should carry the skills and guide for everyone. Its hooks go to the gitignored `.claude/settings.local.json`, one
 command per OS, so a team of Macs and Windows machines commits the same files.
 
-Run the two `claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
-needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session, and that login does
-the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does not stand in for it.
-Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole
-pass without it.
+Run the `claude mcp add` lines the install prints (ai-dlc, GitHub and Jira). The GitHub credential comes from your
+secret manager. Jira needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session,
+and that login does the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does
+not stand in for it. Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The
+test run lost a whole pass without it.
 
 **Step 3. Capture tools (hangar import and flightdeck).**
 
@@ -121,6 +121,10 @@ work-copilot init && work-copilot doctor
 ```
 
 Point its vault at a company-approved folder, never a personal vault. It has no live Jira or Confluence source yet.
+
+Then run the `work-copilot` line the install prints under "this machine only". Set `WORK_COPILOT_DATA_DIR` to its data
+directory first, or leave it empty for Work Copilot's default. The path stays on your laptop: no shared file holds it,
+and no sandbox runs this server. `--check` then lists it as added, with its command on PATH.
 
 ## The first test ticket
 
