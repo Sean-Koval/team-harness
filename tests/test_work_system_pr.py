@@ -439,14 +439,74 @@ def test_jira_answer_that_is_not_an_issue_fails_closed(org, answer):
     assert by_id(gates)["sre"].state == "unverified" and any("not an issue" in e for e in errs)
 
 
-def test_jira_unreachable_only_warns_for_a_gate_without_approved_statuses(org):
+def test_jira_unreachable_fails_a_gate_with_links_only(org):
+    # infosec sets links but no approved_statuses: only Jira can show the links, so it fails closed too
     def fetch(key):
         raise urllib.error.URLError("timed out")
     files = [{"filename": "deploy/x.yaml"}]
-    _, errs, warns = wsp.check_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), files, org, fetch=fetch,
+    gates, errs, _ = wsp.check_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), files, org, fetch=fetch,
                                      work_key="KAN-315")
-    assert not any("'infosec'" in e for e in errs) and any("'infosec'" in w for w in warns)
+    assert by_id(gates)["infosec"].state == "unverified"
+    assert any("'infosec'" in e and "linking the repo and the work ticket" in e for e in errs)
     assert any("'sre'" in e for e in errs)
+
+
+def test_without_jira_a_gate_with_links_only_fails_closed(org):
+    files = [{"filename": "deploy/x.yaml"}]
+    gates, errs, _ = wsp.check_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), files, org)
+    assert by_id(gates)["infosec"].state == "unverified"
+    assert any("'infosec'" in e and "no Jira credentials" in e for e in errs)
+
+
+def test_jira_unreachable_only_warns_for_a_gate_without_approved_statuses_or_links(org):
+    def fetch(key):
+        raise urllib.error.URLError("timed out")
+    files = [{"filename": "web/app.js"}]
+    gates, errs, warns = wsp.check_gates(gated("SRE: SREPROJ-7\nUI: UIPROJ-9\n"), files, org, fetch=fetch,
+                                         work_key="KAN-315")
+    assert not any("'ui'" in e for e in errs) and any("'ui'" in w and "not checked" in w for w in warns)
+    assert by_id(gates)["ui"].state == "not checked"
+
+
+def test_jira_repo_link_is_checked(org):
+    # links: [repo] used to be accepted and never checked; a ticket that names another repository fails
+    files = [{"filename": "deploy/x.yaml"}]
+    sre = jira_issue("SREPROJ-7", "SREPROJ", "Approved")
+    other = jira_issue("SECPROJ-8", "SECPROJ", "Open", description="https://github.com/o/r-fork")
+    gates, errs, _ = jira_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), org,
+                                {"SREPROJ-7": sre, "SECPROJ-8": other}, files=files)
+    assert by_id(gates)["infosec"].state == "invalid"
+    assert any("'infosec'" in e and "does not name this repository" in e and "https://github.com/o/r" in e
+               for e in errs)
+
+
+@pytest.mark.parametrize("where", ["description", "remote"])
+@pytest.mark.parametrize("url", ["https://github.com/o/r", "https://github.com/O/R/tree/main", PR_URL])
+def test_jira_repo_link_may_be_the_repository_or_a_link_into_it(org, where, url):
+    files = [{"filename": "deploy/x.yaml"}]
+    sec = jira_issue("SECPROJ-8", "SECPROJ", "Open", description=url if where == "description" else None)
+    remote = {"SECPROJ-8": [{"object": {"url": url}}]} if where == "remote" else None
+    _, errs, _ = jira_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), org,
+                            {"SREPROJ-7": jira_issue("SREPROJ-7", "SREPROJ", "Approved"), "SECPROJ-8": sec},
+                            remote, files=files)
+    assert errs == []
+
+
+def test_repo_url_comes_from_the_payload_or_the_pr_url():
+    assert wsp._repo_url({"html_url": PR_URL}) == "https://github.com/o/r"
+    assert wsp._repo_url({"html_url": PR_URL, "base": {"repo": {"html_url": "https://ghe.example/x/y/"}}}) \
+        == "https://ghe.example/x/y"
+    assert wsp._repo_url({"html_url": "https://github.com/o/r/issues/7"}) == ""
+
+
+def test_jira_repo_link_without_a_repository_url_fails(org):
+    files = [{"filename": "deploy/x.yaml"}]
+    p = gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n")
+    p["html_url"] = ""
+    issues = {"SREPROJ-7": jira_issue("SREPROJ-7", "SREPROJ", "Approved", description=PR_URL),
+              "SECPROJ-8": jira_issue("SECPROJ-8", "SECPROJ", "Open")}
+    _, errs, _ = jira_gates(p, org, issues, files=files)
+    assert any("'infosec'" in e and "does not name this repository" in e for e in errs)
 
 
 @pytest.mark.parametrize("itype", ["Epic", "Story"])
@@ -731,6 +791,22 @@ def test_main_with_jira_fails_closed_on_a_bad_answer(tmp_path, fake_api, status,
     fake_api.issue("SREPROJ-7", body, status)
     r, _ = run_main(tmp_path, BODY + "SRE: SREPROJ-7\n", api=fake_api, jira=True)
     assert r.returncode == 1 and "::error::gate 'sre'" in r.stdout
+
+
+@pytest.mark.parametrize("status, body", [
+    (200, "<!DOCTYPE html><html><title>Log in with SSO</title></html>"),
+])
+def test_main_with_jira_fails_closed_when_the_work_ticket_cannot_be_read(tmp_path, fake_api, status, body):
+    # credentials are set, so the ticket check (status, execution label, blocking decisions) must not be skipped
+    _jira_world(fake_api)
+    fake_api.routes["/rest/api/3/issue/KAN-315?fields=status,labels,issuetype,issuelinks"] = (status, body)
+    r, _ = run_main(tmp_path, BODY + "SRE: SREPROJ-7\n", api=fake_api, jira=True)
+    assert r.returncode == 1 and "::error::Jira was not reachable" in r.stdout and "KAN-315" in r.stdout
+    r, _ = run_main(tmp_path, BODY + "SRE: SREPROJ-7\n", api=fake_api, jira=True,
+                    extra_env={"INPUT_ALLOW_UNVERIFIED": "true"})
+    # allow-unverified turns it into a warning; label gates still apply, since the labels are unknown
+    assert "::warning::Jira was not reachable" in r.stdout and "::error::Jira was not reachable" not in r.stdout
+    assert "::error::gate 'data'" in r.stdout
 
 
 def test_main_applies_a_label_gate_from_the_work_tickets_labels(tmp_path, fake_api):
