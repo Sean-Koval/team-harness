@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -172,7 +173,7 @@ def test_the_cli_writes_the_file(tmp_path, capsys, monkeypatch):
     assert wco.main(["--org", "orgs/missing"]) == 2
     monkeypatch.setattr(wco, "WINDOWS", True)
     assert wco.main(["--harness", "work-default", "--out", str(out)]) == 0
-    assert f'.\\run.ps1 --data-dir <your data dir> overlay apply "{out}"' in capsys.readouterr().out
+    assert f".\\run.ps1 --data-dir <your data dir> overlay apply '{out}'" in capsys.readouterr().out
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -226,9 +227,13 @@ def test_install_local_on_windows_quotes_every_path_and_uses_py(tmp_path, monkey
     out = tmp_path / "o.json"
     steps = il.work_copilot_commands(ROOT, "work-default", out=out)
     script = ROOT / "scripts" / "work_copilot_overlay.py"
-    assert steps.commands[0] == f'py -3 "{script}" --harness work-default --out "{out}"'
-    assert steps.commands[1].endswith(f'overlay apply "{out}"')
-    assert f'.\\run.ps1 --data-dir <your data dir> overlay apply "{out}"' in steps.example
+    assert steps.commands[0] == f"py -3 '{script}' --harness work-default --out '{out}'"
+    assert steps.commands[1].endswith(f"overlay apply '{out}'")
+    assert f".\\run.ps1 --data-dir <your data dir> overlay apply '{out}'" in steps.example
+
+
+def test_a_windows_path_with_a_dollar_or_a_quote_stays_one_powershell_word():
+    assert wco.quote("C:\\Users\\o'neil\\$work\\o.json", windows=True) == "'C:\\Users\\o''neil\\$work\\o.json'"
 
 
 def test_install_local_pins_the_overlay_to_the_revision_it_installs(tmp_path):
@@ -258,3 +263,54 @@ def test_install_local_reports_an_org_that_does_not_render(tmp_path):
     org["ticket_types"][0]["project"] = "fic"
     steps = il.work_copilot_commands(fork(tmp_path, org), "work-default")
     assert len(steps.commands) == 2 and "ticket_types[0].project" in steps.problem
+
+
+# Work Copilot's own copies of these two files (tests/fixtures/overlay/ there) are what its `overlay apply` checks
+# against; keep the two sets byte for byte the same.
+GOLDEN = Path(__file__).resolve().parent / "fixtures" / "work-copilot-overlay"
+
+
+@pytest.mark.parametrize("name", ["example-co", "fictional-co"])
+def test_the_rendered_overlay_matches_work_copilots_sample_files(tmp_path, name):
+    out = (wco.render(ROOT, harness="work-default") if name == "example-co"
+           else wco.render(fork(tmp_path, fictional()), harness="work-default"))
+    assert text(out) == (GOLDEN / f"{name}.json").read_text(encoding="utf-8")
+
+
+def _work_copilot_overlay():
+    """Work Copilot's overlay module from a checkout (WORK_COPILOT_CHECKOUT), else skip: CI has no Work Copilot."""
+    checkout = os.environ.get("WORK_COPILOT_CHECKOUT")
+    if not checkout:
+        pytest.skip("set WORK_COPILOT_CHECKOUT to a Work Copilot checkout to check against its overlay validator")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("wc_overlay", Path(checkout) / "work_copilot" / "overlay.py")
+    if spec is None or not Path(spec.origin).is_file():
+        pytest.fail(f"WORK_COPILOT_CHECKOUT has no work_copilot/overlay.py: {checkout}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_work_copilots_strict_checks_accept_what_this_renders(tmp_path):
+    wc = _work_copilot_overlay()
+    for org in (None, fictional()):
+        out = wco.render(ROOT if org is None else fork(tmp_path / "f", org), harness="work-default")
+        assert wc.validate(out) == out
+        f = tmp_path / "o.json"
+        f.write_text(text(out), encoding="utf-8")
+        assert wc.read(f) == out
+    for name in ("example-co", "fictional-co"):
+        golden = GOLDEN / name
+        assert wc.read(golden.with_suffix(".json")) == json.loads(golden.with_suffix(".json").read_text("utf-8"))
+
+
+def test_the_two_format_definitions_are_the_same():
+    wc = _work_copilot_overlay()
+    assert set(wc._FIELDS) == set(wco.FORMATS)
+    # The two are written with different escapes, so compare what they accept: the shared cases, then every
+    # character from U+0000 to U+30FF on its own and inside a valid value.
+    probes = [v for field in FORMAT_CASES for case in FORMAT_CASES[field] for v in case]
+    probes += [c for i in range(0x3100) for c in (chr(i), f"a{chr(i)}.b", f"A{chr(i)}")]
+    for field, pattern in wco.FORMATS.items():
+        differ = [v for v in probes if bool(pattern.fullmatch(v)) != bool(wc._FIELDS[field].fullmatch(v))]
+        assert not differ, f"{field}: Work Copilot and this script disagree on {differ[:5]!r}"

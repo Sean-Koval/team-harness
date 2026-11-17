@@ -205,9 +205,9 @@ def _windows(windows: bool | None) -> bool:
 
 
 def quote(word: str, windows: bool | None = None) -> str:
-    """One word for the shell a person pastes into: always double quotes on Windows (PowerShell and cmd), else
-    POSIX quoting."""
-    return f'"{word}"' if _windows(windows) else shlex.quote(word)
+    """One word for the shell a person pastes into: PowerShell single quotes on Windows (double quotes would expand
+    `$`), as install_local quotes its other lines, else POSIX quoting."""
+    return "'" + word.replace("'", "''") + "'" if _windows(windows) else shlex.quote(word)
 
 
 def python(windows: bool | None = None) -> str:
