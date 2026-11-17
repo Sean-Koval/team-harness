@@ -123,9 +123,13 @@ work-copilot init && work-copilot doctor
 Point its vault at a company-approved folder, never a personal vault. It has no live Jira or Confluence source yet.
 
 Then run the `work-copilot` line the install prints under "this machine only". Set `WORK_COPILOT_DATA_DIR` to its data
-directory first, or leave it empty for Work Copilot's default; Work Copilot reads it from KAN-382 on. The path stays on
-your laptop: no shared file holds it, and no sandbox runs this server. In project scope the line adds it with
-`--scope local`, so it never lands in the repository's `.mcp.json`. `--check` then lists it as added.
+directory first, or set it empty for Work Copilot's default; Work Copilot reads it from KAN-382 on. The install warns
+while it is unset. The path stays on your laptop: no shared file holds it, and no sandbox runs this server. In project
+scope the line adds it with `--scope local`, so it never lands in the repository's `.mcp.json`. `--check` then lists
+it as added.
+
+Claude Code keeps the value the line gave it, so changing the variable later changes nothing by itself. Run
+`claude mcp remove work-copilot` with the same `--scope`, then the printed line again.
 
 ## The first test ticket
 

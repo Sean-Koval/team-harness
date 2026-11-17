@@ -574,6 +574,87 @@ def test_check_reads_project_servers_from_mcp_json_and_local_ones_from_the_proje
     assert f"added in {home / '.claude.json'} (project {target.resolve()})" in report["work-copilot"]
 
 
+def test_a_harness_named_as_dot_still_finds_its_binding(tmp_path, capsys, monkeypatch):
+    """Run from inside the harness directory (`install_local.py .`): the binding is found from the resolved path, so
+    Work Copilot's line and its --check report are still there."""
+    home = tmp_path / "home"
+    monkeypatch.chdir(WORK)
+    assert il.read_binding(Path("."), "work-default")["mcp"]["work-copilot"]["local_only"] is True
+    assert user(Path("."), home) == 0
+    assert "--transport stdio work-copilot" in capsys.readouterr().out.partition("this machine only")[2]
+    assert user(Path("."), home, "--apply") == 0
+    capsys.readouterr()
+    assert user(Path("."), home, "--check") == 0
+    assert "work-copilot" in _check_report(capsys.readouterr().out)
+
+
+def test_an_unset_data_directory_is_warned_about_before_it_is_frozen(tmp_path, capsys, monkeypatch):
+    """The shell fills $WORK_COPILOT_DATA_DIR when the printed line runs, and Claude Code keeps what it got: unset,
+    that is an empty value that outlives a later export. So the dry run warns while it is unset, and not once set
+    (empty included: Work Copilot's own default, chosen on purpose)."""
+    monkeypatch.delenv("WORK_COPILOT_DATA_DIR", raising=False)
+    assert user(WORK, tmp_path) == 0
+    err = capsys.readouterr().err
+    assert "warning: WORK_COPILOT_DATA_DIR is not set in this shell" in err
+    assert "claude mcp remove --scope user work-copilot" in err
+    assert project(WORK, tmp_path / "p") == 0
+    assert "claude mcp remove --scope local work-copilot" in capsys.readouterr().err
+    monkeypatch.setenv("WORK_COPILOT_DATA_DIR", "")
+    assert user(WORK, tmp_path) == 0
+    assert "WORK_COPILOT_DATA_DIR" not in capsys.readouterr().err
+
+
+def test_windows_prints_the_local_line_for_powershell(tmp_path, capsys, monkeypatch):
+    """On Windows the line is for PowerShell, which reads a variable as $env:NAME, and the heading says so."""
+    monkeypatch.setattr(il, "WINDOWS", True)
+    assert user(WORK, tmp_path) == 0
+    local = capsys.readouterr().out.partition("MCP servers for this machine only")[2]
+    assert "after setting each $env:NAME" in local and "$VARIABLE" not in local
+    assert ('claude mcp add --scope user --transport stdio work-copilot '
+            '--env "WORK_COPILOT_DATA_DIR=$env:WORK_COPILOT_DATA_DIR" -- work-copilot mcp') in local
+
+
+@pytest.mark.parametrize("change", [
+    {"args": ["mcp;", "touch", "/tmp/pwned"]},
+    {"command": "work-copilot$(id)"},
+    {"env": {"WORK_COPILOT_DATA_DIR": "$(id)"}},
+    {"env": {"WORK_COPILOT_DATA_DIR": "${OTHER_DIR}"}},
+    {"transport": "sse"},
+])
+def test_a_misshapen_local_only_server_in_the_working_tree_is_skipped(tmp_path, capsys, change):
+    """The local line comes from the checkout's working tree, which no relock may have checked: a server relock.py
+    would refuse gets no line to paste into a shell, and a warning says why."""
+    h = copy_harness(tmp_path, WORK)
+    b = h.parent.parent / "bindings" / "work-default.yaml"
+    data = yaml.safe_load(b.read_text())
+    data["mcp"]["work-copilot"].update(change)
+    b.write_text(yaml.safe_dump(data, sort_keys=False))
+    assert user(h, tmp_path / "home") == 0
+    out, err = capsys.readouterr()
+    assert "work-copilot" not in out.partition("MCP servers for this machine only")[2]
+    assert "warning: local_only server skipped: work-copilot:" in err
+
+
+def test_shell_words_are_quoted_for_their_shell(monkeypatch):
+    assert il._shell_word("work-copilot") == "work-copilot"
+    assert il._shell_word("a b;c") == "'a b;c'"
+    monkeypatch.setattr(il, "WINDOWS", True)
+    assert il._shell_word("it's $x") == "'it''s $x'"  # PowerShell: single quotes keep $ literal
+
+
+def test_check_reports_an_unreadable_binding_as_itself(tmp_path, capsys):
+    """A YAML error in the binding is drift that names the file and the error, not a harness silently unchecked."""
+    h = copy_harness(tmp_path, WORK)
+    home = tmp_path / "home"
+    assert user(h, home, "--apply") == 0
+    (h.parent.parent / "bindings" / "work-default.yaml").write_text("mcp: [unclosed\n")
+    capsys.readouterr()
+    assert user(h, home, "--check") == 1
+    out = capsys.readouterr().out
+    assert "cannot read the harness:" in out and "work-default.yaml" in out
+    assert out.splitlines()[-1].startswith("drift:")
+
+
 def test_mcp_and_plugins_are_never_written(tmp_path):
     assert user(ROOT / "harnesses/team-default", tmp_path, "--apply") == 0
     base = tmp_path / ".claude"

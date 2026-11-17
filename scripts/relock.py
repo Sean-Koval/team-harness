@@ -72,8 +72,10 @@ SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:@+=-]+$")  # a command or an arg: one word, no quoting or spaces
-WHOLE_REF = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
-MACHINE_PATH = re.compile(r"(?:^|=)(?:/|~|[A-Za-z]:)")  # an absolute or home path, alone or after `--flag=`
+WHOLE_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+# An absolute or home path, alone or after `--flag=`. A heuristic, not a proof: a relative path (`bin/tool`) passes,
+# and a Windows path with backslashes or `%VAR%` is refused by PLAIN_WORD instead.
+MACHINE_PATH = re.compile(r"(?:^|=)(?:/|~|[A-Za-z]:)")
 SECRET_WORD = re.compile(r"(?i)token|secret|passw|bearer|basic |authorization|api_?key|\$\{")
 
 
@@ -107,6 +109,11 @@ def _shape_problems(name: str, s: dict[str, Any]) -> list[str]:
                                            for key in ("headers", "env") if isinstance(s.get(key), dict)
                                            for v in s[key].values()):
         out.append(f"mcp.{name}: a local_only server's headers and env are each one `${{VAR}}`, set per machine")
+    # install_local.py prints `--env NAME=$NAME`: the variable a person sets is the env name itself
+    elif s.get("local_only") is True and isinstance(s.get("env"), dict) and (
+            bad := sorted(str(k) for k, v in s["env"].items() if WHOLE_REF.match(v).group(1) != k)):
+        out.append(f"mcp.{name}.env: a local_only server's env {', '.join(bad)} is `${{<its own name>}}`, such as "
+                   f"`{bad[0]}: \"${{{bad[0]}}}\"`")
     if s.get("local_only") is True and s.get("transport") == "stdio" and any(
             isinstance(w, str) and MACHINE_PATH.search(w)
             for w in [s.get("command"), *(s["args"] if isinstance(s.get("args"), list) else [])]):
@@ -142,13 +149,24 @@ def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
     what a sandbox runs."""
     f = bindings_file(root, lock["name"])
     servers = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("mcp") or {}) if f else {}
-    declared = {n for n, s in servers.items() if isinstance(s, dict) and "transport" in s}
+    local = {n for n, s in servers.items() if isinstance(s, dict) and s.get("local_only") is True}
+    # whether the lock's servers come from this file is decided by the others: a laptop's own server alone doesn't
+    # move them, as it never reaches the lock
+    declared = {n for n, s in servers.items() if isinstance(s, dict) and "transport" in s and n not in local}
+    if problems := [p for n in sorted(local, key=str) for p in _shape_problems(n, servers[n])]:
+        raise SystemExit(f"{f}: " + "; ".join(problems))
+    for n in sorted(local, key=str):
+        shape = MCP_SHAPE.get(servers[n].get("transport"))
+        if shape is None or any(k not in servers[n] for k in shape):
+            raise SystemExit(f"{f}: mcp.{n}: transport http needs endpoint; stdio needs command and args")
     if not declared:
-        return lock["binding"].get("mcp") or []
-    if declared != set(servers):
+        kept = lock["binding"].get("mcp") or []
+        _refuse_local_names(f, local, kept)
+        return kept
+    if declared | local != set(servers):
         raise SystemExit(f"{f}: give every mcp server a transport, or none (missing: "
-                         f"{', '.join(sorted(set(servers) - declared))})")
-    if problems := [p for n in sorted(servers, key=str) for p in _shape_problems(n, servers[n])]:
+                         f"{', '.join(sorted(set(servers) - declared - local))})")
+    if problems := [p for n in sorted(declared, key=str) for p in _shape_problems(n, servers[n])]:
         raise SystemExit(f"{f}: " + "; ".join(problems))
     out = []
     for name in sorted(servers):
@@ -164,7 +182,16 @@ def _mcp(root: Path, lock: dict[str, Any]) -> list[dict[str, Any]]:
         if names:
             m["header_names" if s["transport"] == "http" else "env_names"] = names
         out.append(m)
+    _refuse_local_names(f, local, out)
     return out
+
+
+def _refuse_local_names(f: Path | None, local: set[str], mcp: list[dict[str, Any]]) -> None:
+    """A local_only server may not share a name with a server the lock binds: a sandbox would run the lock's under
+    that name, and install_local.py would print only one of the two."""
+    if clash := sorted(local & {m.get("name") for m in mcp}):
+        raise SystemExit(f"{f}: mcp.{clash[0]}: local_only, but the lock binds a server of that name; rename it, or "
+                         "declare every server's transport here so the lock's servers come from this file")
 
 
 def pinned(lock: dict[str, Any]) -> dict[str, str]:

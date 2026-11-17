@@ -188,6 +188,10 @@ def test_a_local_only_server_never_reaches_the_lock_or_the_environments(tmp_path
     (lambda mcp: mcp["work-copilot"].update({"args": ["--data-dir", "/Users/someone/wc", "mcp"]}), "no machine path"),
     (lambda mcp: mcp["work-copilot"].update({"args": ["--data-dir=~/wc", "mcp"]}), "no machine path"),
     (lambda mcp: mcp["work-copilot"].update({"command": "/Users/someone/.local/bin/work-copilot"}), "no machine path"),
+    # install_local.py prints `--env NAME=$NAME`: the variable is the env name itself
+    (lambda mcp: mcp["work-copilot"].update({"env": {"WORK_COPILOT_DATA_DIR": "${OTHER_DIR}"}}),
+     "env WORK_COPILOT_DATA_DIR is `\\${<its own name>}`"),
+    (lambda mcp: mcp["work-copilot"].pop("transport"), "stdio needs command and args"),
 ])
 def test_a_misshapen_local_only_server_is_refused(tmp_path, change, message):
     """Left out of the lock, it is still checked: no machine path or token in shared config, and a complete shape."""
@@ -196,3 +200,28 @@ def test_a_misshapen_local_only_server_is_refused(tmp_path, change, message):
     with pytest.raises(SystemExit, match=message) as e:
         relock.relock(h)
     assert TOKEN not in str(e.value) and "/Users/someone" not in str(e.value)
+
+
+def test_a_local_only_server_named_like_a_lock_server_is_refused(tmp_path):
+    """When the lock's servers come from the lock (no other server here declares a transport), a local_only server
+    may not reuse a name it binds: a sandbox would run the lock's under that name."""
+    h, b = _repo(tmp_path, "work-default")
+
+    def change(mcp):
+        for n in list(mcp):
+            if n != "work-copilot":
+                mcp[n].pop("transport")
+        mcp["github"] = dict(mcp.pop("work-copilot"))
+
+    _edit(b, change)
+    with pytest.raises(SystemExit, match="mcp.github: local_only, but the lock binds a server of that name"):
+        relock.relock(h)
+
+
+def test_a_local_only_server_alone_leaves_the_lock_s_servers_as_they_are(tmp_path):
+    """Whether the lock's servers come from this file is decided by the other servers: one laptop server with a
+    transport, beside servers that declare none, keeps the lock's."""
+    h, b = _repo(tmp_path, "work-default")
+    _edit(b, lambda mcp: [mcp[n].pop("transport") for n in mcp if n != "work-copilot"])
+    before = hl.load(h)
+    assert relock._mcp(h, before) == before["binding"]["mcp"]
