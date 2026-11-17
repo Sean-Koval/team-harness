@@ -96,10 +96,12 @@ With Jira credentials, each gate ticket must:
 
 **It fails closed.** A gate with `approved_statuses` or `links` fails (state `unverified`) when its ticket can't be
 read: no Jira credentials (fork and Dependabot PRs get no secrets), Jira errors or times out, or answers with something
-other than JSON, such as an SSO login page. With Jira credentials set, a work ticket that can't be read fails too. Set `allow-unverified: "true"` only for a repository that knowingly accepts approvals
-it can't verify; such gates then pass with a warning. Never set it at work before KAN-450. When the work ticket's labels can't be read, gates with
-`when: labels` apply, as gates with `when: paths` do when the PR's files can't be listed. Gates without
-`approved_statuses` or `links` only warn when Jira can't be read (state `not checked`).
+other than JSON, such as an SSO login page. With Jira credentials set, a work ticket that can't be read fails too.
+
+Set `allow-unverified: "true"` only for a repository that knowingly accepts approvals it can't verify; such gates then
+pass with a warning (state `not checked`). Never set it at work before KAN-450. When the work ticket's labels can't be
+read, gates with `when: labels` apply, as gates with `when: paths` do when the PR's files can't be listed. Gates
+without `approved_statuses` or `links` only warn when Jira can't be read (state `not checked`).
 
 An org file marked `placeholder: true`, like the shipped example, is not enforced: the check warns instead. An org file
 that can't be read or doesn't fit the schema fails the check with the reason. The job summary lists each gate and its

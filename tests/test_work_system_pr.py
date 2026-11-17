@@ -211,7 +211,7 @@ def test_always_gate_needs_its_line(org):
 
 def test_present_gate_line_passes_when_unverified_is_allowed(org):
     gates, errs, warns = wsp.check_gates(gated(), [], org, allow_unverified=True)
-    assert errs == [] and by_id(gates)["sre"].state == "linked" and by_id(gates)["sre"].key == "SREPROJ-7"
+    assert errs == [] and by_id(gates)["sre"].state == "not checked" and by_id(gates)["sre"].key == "SREPROJ-7"
     assert any("passing it unverified" in w for w in warns)
 
 
@@ -225,7 +225,7 @@ def test_without_jira_an_approval_gate_fails_closed(org):
 def test_without_jira_a_gate_without_approved_statuses_checks_the_prefix_only(org):
     files = [{"filename": "deploy/x.yaml"}]
     gates, errs, _ = wsp.check_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), files, org, allow_unverified=True)
-    assert errs == [] and by_id(gates)["infosec"].state == "linked"
+    assert errs == [] and by_id(gates)["infosec"].state == "not checked"
 
 
 @pytest.mark.parametrize("value", ["pending", "Pending - filing after review"])
@@ -254,7 +254,7 @@ def test_paths_gate_applies_on_a_matching_file(org):
     gates, errs, _ = wsp.check_gates(gated(), files, org)
     assert by_id(gates)["infosec"].applies and any("'infosec'" in e and "SECPROJ" in e for e in errs)
     gates, errs, _ = wsp.check_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), files, org, allow_unverified=True)
-    assert errs == [] and by_id(gates)["infosec"].state == "linked"
+    assert errs == [] and by_id(gates)["infosec"].state == "not checked"
 
 
 def test_paths_gate_matches_a_rename_source(org):
@@ -429,8 +429,49 @@ def test_jira_unreachable_fails_a_gate_with_approved_statuses(org, exc):
 def test_jira_unreachable_passes_only_with_allow_unverified(org):
     def fetch(key):
         raise urllib.error.URLError("timed out")
-    _, errs, warns = wsp.check_gates(gated(), [], org, fetch=fetch, work_key="KAN-315", allow_unverified=True)
+    gates, errs, warns = wsp.check_gates(gated(), [], org, fetch=fetch, work_key="KAN-315", allow_unverified=True)
     assert errs == [] and any("passing it unverified" in w for w in warns)
+    # the job summary must not say a ticket it never read was checked
+    assert by_id(gates)["sre"].state == "not checked"
+    assert any("not checked" in line for line in wsp.gate_summary(gates))
+
+
+def test_unreadable_remote_links_are_read_once_and_reported_once(tmp_path):
+    # a gate that links both the PR and the repository: one failed read, one error, state unverified
+    p = tmp_path / "org.yaml"
+    p.write_text(ORG_YAML.replace("links: [pr, work]", "links: [pr, repo, work]"))
+    org = wsp.load_org(str(p))
+    calls = []
+
+    def remote_links(key):
+        calls.append(key)
+        raise urllib.error.URLError("timed out")
+    gates, errs, _ = wsp.check_gates(gated(), [], org, fetch=fake_jira({"SREPROJ-7": jira_issue(
+        "SREPROJ-7", "SREPROJ", "Approved", description=None)}), remote_links=remote_links, work_key="KAN-315")
+    assert calls == ["SREPROJ-7"] and by_id(gates)["sre"].state == "unverified"
+    assert len([e for e in errs if "remote links could not be read" in e]) == 1
+
+
+@pytest.mark.parametrize("text, url, hit", [
+    ("PR: https://github.com/o/r/pull/7.", PR_URL, True),  # a URL that ends a sentence
+    ("see https://github.com/o/r.", "https://github.com/o/r", True),
+    ("https://github.com/o/r?tab=x", "https://github.com/o/r", True),
+    ("https://github.com/o/r/pull/9", "https://github.com/o/r", True),
+    ("https://github.com/o/r2", "https://github.com/o/r", False),
+    ("https://github.com/o/r.x", "https://github.com/o/r", False),
+    ("https://github.com/o/r-fork", "https://github.com/o/r", False),
+    ("https://github.com/o/r%2Dfork", "https://github.com/o/r", False),
+    ("https://github.com/o/r/pull/70", PR_URL, False),
+    ("https://github.com/o/r/pull/7.patch", PR_URL, False),
+])
+def test_mentions_names_the_url_itself(text, url, hit):
+    assert wsp._mentions({"description": text}, url) is hit
+
+
+def test_jira_pr_link_ignores_the_case_of_the_owner_and_repository(org):
+    sre = jira_issue("SREPROJ-7", "SREPROJ", "Approved", description="https://github.com/O/R/pull/7")
+    _, errs, _ = jira_gates(gated(), org, {"SREPROJ-7": sre})
+    assert errs == []
 
 
 @pytest.mark.parametrize("answer", [["not", "an", "issue"], {"errorMessages": ["login required"]}, None])
@@ -447,7 +488,7 @@ def test_jira_unreachable_fails_a_gate_with_links_only(org):
     gates, errs, _ = wsp.check_gates(gated("SRE: SREPROJ-7\nInfosec: SECPROJ-8\n"), files, org, fetch=fetch,
                                      work_key="KAN-315")
     assert by_id(gates)["infosec"].state == "unverified"
-    assert any("'infosec'" in e and "linking the repo and the work ticket" in e for e in errs)
+    assert any("'infosec'" in e and "linking the repository and the work ticket" in e for e in errs)
     assert any("'sre'" in e for e in errs)
 
 
@@ -795,6 +836,7 @@ def test_main_with_jira_fails_closed_on_a_bad_answer(tmp_path, fake_api, status,
 
 @pytest.mark.parametrize("status, body", [
     (200, "<!DOCTYPE html><html><title>Log in with SSO</title></html>"),
+    (200, {"key": "KAN-315"}),  # JSON, but not an issue: its labels are unknown, not empty
 ])
 def test_main_with_jira_fails_closed_when_the_work_ticket_cannot_be_read(tmp_path, fake_api, status, body):
     # credentials are set, so the ticket check (status, execution label, blocking decisions) must not be skipped

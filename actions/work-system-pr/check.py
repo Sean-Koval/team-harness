@@ -34,6 +34,7 @@ nothing except the job summary.
 from __future__ import annotations
 
 import base64
+import http.client
 import fnmatch
 import json
 import os
@@ -456,8 +457,8 @@ def _what_jira_shows(g: dict) -> str:
     if g.get("approved_statuses"):
         parts.append(" or ".join(g["approved_statuses"]))
     if g.get("links"):
-        parts.append("linking " + " and ".join(f"the {x}" if x != "work" else "the work ticket"
-                                               for x in g["links"]))
+        names = {"pr": "the PR", "work": "the work ticket", "repo": "the repository"}
+        parts.append("linking " + " and ".join(names.get(x, f"the {x}") for x in g["links"]))
     return ", ".join(parts)
 
 
@@ -466,6 +467,7 @@ def _unverified(gate: Gate, why: str, g: dict, ctx: GateContext, *, errors: list
     """A gate that needs Jira (an approval, a link) whose ticket couldn't be read: fail, unless allow-unverified."""
     msg = (f"gate {gate.id!r}: {gate.key} could not be verified as {_what_jira_shows(g)} because {why}")
     if ctx.allow_unverified:
+        gate.state = "not checked"  # passes unread; the summary must not say checked
         warnings.append(f"{msg}; passing it unverified because allow-unverified is set")
     else:
         gate.state = "unverified"
@@ -475,10 +477,11 @@ def _unverified(gate: Gate, why: str, g: dict, ctx: GateContext, *, errors: list
 
 def _mentions(obj: object, url: str, *, ignore_case: bool = False) -> bool:
     """Whether the JSON (a description or remote links) names this URL itself: `/pull/7` is not `/pull/70`, and
-    `o/r` is not `o/r-fork` (a link into the repository, such as `o/r/pull/7`, names it)."""
+    `o/r` is not `o/r-fork`, `o/r2`, `o/r.x` or `o/r%2Dfork` (a link into the repository, such as `o/r/pull/7`, names
+    it, and so does a URL that ends a sentence with a full stop)."""
     url = url.rstrip("/")
     flags = re.IGNORECASE if ignore_case else 0
-    return bool(url) and re.search(re.escape(url) + r"(?![\w.-])", json.dumps(obj or ""), flags) is not None
+    return bool(url) and re.search(re.escape(url) + r"(?![\w%-]|\.[\w-])", json.dumps(obj or ""), flags) is not None
 
 
 def _linked_keys(fields: dict) -> set[str]:
@@ -511,7 +514,7 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
         gate.errors.append(f"gate {gate.id!r}: {gate.key} could not be read from Jira (HTTP {e.code}): "
                            "does the ticket exist, and can the check's account browse its project?")
         return
-    except (urllib.error.URLError, OSError, ValueError) as e:  # ValueError: not JSON, such as an SSO login page
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:  # ValueError: not JSON
         unreadable(f"Jira did not answer with the ticket ({e})")
         return
     if not isinstance(issue, dict) or not isinstance(issue.get("fields"), dict):
@@ -539,7 +542,7 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
             gate.state = "invalid"
             errs.append(f"gate {gate.id!r}: {gate.key} has no issue link to the work ticket {ctx.work_key}; link it "
                         f"('relates to') so the approval is for this work")
-    remote: list[object] = []  # read once, for pr and repo
+    remote: list[object] = []  # read once, for pr and repo; [None] once reading them failed
 
     def links_to(url: str, ignore_case: bool = False) -> bool | None:
         """Whether the description or a remote link names the URL; None when the remote links can't be read."""
@@ -550,12 +553,14 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
         if not remote:
             try:
                 remote.append(ctx.remote_links(gate.key or ""))
-            except (urllib.error.URLError, OSError, ValueError) as e:
+            except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+                remote.append(None)
                 unreadable(f"its remote links could not be read ({e})")
-                return None
+        if remote[0] is None:
+            return None
         return _mentions(remote[0], url, ignore_case=ignore_case)
 
-    if "pr" in links and links_to(ctx.pr_url) is False:
+    if "pr" in links and links_to(ctx.pr_url, ignore_case=True) is False:
         gate.state = "invalid"
         errs.append(f"gate {gate.id!r}: {gate.key} does not link this PR; add {ctx.pr_url or 'the PR URL'} as a "
                     "remote link or in its description")
@@ -712,15 +717,16 @@ def main() -> int:
     if work_key and creds:
         try:
             issue, blockers = _jira(base, user, token, work_key)
-            if not isinstance(issue, dict):
+            if not isinstance(issue, dict) or not isinstance(issue.get("fields"), dict):
                 raise TypeError("Jira's answer was not an issue")
-            work_labels = [str(lab) for lab in (issue.get("fields") or {}).get("labels") or []]
+            work_labels = [str(lab) for lab in issue["fields"].get("labels") or []]
             if res.key and not res.errors:
                 res.errors += check_ticket(issue, blockers, res.key)
         except urllib.error.HTTPError as e:
             if res.key and not res.errors:
                 res.errors.append(f"{res.key} could not be read from Jira (HTTP {e.code}): does the ticket exist?")
-        except (urllib.error.URLError, OSError, ValueError, TypeError) as e:
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError, TypeError,
+                AttributeError) as e:
             # credentials are set, so the repository asked for the ticket check: fail closed, as the gates do
             msg = f"Jira was not reachable ({e}); the ticket {work_key} itself was not checked"
             if allow_unverified or not res.key:

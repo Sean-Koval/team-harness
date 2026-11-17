@@ -47,7 +47,7 @@ inputs:
   allow-unverified:
     description: >-
       "true" lets a gate with approved_statuses or links pass, with a warning, when its ticket can't be read (no Jira
-      credentials, as on fork and Dependabot PRs, or Jira down), and the work ticket's rules be skipped when Jira
+      credentials, as on fork and Dependabot PRs, or Jira down), and lets the work ticket's rules be skipped when Jira
       credentials are set but Jira can't be read. Default "false": both fail.
     default: "false"
 runs:
