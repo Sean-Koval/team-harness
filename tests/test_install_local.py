@@ -1443,3 +1443,15 @@ def test_manifest_records_the_pinned_model_and_runtime(tmp_path):
     m = manifest(home / ".claude")
     assert m["model"] == lock["model"]["id"]
     assert m["runtime_version"] == lock["runtime"]["version"]
+
+
+def test_mcp_commands_takes_the_lock_alone_as_doctor_passes_it():
+    """doctor.py (KAN-372) calls mcp_commands with only root, name and lock: it gets the lock's lines, one per server,
+    in the lock's order, and no laptop-only line."""
+    from types import SimpleNamespace
+    h = il.load_harness(WORK, "user")
+    lean = SimpleNamespace(root=h.root, name=h.name, lock=h.lock)
+    lines = il.mcp_commands(lean, "user")
+    assert lines == il.mcp_commands(h, "user")
+    assert len(lines) == len(h.lock["binding"]["mcp"]) and not any("work-copilot" in ln for ln in lines)
+    assert il.mcp_commands(lean, "user", local_only=True) == []
