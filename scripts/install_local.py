@@ -837,21 +837,41 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
     return out
 
 
-def work_copilot_commands(repo: Path, harness: str) -> list[str]:
-    """Commands that render the harness's org overlay for Work Copilot and apply it (KAN-381); none without an org."""
-    import work_copilot_overlay as wco
+@dataclass
+class OverlaySteps:
+    """What install_local prints for Work Copilot (KAN-381): two commands, an example, and why it may not work yet."""
+    commands: list[str]
+    example: str = ""
+    note: str = ""  # "(placeholder org: values are examples)" for a placeholder org
+    problem: str = ""
 
+
+def work_copilot_commands(repo: Path, harness: str, commit: str | None = None,
+                          out: Path | None = None) -> OverlaySteps | None:
+    """Commands that render the harness's org overlay for Work Copilot and apply it; None when it names no org.
+    `commit` is the pinned revision being installed: the overlay is read there (`--at`), not from the checkout."""
     try:
-        org = wco.org_for(repo, harness)
-    except (OSError, yaml.YAMLError):
-        return []
-    if not org:
-        return []
-    script = str(repo.resolve() / "scripts" / "work_copilot_overlay.py")
-    quote = (lambda w: subprocess.list2cmdline([w])) if WINDOWS else shlex.quote
-    python = "python" if WINDOWS else "python3"
-    return [f"{python} {quote(script)} --harness {harness} --out work-copilot-overlay.json",
-            "work-copilot overlay apply work-copilot-overlay.json"]
+        import work_copilot_overlay as wco
+    except Exception as e:  # noqa: BLE001  (an optional extra: never let it stop an install)
+        return OverlaySteps([], problem=f"cannot load scripts/work_copilot_overlay.py: {e}")
+    problem, placeholder = "", False
+    try:
+        with wco.tree(repo, commit) as root:
+            if not wco.org_for(root, harness):
+                return None
+            try:
+                placeholder = wco.render(root, harness=harness)["placeholder"]
+            except (ValueError, KeyError) as e:
+                problem = f"the org overlay does not render yet: {str(e).splitlines()[0]}"
+    except (OSError, ValueError, yaml.YAMLError, AttributeError, TypeError) as e:  # a malformed targets.yaml
+        return OverlaySteps([], problem=f"cannot read the org overlay from shared/work-system/targets.yaml: {e}")
+    out = (out or Path.cwd() / "work-copilot-overlay.json").resolve()
+    script = repo.resolve() / "scripts" / "work_copilot_overlay.py"
+    at = f" --at {commit}" if commit else ""
+    q = lambda w: wco.quote(w, WINDOWS)  # noqa: E731
+    render = f"{wco.python(WINDOWS)} {q(str(script))} --harness {harness}{at} --out {q(str(out))}"
+    apply, example = wco.apply_commands(out, WINDOWS)
+    return OverlaySteps([render, apply], example, wco.PLACEHOLDER_NOTE if placeholder else "", problem)
 
 
 def plugin_commands(h: Harness, scope: str) -> list[str]:
@@ -1234,12 +1254,17 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         print("Plugins: run these yourself:")
         for c in plugins:
             print(f"  {c}")
-    overlay = work_copilot_commands(a.harness.resolve().parent.parent, h.name)
+    overlay = work_copilot_commands(a.harness.resolve().parent.parent, h.name, src.commit)
     if overlay:
-        print("Work Copilot: give it the company overlay's work site, Jira project and room (one file feeds both; "
-              "`work-copilot doctor` then names it):")
-        for c in overlay:
-            print(f"  {c}")
+        if overlay.commands:
+            note = f" {overlay.note}" if overlay.note else ""
+            print(f"Work Copilot{note}: give it the company overlay's work site, knowledge space, Jira project and "
+                  "room (one file feeds both; its doctor then names it):")
+            for c in overlay.commands:
+                print(f"  {c}")
+            print(f"  {overlay.example}")
+        if overlay.problem:
+            print(f"  note: Work Copilot overlay: {overlay.problem}")
     m = read_manifest(base)
     changes = (any(x != "keep" for x, _ in p.files) or any(sp.settings is not None for sp in p.sfiles.values())
                or p.guide_import is not None or p.gitignore_add or m is None or m.get("channel") != src.channel)
