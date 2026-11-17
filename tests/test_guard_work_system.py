@@ -508,7 +508,8 @@ def _servers(h: str) -> list[dict]:
     import yaml
     servers = yaml.safe_load((ROOT / "bindings" / f"{h}.yaml").read_text())["mcp"]
     assert all("transport" in s for s in servers.values()), (h, "bindings declare every server's transport")
-    return [{"name": n, **{k: s[k] for k in ("transport", "endpoint") if k in s}} for n, s in sorted(servers.items())]
+    return [{"name": n, **{k: s[k] for k in ("transport", "endpoint") if k in s}} for n, s in sorted(servers.items())
+            if not s.get("local_only")]  # a laptop's own server (KAN-380) never reaches the lock
 
 
 def test_profiles_bind_roles_to_the_servers_their_locks_pin():
