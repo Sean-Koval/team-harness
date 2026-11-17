@@ -620,7 +620,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org or own_skills "
                       "(a removed or renamed skill?); python scripts/sync_shared.py deletes it", file=sys.stderr)
                 continue
-            where = src.relative_to(ROOT) if src.name == "org.yaml" else "shared/work-system/"
+            where = src.relative_to(ROOT).as_posix() if src.name == "org.yaml" else "shared/work-system/"
             print(f"error: {dst.relative_to(ROOT)} differs from the rendering of {src.relative_to(ROOT)} "
                   f"(edit {where}, then python scripts/sync_shared.py)", file=sys.stderr)
     elif not problems:
