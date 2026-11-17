@@ -985,7 +985,8 @@ def work_copilot_commands(repo: Path, harness: str, commit: str | None = None,
                 problem = f"the org overlay does not render yet: {str(e).splitlines()[0]}"
     except (OSError, ValueError, yaml.YAMLError, AttributeError, TypeError) as e:  # a malformed targets.yaml
         return OverlaySteps([], problem=f"cannot read the org overlay from shared/work-system/targets.yaml: {e}")
-    out = (out or Path.cwd() / "work-copilot-overlay.json").resolve()
+    # Never the current folder by default: install_local may run inside a company repository
+    out = (out or wco.default_out()).expanduser().resolve()
     script = repo.resolve() / "scripts" / "work_copilot_overlay.py"
     at = f" --at {commit}" if commit else ""
     q = lambda w: wco.quote(w, WINDOWS)  # noqa: E731
@@ -1313,6 +1314,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="project scope: the project directory")
     ap.add_argument("--channel", help="the channels.yaml channel to install (default stable; --check: the installed "
                                       "one); 'checkout' installs the checkout as it is")
+    ap.add_argument("--overlay-out", type=Path, metavar="FILE",
+                    help="where the printed Work Copilot overlay command writes its file (default: "
+                         "team-harness/work-copilot-overlay.json in your own config folder, never the current folder)")
     ap.add_argument("--allow-dirty", action="store_true",
                     help="install from a checkout with uncommitted changes in the harness (or not in git)")
     mode = ap.add_mutually_exclusive_group()
@@ -1452,7 +1456,7 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         print("Plugins: run these yourself:")
         for c in plugins:
             print(f"  {c}")
-    overlay = work_copilot_commands(a.harness.resolve().parent.parent, h.name, src.commit)
+    overlay = work_copilot_commands(a.harness.resolve().parent.parent, h.name, src.commit, a.overlay_out)
     if overlay:
         if overlay.commands:
             note = f" {overlay.note}" if overlay.note else ""

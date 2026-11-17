@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -314,3 +315,48 @@ def test_the_two_format_definitions_are_the_same():
     for field, pattern in wco.FORMATS.items():
         differ = [v for v in probes if bool(pattern.fullmatch(v)) != bool(wc._FIELDS[field].fullmatch(v))]
         assert not differ, f"{field}: Work Copilot and this script disagree on {differ[:5]!r}"
+
+
+def test_the_default_overlay_file_is_in_the_users_own_config_folder(tmp_path):
+    home = tmp_path / "home"
+    assert wco.default_out(home, {}, windows=False) == home / ".config/team-harness/work-copilot-overlay.json"
+    assert wco.default_out(home, {"XDG_CONFIG_HOME": str(tmp_path / "x")}, windows=False) == \
+        tmp_path / "x/team-harness/work-copilot-overlay.json"
+    assert wco.default_out(home, {"APPDATA": str(tmp_path / "ad")}, windows=True) == \
+        tmp_path / "ad/team-harness/work-copilot-overlay.json"
+    assert wco.default_out(home, {}, windows=True) == home / "AppData/Roaming/team-harness/work-copilot-overlay.json"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="runs the POSIX line; the Windows line is checked as text above")
+def test_the_printed_commands_never_write_into_the_current_folder_unless_asked(tmp_path, monkeypatch):
+    """install_local may run inside a company repository: by default the overlay goes to the user's config folder."""
+    work, cfg = tmp_path / "company-repo", tmp_path / "cfg"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
+    steps = il.work_copilot_commands(ROOT, "work-default")
+    want = cfg / "team-harness" / "work-copilot-overlay.json"
+    assert steps.commands[1].endswith(f"overlay apply {want}")
+    words = shlex.split(steps.commands[0])
+    assert words[0] == "python3"
+    r = subprocess.run([sys.executable, *words[1:]], cwd=work, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert list(work.iterdir()) == []  # nothing in the current folder
+    assert json.loads(want.read_text(encoding="utf-8"))["name"] == "example-co"
+    assert want.parent.stat().st_mode & 0o777 == 0o700  # a folder the script made is private
+
+    # the script alone, with no --out, prints and writes nothing
+    r = subprocess.run([sys.executable, str(ROOT / "scripts/work_copilot_overlay.py"), "--harness", "work-default"],
+                       cwd=work, capture_output=True, text=True)
+    assert r.returncode == 0 and json.loads(r.stdout)["name"] == "example-co" and list(work.iterdir()) == []
+
+
+def test_overlay_out_chooses_another_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    mine = tmp_path / "elsewhere" / "overlay.json"
+    rc = il.main([str(ROOT / "harnesses/work-default"), "--scope", "user", "--home", str(tmp_path / "home"),
+                  "--channel", "checkout", "--allow-dirty", "--overlay-out", str(mine)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert f"--out {mine}" in out and f"overlay apply {mine}" in out and str(tmp_path / "cfg") not in out
+    assert not mine.exists()  # install_local only prints the command

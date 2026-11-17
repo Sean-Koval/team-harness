@@ -214,6 +214,28 @@ def python(windows: bool | None = None) -> str:
     return "py -3" if _windows(windows) else "python3"
 
 
+def default_out(home: Path | None = None, env: dict[str, str] | None = None, windows: bool | None = None) -> Path:
+    """Where install_local has the overlay written unless told otherwise: the user's own config folder
+    (%APPDATA%\\team-harness on Windows, else $XDG_CONFIG_HOME or ~/.config, then team-harness), never the current
+    folder, which may be a company repository."""
+    home = home or Path.home()
+    env = os.environ if env is None else env
+    if _windows(windows):
+        base = Path(env["APPDATA"]) if env.get("APPDATA") else home / "AppData" / "Roaming"
+    else:
+        base = Path(env["XDG_CONFIG_HOME"]) if env.get("XDG_CONFIG_HOME") else home / ".config"
+    return base / "team-harness" / "work-copilot-overlay.json"
+
+
+def write(out: Path, text: str) -> Path:
+    """Write the overlay to `out`, creating its folder (private on POSIX) when missing; returns the absolute path."""
+    out = out.expanduser().resolve()  # absolute: Work Copilot's launcher changes to its own directory first
+    if not out.parent.exists():
+        out.parent.mkdir(parents=True, mode=0o700)
+    out.write_text(text, encoding="utf-8")
+    return out
+
+
 def apply_commands(out: Path, windows: bool | None = None) -> tuple[str, str]:
     """(the command to apply `out`, an example of it with Work Copilot's own launcher, which passes its arguments
     on to `python -m work_copilot`)."""
@@ -228,7 +250,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--harness", help="the harness whose org overlay to render (its org: in targets.yaml)")
     ap.add_argument("--org", help="an org directory, such as orgs/example-co (in place of the harness's org:)")
     ap.add_argument("--at", metavar="COMMIT", help="read targets.yaml, the profile and the org at this commit")
-    ap.add_argument("--out", type=Path, help="write the overlay here (default: print it)")
+    ap.add_argument("--out", type=Path, help="write the overlay here (default: print it and write nothing); "
+                                             "install_local suggests a file in your own config folder")
     a = ap.parse_args(argv)
     if not (a.harness or a.org):
         ap.error("give --harness or --org")
@@ -244,8 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     note = f" {PLACEHOLDER_NOTE}" if data["placeholder"] else ""
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if a.out:
-        out = a.out.resolve()  # absolute: Work Copilot's launcher changes to its own directory first
-        out.write_text(text, encoding="utf-8")
+        out = write(a.out, text)
         apply, example = apply_commands(out)
         print(f"wrote {out}{note}; now apply it:\n  {apply}\n  {example}")
     else:
