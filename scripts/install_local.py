@@ -892,7 +892,8 @@ def mcp_servers(h: Harness, skipped: list[str] | None = None) -> list[tuple[dict
     lock = [(m, False) for m in (h.lock.get("binding") or {}).get("mcp") or []]
     have = {m.get("name") for m, _ in lock}
     local = []
-    for m in local_servers(h.local_binding, skipped):
+    # getattr: doctor.py (KAN-372) passes only root, name and lock, and wants the lock's servers alone
+    for m in local_servers(getattr(h, "local_binding", None) or {}, skipped):
         if m["name"] in have:
             if skipped is not None:
                 skipped.append(f"{m['name']}: the lock binds a server of that name")
@@ -928,7 +929,7 @@ def mcp_commands(h: Harness, scope: str, local_only: bool = False, skipped: list
     sandbox included, would try to start it. So in project scope its line uses Claude Code's `local` scope (this
     machine, this project, kept in your own ~/.claude.json), run from the project."""
     add_scope = ("local" if scope == "project" else scope) if local_only else scope
-    binding = h.local_binding if local_only else h.binding
+    binding = (getattr(h, "local_binding", None) if local_only else getattr(h, "binding", None)) or {}
 
     # user and local scope: your shell fills $VAR when you run the command, so the value lands only in your own
     # ~/.claude.json; project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never
