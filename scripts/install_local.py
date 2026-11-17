@@ -837,6 +837,23 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
     return out
 
 
+def work_copilot_commands(repo: Path, harness: str) -> list[str]:
+    """Commands that render the harness's org overlay for Work Copilot and apply it (KAN-381); none without an org."""
+    import work_copilot_overlay as wco
+
+    try:
+        org = wco.org_for(repo, harness)
+    except (OSError, yaml.YAMLError):
+        return []
+    if not org:
+        return []
+    script = str(repo.resolve() / "scripts" / "work_copilot_overlay.py")
+    quote = (lambda w: subprocess.list2cmdline([w])) if WINDOWS else shlex.quote
+    python = "python" if WINDOWS else "python3"
+    return [f"{python} {quote(script)} --harness {harness} --out work-copilot-overlay.json",
+            "work-copilot overlay apply work-copilot-overlay.json"]
+
+
 def plugin_commands(h: Harness, scope: str) -> list[str]:
     out, seen = [], set()
     for c in h.lock.get("components") or []:
@@ -1216,6 +1233,12 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
     if plugins:
         print("Plugins: run these yourself:")
         for c in plugins:
+            print(f"  {c}")
+    overlay = work_copilot_commands(a.harness.resolve().parent.parent, h.name)
+    if overlay:
+        print("Work Copilot: give it the company overlay's work site, Jira project and room (one file feeds both; "
+              "`work-copilot doctor` then names it):")
+        for c in overlay:
             print(f"  {c}")
     m = read_manifest(base)
     changes = (any(x != "keep" for x, _ in p.files) or any(sp.settings is not None for sp in p.sfiles.values())
