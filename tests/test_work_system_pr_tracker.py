@@ -4,6 +4,7 @@ check.py sees a normalised issue only. Two fake providers with different field l
 a change to check.py; the jira-cloud provider keeps Jira's JSON on its side of the seam.
 """
 
+import http.client
 import importlib.util
 import inspect
 import json
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import urllib.error
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -36,7 +38,7 @@ class FakeA:
 
     label = "Tracker A"
     inputs = ("A_TOKEN",)
-    world: dict = {}
+    world: ClassVar[dict] = {}
 
     def __init__(self, config):
         assert config == {"A_TOKEN": "secret-a"}
@@ -59,7 +61,7 @@ class FakeB:
 
     label = "Tracker B"
     inputs = ("B_URL", "B_TOKEN")
-    rows: list = []
+    rows: ClassVar[list] = []
 
     def __init__(self, config):
         self.config = config
@@ -177,7 +179,7 @@ def test_a_provider_that_crashes_fails_the_check_without_a_traceback(tmp_path, m
 
 
 def test_an_unknown_provider_is_ignored_on_a_pr_without_a_ticket(tmp_path, monkeypatch, fakes):
-    rc, summary = run_main(tmp_path, monkeypatch, "KAN-315", {"TRACKER_PROVIDER": "nope"})
+    rc, _ = run_main(tmp_path, monkeypatch, "KAN-315", {"TRACKER_PROVIDER": "nope"})
     assert rc == 1  # with a ticket key, an unknown provider fails
     pr = {"number": 7, "title": "bump requests", "body": "", "head": {"ref": "x"}, "html_url": "u",
           "base": {"sha": "b" * 40}, "labels": [{"name": "no-ticket"}], "user": {"login": "sean"}}
@@ -278,6 +280,9 @@ def test_jira_cloud_errors():
     with pytest.raises(tracker.TrackerUnreachable):
         r.read("KAN-1")
     r, _ = provider({}, {"KAN-1": urllib.error.URLError("timed out")})
+    with pytest.raises(tracker.TrackerUnreachable):
+        r.read("KAN-1")
+    r, _ = provider({}, {"KAN-1": http.client.IncompleteRead(b"{")})  # the connection cut mid-answer
     with pytest.raises(tracker.TrackerUnreachable):
         r.read("KAN-1")
     r, _ = provider({"KAN-1": {"errorMessages": []}})

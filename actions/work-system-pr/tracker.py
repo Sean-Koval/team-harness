@@ -27,6 +27,7 @@ here stores a value. Reads only (GET).
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -133,7 +134,8 @@ class JiraCloud:
             data = self._get(f"{self.base}/rest/api/3/issue/{urllib.parse.quote(key)}?fields={fields}", self.auth)
         except urllib.error.HTTPError as e:
             raise TicketMissing(f"HTTP {e.code}") from None
-        except (urllib.error.URLError, OSError, ValueError) as e:  # ValueError: not JSON, such as an SSO login page
+        # ValueError: not JSON, such as an SSO login page; HTTPException: a connection cut mid-answer
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
             raise TrackerUnreachable(str(e)) from None
         if not isinstance(data, dict) or not isinstance(data.get("fields"), dict):
             raise TrackerUnreachable("the answer was not an issue")
@@ -184,7 +186,7 @@ class Reader:
             answer = self._provider.read(key)
         except (TicketMissing, TrackerUnreachable, BlockerUnreadable):
             raise
-        except Exception as e:  # a provider bug fails the check (BadAnswer), it never passes or crashes it
+        except Exception as e:  # noqa: BLE001 - a provider bug fails the check (BadAnswer), never passes it
             raise BadAnswer(f"the {self.name} provider failed: {type(e).__name__}: {e}") from None
         return normalised(answer, key)
 
