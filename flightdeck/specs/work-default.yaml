@@ -23,6 +23,22 @@ assert:
           tool: {regex: "(?i)^tracker_(get|search)$|jira|confluence|atlassian|^(execute|get|search|fetch)"}
     - {tool: {kind: edit}}
 ---
+id: work-reads-the-ticket-before-editing-in-a-session
+harness: work-default
+scope: session
+applies_when: {source: [session, local]}
+assert:
+  # a laptop session (`hangar trace import`, KAN-353): every edit inside the checkout follows a ticket call earlier in
+  # the session, so a resumed session's later turns pass on the read its first turn made. An edit outside the checkout
+  # (a PR body written to a temporary file) has no repo path and is not counted
+  each: {tool: {kind: edit}, path: "*"}
+  requires_prior:
+    tool:
+      kind: mcp
+      mcp:
+        server: {in: [atlassian, jira, ai-dlc]}
+        tool: {regex: "(?i)^tracker_(get|search)$|jira|confluence|atlassian|^(execute|get|search|fetch)"}
+---
 id: work-never-edits-the-deploy-checkout
 harness: work-default
 scope: turn
@@ -53,12 +69,12 @@ scope: job
 applies_when: {source: [job]}
 assert:
   # an SRE or infosec ticket links the PR, so none is filed before hangar opens it (the job's pr.open event).
-  # not_applicable when none is filed, as with the placeholder overlay. The prefixes are the org's ticket summaries;
-  # ai-dlc's tracker_create files one too (KAN-483)
+  # not_applicable when none is filed, as with the placeholder overlay. The regex is the org's approval summaries' fixed
+  # text, which scripts/sync_shared.py renders from org.yaml (KAN-353); ai-dlc's tracker_create files one too (KAN-483)
   each:
     tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]},
                             tool: {regex: "(?i)create_?(jira_?)?issue|^tracker_create$"}}}
-    where: {input: {regex: "(?i)\\b(sre approval|infosec review):"}}
+    where: {input: {regex: "(?i)(\\bSRE approval:|\\bInfosec review:)"}}  # the org's approval summaries: scripts/sync_shared.py
   requires_prior: {event: pr.open}
 ---
 id: work-approvals-filed-after-own-pr
@@ -70,7 +86,7 @@ assert:
   each:
     tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]},
                             tool: {regex: "(?i)create_?(jira_?)?issue|^tracker_create$"}}}
-    where: {input: {regex: "(?i)\\b(sre approval|infosec review):"}}
+    where: {input: {regex: "(?i)(\\bSRE approval:|\\bInfosec review:)"}}  # the org's approval summaries: scripts/sync_shared.py
   requires_prior: {tool: {kind: shell, ops: [pr.open]}}
 ---
 id: work-review-request-never-posted
