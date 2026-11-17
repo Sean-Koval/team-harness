@@ -500,15 +500,27 @@ def test_a_local_only_server_is_printed_after_the_lock_s_with_a_placeholder(tmp_
     var = "$env:WORK_COPILOT_DATA_DIR" if il.WINDOWS else "$WORK_COPILOT_DATA_DIR"
     assert (f'claude mcp add --scope user --transport stdio work-copilot --env "WORK_COPILOT_DATA_DIR={var}" '
             "-- work-copilot mcp") in local
+    # project scope: Claude Code's local scope, so the server never lands in the committed .mcp.json
     assert project(WORK, tmp_path / "p") == 0
-    assert "--env 'WORK_COPILOT_DATA_DIR=${WORK_COPILOT_DATA_DIR}' -- work-copilot mcp" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert (f'claude mcp add --scope local --transport stdio work-copilot --env "WORK_COPILOT_DATA_DIR={var}" '
+            "-- work-copilot mcp") in out
+    assert "--scope project --transport stdio work-copilot" not in out and "${WORK_COPILOT_DATA_DIR}" not in out
     assert project(SUITE, tmp_path / "s") == 0
     assert "this machine only" not in capsys.readouterr().out  # suite-default binds none
 
 
+def test_a_stable_install_prints_the_checkout_s_local_only_servers(tmp_path, capsys):
+    """No lock pins a local_only server, so a channel installed from git history (stable) still prints the
+    checkout's: its lock servers come from that commit's bindings, Work Copilot from the checkout's."""
+    assert user(WORK, tmp_path, "--channel", "stable") == 0
+    out = capsys.readouterr().out
+    assert "--transport stdio work-copilot" in out.partition("MCP servers for this machine only")[2]
+
+
 def _check_report(out: str) -> dict[str, str]:
     lines = out.splitlines()
-    i = next(n for n, ln in enumerate(lines) if ln.startswith("MCP servers in "))
+    i = next(n for n, ln in enumerate(lines) if ln.startswith("MCP servers (reported"))
     return {ln.strip().split(" ", 1)[0]: ln.strip() for ln in lines[i + 1:] if ln.startswith("  ")}
 
 
@@ -540,19 +552,26 @@ def test_check_reports_each_mcp_server_without_counting_it_as_drift(tmp_path, ca
         "type": "stdio", "command": "work-copilot", "args": ["mcp"], "env": {"WORK_COPILOT_DATA_DIR": ""}}}}))
     assert user(WORK, home, "--check") == 0
     report = _check_report(capsys.readouterr().out)
-    assert report["work-copilot"].startswith("work-copilot (stdio, this machine only): added; work-copilot at ")
+    added = f"work-copilot (stdio, this machine only): added in {home / '.claude.json'}; work-copilot at "
+    assert report["work-copilot"].startswith(added)
     assert "not added" in report["github"]
 
 
-def test_check_reads_project_scope_servers_from_mcp_json(tmp_path, capsys):
-    target = tmp_path / "svc"
-    assert project(WORK, target, "--apply") == 0
-    (target / ".mcp.json").write_text(json.dumps({"mcpServers": {"work-copilot": {"command": "work-copilot"}}}))
+def test_check_reads_project_servers_from_mcp_json_and_local_ones_from_the_project_s_entry(tmp_path, capsys):
+    """Project scope: the lock's servers are in the project's .mcp.json; a laptop-only one, added with --scope local,
+    in the project's entry of ~/.claude.json, never in .mcp.json."""
+    target, home = tmp_path / "svc", tmp_path / "home"
+    home.mkdir()
+    assert project(WORK, target, "--apply", "--home", home) == 0
+    (target / ".mcp.json").write_text(json.dumps({"mcpServers": {"github": {"type": "http"}}}))
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"atlassian": {}}, "projects": {
+        target.resolve().as_posix(): {"mcpServers": {"work-copilot": {"command": "work-copilot"}}}}}))
     capsys.readouterr()
-    assert project(WORK, target, "--check") == 0
-    out = capsys.readouterr().out
-    assert f"MCP servers in {target / '.mcp.json'} " in out
-    assert ": added" in _check_report(out)["work-copilot"]
+    assert project(WORK, target, "--check", "--home", home) == 0
+    report = _check_report(capsys.readouterr().out)
+    assert f"added in {target / '.mcp.json'}" in report["github"]
+    assert "not added" in report["atlassian"]  # user scope doesn't count for a project-scope install
+    assert f"added in {home / '.claude.json'} (project {target.resolve()})" in report["work-copilot"]
 
 
 def test_mcp_and_plugins_are_never_written(tmp_path):

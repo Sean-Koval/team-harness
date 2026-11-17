@@ -73,6 +73,7 @@ HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:@+=-]+$")  # a command or an arg: one word, no quoting or spaces
 WHOLE_REF = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+MACHINE_PATH = re.compile(r"(?:^|=)(?:/|~|[A-Za-z]:)")  # an absolute or home path, alone or after `--flag=`
 SECRET_WORD = re.compile(r"(?i)token|secret|passw|bearer|basic |authorization|api_?key|\$\{")
 
 
@@ -106,6 +107,11 @@ def _shape_problems(name: str, s: dict[str, Any]) -> list[str]:
                                            for key in ("headers", "env") if isinstance(s.get(key), dict)
                                            for v in s[key].values()):
         out.append(f"mcp.{name}: a local_only server's headers and env are each one `${{VAR}}`, set per machine")
+    if s.get("local_only") is True and s.get("transport") == "stdio" and any(
+            isinstance(w, str) and MACHINE_PATH.search(w)
+            for w in [s.get("command"), *(s["args"] if isinstance(s.get("args"), list) else [])]):
+        out.append(f"mcp.{name}: a local_only server's command and args name no machine path (a command on PATH; a "
+                   "directory goes in env as a `${VAR}`)")
     if s.get("transport") == "stdio":
         words = [s.get("command")] + (s["args"] if isinstance(s.get("args"), list) else [None])
         if "args" in s and not isinstance(s["args"], list):

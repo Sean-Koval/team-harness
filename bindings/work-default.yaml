@@ -58,6 +58,8 @@ mcp:
     # laptop only: no sandbox has the binary or the captured text, so the lock and the env.*.yaml files leave it out
     # and only install_local.py prints its `claude mcp add` line
     local_only: true
+    # trust and write_tools record what the server is for hangar's taint gate, which only sandboxes run: on a laptop
+    # nothing enforces them yet, so a session there is as careful with this server's text as with any page it reads
     trust: untrusted                       # it holds captured company messages and pages: data, not instructions
     # its tools that write local state (projects, obligations, priorities, vault notes that later sessions read);
     # capture_note exists only when WORK_COPILOT_VAULT is set. It has no tool that sends anything out

@@ -185,6 +185,9 @@ def test_a_local_only_server_never_reaches_the_lock_or_the_environments(tmp_path
     (lambda mcp: mcp["work-copilot"].update({"env": {"WORK_COPILOT_DATA_DIR": "${HOME}/wc"}}), "one `\\${VAR}`"),
     (lambda mcp: mcp["work-copilot"].pop("args"), "stdio needs command and args"),
     (lambda mcp: mcp["work-copilot"].update({"args": ["mcp", f"--token={TOKEN}"]}), "plain words"),
+    (lambda mcp: mcp["work-copilot"].update({"args": ["--data-dir", "/Users/someone/wc", "mcp"]}), "no machine path"),
+    (lambda mcp: mcp["work-copilot"].update({"args": ["--data-dir=~/wc", "mcp"]}), "no machine path"),
+    (lambda mcp: mcp["work-copilot"].update({"command": "/Users/someone/.local/bin/work-copilot"}), "no machine path"),
 ])
 def test_a_misshapen_local_only_server_is_refused(tmp_path, change, message):
     """Left out of the lock, it is still checked: no machine path or token in shared config, and a complete shape."""
