@@ -13,6 +13,8 @@ channel, the guide imported, the repository's own test and check commands allowe
 Each check prints one line, `ok`, `fix` or `skip`, and every `fix` carries the exact command or edit that fixes it.
 It reads and runs read-only commands only: it installs, adds, signs in and writes nothing. No credential value is
 printed: a credential variable is reported as set or unset, and `--live` sends it only to the server it is for.
+`--live` is the exception to writing nothing: its one `claude -p` call is a real session, so it writes a transcript
+and runs the harness's session hooks.
 
 Without `--scope` it looks for an install in `<target>/.claude` (project scope), then `<home>/.claude` (user scope).
 `--skip ID` leaves a check out (`--skip capture` on a laptop without flightdeck); skipped checks still print.
@@ -26,7 +28,7 @@ Exit codes: 0 nothing to fix, 1 something to fix, 2 bad input. Needs Python 3.10
 from __future__ import annotations
 
 import argparse
-import fnmatch
+import http.client
 import json
 import os
 import re
@@ -54,9 +56,15 @@ ORG_PLACEHOLDERS = ("COMPANY-SITE", "COMPANY-SPACE", "WORKPROJ", "SREPROJ", "SEC
 # `claude mcp list`: `name: <url or command> (HTTP) - ✓ Connected` (or `× Failed to connect — why`, `! Needs ...`)
 MCP_LINE = re.compile(r"^(?P<name>[^\s:][^:]*): (?P<target>.*?)(?: \((?P<kind>HTTP|SSE|stdio)\))? - (?P<status>.+)$")
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")  # a compound command's parts, each allowed on its own
+TOML_LINE = re.compile(r'^[\w.-]+\s*=\s*"((?:[^"\\]|\\.)*)"\s*(#.*)?$')  # `name = "command"`, for Python 3.10
+OPERATORS = {"&&", "||", ";", "|", "&", ";;", "|&"}  # a compound command's parts are each allowed on their own
+# Where an admin's managed settings live (they override every other settings file).
+MANAGED_SETTINGS = {
+    "darwin": Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+    "win32": Path(r"C:\Program Files\ClaudeCode\managed-settings.json"),
+}.get(sys.platform, Path("/etc/claude-code/managed-settings.json"))
 
-Runner = Callable[[list[str], float], "tuple[int | None, str]"]
+Runner = Callable[..., "tuple[int | None, str]"]  # (argv, timeout, cwd=None) -> (exit code or None, output)
 
 
 @dataclass
@@ -67,13 +75,15 @@ class Check:
     fix: str = ""
 
 
-def run_cmd(argv: list[str], timeout: float = 60) -> tuple[int | None, str]:
+def run_cmd(argv: list[str], timeout: float = 60, cwd: Path | None = None) -> tuple[int | None, str]:
     """(exit code, stdout and stderr), or (None, why) when the program can't start. A Windows `claude.cmd` is found
-    through PATHEXT, which subprocess alone doesn't do."""
+    through PATHEXT, which subprocess alone doesn't do. `cwd` matters for `claude`: project-scope servers in
+    `.mcp.json` are listed only from inside the project."""
     exe = shutil.which(argv[0]) or argv[0]
     try:
         r = subprocess.run([exe, *argv[1:]], capture_output=True, text=True, timeout=timeout, check=False,  # noqa: S603
-                           encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+                           encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                           cwd=str(cwd) if cwd else None)
     except FileNotFoundError:
         return None, f"{argv[0]} not found on PATH"
     except subprocess.TimeoutExpired:
@@ -103,6 +113,16 @@ class Ctx:
     exact_runtime: bool = False
     github_host: str = "github.com"
     test_cmds: tuple[str, ...] = ()
+    managed: Path = MANAGED_SETTINGS
+    hook_problems: list[str] | None = None  # what the install check's probe found, so hooks are probed once
+
+    @property
+    def py(self) -> str:
+        return "py -3" if WINDOWS else "python3"
+
+    def script(self, name: str) -> str:
+        """The command that runs one of team-harness's scripts from anywhere (the doctor runs in the project)."""
+        return f"{self.py} {_q(self.repo / 'scripts' / name)}"
 
     @property
     def repo(self) -> Path:
@@ -112,11 +132,11 @@ class Ctx:
     def name(self) -> str:
         return str(self.lock["name"])
 
-    def install_cmd(self) -> str:
-        where = f" --target {_q(self.target)}" if (self.scope or "project") == "project" else ""
-        py = "py -3" if WINDOWS else "python3"
-        return (f"{py} scripts/install_local.py harnesses/{self.name} --scope {self.scope or 'project'}{where} "
-                "--apply")
+    def install_cmd(self, harness: str | None = None, scope: str | None = None, action: str = "--apply") -> str:
+        scope = scope or self.scope or "project"
+        where = f" --target {_q(self.target)}" if scope == "project" else ""
+        return (f"{self.script('install_local.py')} {_q(self.repo / 'harnesses' / (harness or self.name))} "
+                f"--scope {scope}{where} {action}")
 
 
 def _q(p: Path | str) -> str:
@@ -124,7 +144,7 @@ def _q(p: Path | str) -> str:
 
 
 def _not_installed(c: Ctx, check_id: str) -> Check:
-    return Check(check_id, SKIP, f"{c.name} is not installed yet", c.install_cmd())
+    return Check(check_id, SKIP, f"{c.name} is not installed yet (the install line says how)")
 
 
 # --- the checks, in the order they print --------------------------------------------------------------------------
@@ -154,7 +174,8 @@ def check_model(c: Ctx) -> list[Check]:
         return [Check("model", SKIP, "the lock names no model")]
     if not c.live:
         return [Check("model", SKIP, f"the lock's model is {model}; not asked (one model call)", "rerun with --live")]
-    rc, out = c.run(["claude", "-p", "--model", model, "--max-turns", "1", "Reply with the single word: ok"], 180)
+    rc, out = c.run(["claude", "-p", "--model", model, "--max-turns", "1", "Reply with the single word: ok"], 180,
+                    cwd=c.target)
     if rc == 0:
         return [Check("model", OK, f"{model} answered")]
     return [Check("model", FIX, f"{model} did not answer ({out.strip()[:160] or f'exit {rc}'})",
@@ -188,10 +209,12 @@ def check_install(c: Ctx) -> list[Check]:
         return [Check("install", FIX, f"no team-harness install in {where}", c.install_cmd())]
     if c.manifest.get("harness") != c.name:
         return [Check("install", FIX, f"{c.base} has {c.manifest.get('harness')} installed, not {c.name}",
-                      f"uninstall it first (install_local.py harnesses/{c.manifest.get('harness')} --scope {c.scope} "
-                      "--uninstall), then " + c.install_cmd())]
-    drift = [d for d in il.check(None, None, None, c.base)
-             if not d.startswith(("hook did not run", "guard's block", "hook sees no"))]
+                      f"{c.install_cmd(str(c.manifest.get('harness')), action='--uninstall')}, then "
+                      + c.install_cmd())]
+    hook_msgs = ("hook did not run", "guard's block", "hook sees no")
+    found = il.check(None, None, None, c.base)
+    c.hook_problems = [d for d in found if d.startswith(hook_msgs)]
+    drift = [d for d in found if not d.startswith(hook_msgs)]
     if drift:
         return [Check("install", FIX, f"the install drifted: {'; '.join(drift[:3])}"
                                       + (f" (+{len(drift) - 3} more)" if len(drift) > 3 else ""), c.install_cmd())]
@@ -208,7 +231,7 @@ def check_hooks(c: Ctx) -> list[Check]:
     hooks = [r for r in entries if r.get("section") == "hooks"]
     if not hooks:
         return [Check("hooks", SKIP, "the harness installs no hooks")]
-    dead = il.probe_hooks(c.base, c.scope or "user", entries)
+    dead = c.hook_problems if c.hook_problems is not None else il.probe_hooks(c.base, c.scope or "user", entries)
     if dead:
         return [Check("hooks", FIX, "; ".join(dead[:2]),
                       "fix the interpreter (the python check above) or the hook path, then " + c.install_cmd())]
@@ -235,7 +258,7 @@ def check_channel(c: Ctx) -> list[Check]:
 
 def check_checkout(c: Ctx) -> list[Check]:
     paths = [f"harnesses/{c.name}", "channels.yaml", f"bindings/{c.name}.yaml"]
-    rc, out = c.run(["git", "-C", str(c.repo), "status", "--porcelain", "--", *paths], 30)
+    rc, out = c.run(["git", "--no-optional-locks", "-C", str(c.repo), "status", "--porcelain", "--", *paths], 30)
     if rc is None or (rc != 0 and "not a git repository" in out):
         return [Check("checkout", SKIP, f"{c.repo} is not a git checkout")]
     if rc != 0:
@@ -262,8 +285,7 @@ def check_one_harness(c: Ctx) -> list[Check]:
         h = m.get("harness")
         return [Check("one-harness", FIX, f"{h} is also installed in {other_scope} scope ({other}); its hooks and "
                                           f"rules mix with {c.name}'s",
-                      f"python3 scripts/install_local.py harnesses/{h} --scope {other_scope}"
-                      + (f" --target {_q(c.target)}" if other_scope == "project" else "") + " --uninstall")]
+                      c.install_cmd(str(h), other_scope, "--uninstall"))]
     return [Check("one-harness", OK, f"no other harness in {other_scope} scope")]
 
 
@@ -282,16 +304,18 @@ def check_guide(c: Ctx) -> list[Check]:
         out.append(Check("guide", SKIP, "the harness has no guide"))
     s = c.base / il.SETTINGS
     if s.is_symlink():
+        real = s.resolve()
+        how = (f"Remove-Item {_q(s)}; Copy-Item {_q(real)} {_q(s)}" if WINDOWS
+               else f"rm {_q(s)} && cp {_q(real)} {_q(s)}")
         out.append(Check("settings", FIX, f"{s} is a symlink, so another tool can swap the deny rules and hooks",
-                         f"replace it with a copy of its target: {'Copy-Item' if WINDOWS else 'cp'} "
-                         f"{_q(s.resolve())} {_q(s)} after removing the link"))
+                         f"replace it with a copy of its target: {how}"))
     else:
         out.append(Check("settings", OK, f"{s.name} is a real file" if s.exists() else f"no {s.name} yet"))
     return out
 
 
 def _mcp_list(c: Ctx) -> tuple[dict[str, dict[str, str]] | None, str]:
-    rc, out = c.run(["claude", "mcp", "list"], 120)
+    rc, out = c.run(["claude", "mcp", "list"], 120, cwd=c.target)
     if rc is None:
         return None, out
     servers = {}
@@ -307,17 +331,31 @@ def _binding(c: Ctx) -> dict[str, Any]:
     return (yaml.safe_load(f.read_text(encoding="utf-8")) or {}) if f.is_file() else {}
 
 
+def _shown(target: str) -> str:
+    """A server's URL or command as printed, with any query string cut (it may carry a token)."""
+    return re.sub(r"\?\S*", "?…", target)
+
+
+def _same_target(m: dict[str, Any], got: str) -> bool:
+    if m.get("transport") in ("http", "sse"):
+        return got.rstrip("/") == str(m.get("endpoint") or "").rstrip("/")
+    want = " ".join([str(m.get("command") or ""), *map(str, m.get("args") or [])])
+    return got.split() == want.split()
+
+
 def check_mcp(c: Ctx) -> list[Check]:
     servers_wanted = (c.lock.get("binding") or {}).get("mcp") or []
     if not servers_wanted:
         return [Check("mcp", SKIP, "the lock binds no MCP server")]
     have, raw = _mcp_list(c)
-    adds = il.mcp_commands(SimpleNamespace(root=c.harness, name=c.name, lock=c.lock), c.scope or "project")
+    scope = c.scope or "project"
+    adds = il.mcp_commands(SimpleNamespace(root=c.harness, name=c.name, lock=c.lock), scope)
     binding = _binding(c)
     out = []
     for i, m in enumerate(servers_wanted):
         name, cid = m["name"], f"mcp:{m['name']}"
         add = adds[i] if i < len(adds) else f"claude mcp add {name} ..."
+        readd = f"claude mcp remove {name} --scope {scope}; then {add}"
         if have is None:
             out.append(Check(cid, SKIP, f"can't list MCP servers ({raw.strip()[:100]})", "fix the claude check first"))
             continue
@@ -325,10 +363,15 @@ def check_mcp(c: Ctx) -> list[Check]:
         if not got:
             out.append(Check(cid, FIX, f"{name} is not added", add))
             continue
-        want_target = m.get("endpoint") if m.get("transport") == "http" else m.get("command")
-        if want_target and want_target not in got["target"]:
-            out.append(Check(cid, FIX, f"{name} points at {got['target']}, the lock binds {want_target}",
-                             f"claude mcp remove {name}; then {add}"))
+        want_kind = str(m.get("transport") or "stdio").lower()
+        got_kind = (got["kind"] or "stdio").lower()
+        if got_kind != want_kind:
+            out.append(Check(cid, FIX, f"{name} is added over {got_kind}, the lock binds {want_kind}", readd))
+            continue
+        if not _same_target(m, got["target"]):
+            want = m.get("endpoint") if want_kind in ("http", "sse") else \
+                " ".join([str(m.get("command") or ""), *map(str, m.get("args") or [])])
+            out.append(Check(cid, FIX, f"{name} points at {_shown(got['target'])}, the lock binds {want}", readd))
             continue
         variables = [il._var(name, h, binding) for h in m.get("header_names") or []] + list(m.get("env_names") or [])
         unset = [v for v in variables if not c.env.get(v)]
@@ -337,16 +380,16 @@ def check_mcp(c: Ctx) -> list[Check]:
             out.append(Check(cid, FIX, f"{name} needs you to sign in",
                              f"in Claude Code, run /mcp, pick {name} and sign in (a remote server may use OAuth "
                              "rather than a header token)"))
-        elif "connected" not in status.lower() or "fail" in status.lower():
+        elif not re.match(r"^[✓✔]\s*Connected\b", status):
             why = re.sub(r"^\W+", "", status)[:140]
             hint = f"set {', '.join(unset)} from your secret manager and restart Claude Code" if unset and \
-                c.scope == "project" else "check the credential and the network, then `claude mcp list` again"
+                scope == "project" else "check the credential and the network, then `claude mcp list` again"
             out.append(Check(cid, FIX, f"{name} doesn't answer ({why})", hint))
-        elif c.live and m.get("transport") == "http" and m.get("header_names"):
+        elif c.live and want_kind == "http" and m.get("header_names"):
             var = il._var(name, m["header_names"][0], binding)
             if not c.env.get(var):
-                out.append(Check(cid, OK, f"{name} connected; tools/list not sent ({var} unset here, the server "
-                                          "has its own copy)"))
+                out.append(Check(cid, SKIP, f"{name} connected; tools/list not sent ({var} is unset here, the server "
+                                            "has its own copy)", f"set {var} in this shell to send it"))
             else:
                 n, err = tools_list(m["endpoint"], m["header_names"][0], c.env[var])
                 out.append(Check(cid, OK, f"{name} connected; tools/list returned {n} tools") if err is None else
@@ -354,18 +397,19 @@ def check_mcp(c: Ctx) -> list[Check]:
                                                                                "as `Bearer <token>`)"))
         else:
             vs = f"; {', '.join(variables)} {'set' if not unset else 'unset here'}" if variables else ""
-            out.append(Check(cid, OK, f"{name} connected ({got['kind'] or m.get('transport')}){vs}"))
+            live = " (tools/list goes only to header-token HTTP servers)" if c.live else ""
+            out.append(Check(cid, OK, f"{name} connected ({got_kind}){vs}{live}"))
     return out
 
 
 def tools_list(endpoint: str, header: str, value: str, timeout: float = 30) -> tuple[int, str | None]:
     """One MCP streamable-HTTP handshake and tools/list. (tool count, None) or (0, why); the value is sent only to
     endpoint and never shown."""
-    session: dict[str, str] = {}
+    session: dict[str, str] = {"MCP-Protocol-Version": "2025-06-18"}
 
     def post(body: dict[str, Any]) -> Any:
         h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", header: value,
-             "MCP-Protocol-Version": "2025-06-18", **session}
+             **session}
         req = urllib.request.Request(endpoint, data=json.dumps(body).encode(), headers=h, method="POST")  # noqa: S310
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
             if r.headers.get("Mcp-Session-Id"):
@@ -380,18 +424,36 @@ def tools_list(endpoint: str, header: str, value: str, timeout: float = 30) -> t
         init = post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                      "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                                 "clientInfo": {"name": "team-harness-doctor", "version": "1"}}})
-        if not isinstance(init, dict) or "result" not in init:
-            return 0, f"initialize returned no result ({(init or {}).get('error', {}).get('message', 'empty')})"
+        if not isinstance(init, dict) or not isinstance(init.get("result"), dict):
+            err = init.get("error") if isinstance(init, dict) else None
+            why = err.get("message", "empty") if isinstance(err, dict) else "empty"
+            return 0, f"initialize returned no result ({why})"
+        if isinstance(init["result"].get("protocolVersion"), str):
+            session["MCP-Protocol-Version"] = init["result"]["protocolVersion"]  # the version the server chose
         post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         res = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     except urllib.error.HTTPError as e:
         return 0, f"HTTP {e.code}" + (" (the credential was refused)" if e.code in (401, 403) else "")
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
         return 0, str(getattr(e, "reason", e))[:120]
-    tools = ((res or {}).get("result") or {}).get("tools") if isinstance(res, dict) else None
+    tools = (res.get("result") or {}).get("tools") if isinstance(res, dict) else None
     if not isinstance(tools, list):
         return 0, "tools/list returned no tool list"
     return len(tools), None
+
+
+def _gh_accounts(out: str) -> list[dict[str, Any]]:
+    """`gh auth status` as one entry per signed-in account: login, active, scopes (None when not listed)."""
+    accounts: list[dict[str, Any]] = []
+    for line in out.splitlines():
+        m = re.search(r"Logged in to \S+ (?:account|as) (\S+)", line)
+        if m:
+            accounts.append({"login": m[1], "active": None, "scopes": None})
+        elif accounts and re.search(r"Active account:\s*(true|false)", line, re.I):
+            accounts[-1]["active"] = "true" in line.lower()
+        elif accounts and "scopes" in line.lower():
+            accounts[-1]["scopes"] = set(re.findall(r"'([a-z:_]+)'", line))
+    return accounts
 
 
 def check_gh(c: Ctx) -> list[Check]:
@@ -403,38 +465,65 @@ def check_gh(c: Ctx) -> list[Check]:
                       "install gh (https://cli.github.com, or your company's software portal), then " + login)]
     if rc != 0:
         return [Check("gh", FIX, f"gh is not signed in to {host}", login)]
-    scopes = set(re.findall(r"'([a-z:_]+)'", "".join(ln for ln in out.splitlines() if "scopes" in ln.lower())))
-    if scopes and "repo" not in scopes:
-        return [Check("gh", FIX, f"gh is signed in to {host} without repo scope ({', '.join(sorted(scopes))})",
+    accounts = _gh_accounts(out)
+    active = [a for a in accounts if a["active"]] or accounts[:1]
+    if not active:
+        return [Check("gh", SKIP, f"gh is signed in to {host}, but its account couldn't be read from `gh auth status`")]
+    acct = active[0]
+    scopes = acct["scopes"]
+    if scopes is None:
+        return [Check("gh", SKIP, f"gh is signed in to {host} as {acct['login']}; its token lists no scopes (a "
+                                  "fine-grained or app token), so repo access isn't confirmed",
+                      f"if pushes fail: {login}")]
+    if "repo" not in scopes:
+        return [Check("gh", FIX, f"gh is signed in to {host} as {acct['login']} without repo scope "
+                                 f"({', '.join(sorted(scopes)) or 'no scopes'})",
                       f"gh auth refresh --hostname {host} --scopes repo")]
-    note = "with repo scope" if scopes else "(a fine-grained or app token: scopes not listed)"
-    return [Check("gh", OK, f"gh is signed in to {host} {note}")]
+    return [Check("gh", OK, f"gh is signed in to {host} as {acct['login']} with repo scope")]
+
+
+def _org_of(c: Ctx) -> tuple[str | None, dict | None]:
+    """The org overlay targets.yaml gives this harness, and its org.yaml (None when unreadable)."""
+    targets = c.repo / "shared" / "work-system" / "targets.yaml"
+    if not targets.is_file():
+        return None, None
+    entry = ((yaml.safe_load(targets.read_text(encoding="utf-8")) or {}).get("harnesses") or {}).get(c.name) or {}
+    rel = entry.get("org") if isinstance(entry, dict) else None
+    if not rel:
+        return None, None
+    f = c.repo / rel / "org.yaml"
+    return rel, (yaml.safe_load(f.read_text(encoding="utf-8")) if f.is_file() else None)
 
 
 def check_org(c: Ctx) -> list[Check]:
     if not c.manifest:
         return [_not_installed(c, "org")]
     files = c.manifest.get("files") or {}
-    org_skills = [r for r in files if r.startswith(("skills/release-approvals/", "skills/org-process/"))]
-    if not org_skills:
+    rel, org = _org_of(c)
+    if not rel and not any(r.startswith(("skills/release-approvals/", "skills/org-process/")) for r in files):
         return [Check("org", SKIP, f"{c.name} takes no org overlay")]
-    found: dict[str, set[str]] = {}
-    for rel in org_skills:
-        f = c.base / rel
+    found: set[str] = set()
+    for f_rel in files:
+        if not f_rel.startswith("skills/"):
+            continue
         try:
-            text = f.read_text(encoding="utf-8")
+            text = (c.base / f_rel).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for p in ORG_PLACEHOLDERS:
-            if p in text:
-                found.setdefault(p, set()).add(rel.split("/")[1])
+        found |= {p for p in ORG_PLACEHOLDERS if p in text}
+    fix = ("add your company's org in its private fork (orgs/README.md, 'Add your company's org'), point "
+           f"{c.name} at it in shared/work-system/targets.yaml and merge; once main has built it, "
+           f"{c.install_cmd()} --channel candidate (or stable, after a promotion)")
+    if isinstance(org, dict) and org.get("placeholder") is True:
+        return [Check("org", FIX, f"the company's org overlay is not applied: {c.name} uses {rel}, which is marked "
+                                  "placeholder: true", fix)]
     if found:
-        what = ", ".join(sorted(p for p in found if p.isupper() or "-" in p)) or "the placeholder org"
-        return [Check("org", FIX, f"the company's org overlay is not applied: the installed skills still hold {what}",
-                      "add your company's org on the work laptop (orgs/README.md, 'Add your company's org'), point "
-                      f"{c.name} at it in shared/work-system/targets.yaml, build, then {c.install_cmd()} "
-                      "--channel checkout")]
-    return [Check("org", OK, "the company's org overlay is applied (no placeholder left in the installed skills)")]
+        what = ", ".join(sorted(p for p in found if p.isupper() or "-" in p)) or "the placeholder org's status"
+        return [Check("org", FIX, f"the installed skills still hold the placeholder org's values ({what})",
+                      fix if not rel or "example-co" in rel else
+                      f"rebuild with your org, then {c.install_cmd()} --channel candidate")]
+    return [Check("org", OK, f"the company's org overlay is applied ({rel or 'org-process'}; no placeholder left "
+                             "in the installed skills)")]
 
 
 def _commands_from_toml(project: Path) -> tuple[list[str], str | None]:
@@ -442,47 +531,115 @@ def _commands_from_toml(project: Path) -> tuple[list[str], str | None]:
     if not f.is_file():
         return [], None
     try:
-        import tomllib
-    except ImportError:  # Python 3.10
-        return [], f"{f.name} not read: Python 3.11+ reads TOML"
+        text = f.read_text(encoding="utf-8")
+    except OSError as e:
+        return [], f"{f.name}: {e.strerror or e}"
     try:
-        cmds = (tomllib.loads(f.read_text(encoding="utf-8")).get("checks") or {}).get("commands") or {}
-    except (OSError, ValueError) as e:
+        import tomllib
+    except ImportError:  # Python 3.10: read only `name = "command"` lines of [checks.commands]
+        section, cmds = "", []
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                section = line.strip("[] ")
+            elif section == "checks.commands" and (m := TOML_LINE.match(line)):
+                cmds.append(m[1].replace('\\"', '"').replace("\\\\", "\\"))
+        return cmds, None
+    try:
+        cmds = (tomllib.loads(text).get("checks") or {}).get("commands") or {}
+    except ValueError as e:
         return [], f"{f.name}: {e}"
     return [str(v) for v in cmds.values() if isinstance(v, str)], None
 
 
-def _rules(c: Ctx) -> tuple[list[str], list[str], bool]:
-    allow, deny, bypass = [], [], False
-    dirs = [c.home / ".claude", c.target / ".claude"]
-    for d in dict.fromkeys(dirs):
+@dataclass
+class Rules:
+    allow: list[str]
+    ask: list[str]
+    deny: list[str]
+    bypass: bool
+    managed_only: bool  # allowManagedPermissionRulesOnly: only the admin's allow rules count
+
+
+def _rules(c: Ctx) -> Rules:
+    """The permission rules that apply here: the admin's managed settings, then user and project settings."""
+    managed: dict = {}
+    if c.managed.is_file():
+        managed = json.loads(c.managed.read_text(encoding="utf-8")) or {}
+    layers = [managed]
+    for d in dict.fromkeys([c.home / ".claude", c.target / ".claude"]):
         for name in (il.SETTINGS, il.SETTINGS_LOCAL):
             try:
-                s = il._read_settings(d, name) or {}
+                layers.append(il._read_settings(d, name) or {})
             except il.Refused:
                 continue
-            p = s.get("permissions") or {}
-            allow += [r for r in p.get("allow") or [] if isinstance(r, str)]
-            deny += [r for r in p.get("deny") or [] if isinstance(r, str)]
-            bypass |= p.get("defaultMode") == "bypassPermissions"
-    return allow, deny, bypass
+    managed_only = managed.get("allowManagedPermissionRulesOnly") is True
+    r = Rules([], [], [], False, managed_only)
+    for i, s in enumerate(layers):
+        p = s.get("permissions") or {}
+        if not (managed_only and i > 0):  # with managed rules only, user and project rules don't allow or ask
+            r.allow += [x for x in p.get("allow") or [] if isinstance(x, str)]
+            r.ask += [x for x in p.get("ask") or [] if isinstance(x, str)]
+            r.bypass |= p.get("defaultMode") == "bypassPermissions"
+        r.deny += [x for x in p.get("deny") or [] if isinstance(x, str)]
+    if "disable" in (managed.get("disableBypassPermissionsMode"),
+                     (managed.get("permissions") or {}).get("disableBypassPermissionsMode")):
+        r.bypass = False
+    return r
 
 
-def rule_matches(rule: str, command: str) -> bool:
-    """Whether a Bash (or, on Windows, PowerShell) permission rule covers one simple command, as Claude Code reads
-    it: `Bash` or `Bash(*)` is every command, `Bash(npm test:*)` a prefix on a word boundary, `*` a wildcard."""
+def shell_tool(env: dict[str, str]) -> str:
+    """The tool the agent's commands go through: Bash, or on Windows without Git Bash, PowerShell."""
+    if not WINDOWS:
+        return "Bash"
+    git_bash = env.get("CLAUDE_CODE_GIT_BASH_PATH") or r"C:\Program Files\Git\bin\bash.exe"
+    return "Bash" if Path(git_bash).is_file() else "PowerShell"
+
+
+def _wild(pat: str, command: str) -> bool:
+    """Claude Code's `*` is the only wildcard: `?` and `[` are literal."""
+    return re.fullmatch(".*".join(re.escape(x) for x in pat.split("*")), command, re.S) is not None
+
+
+def rule_matches(rule: str, command: str, tool: str = "Bash") -> bool:
+    """Whether a shell permission rule covers one simple command, as Claude Code reads it: `Bash` or `Bash(*)` is
+    every command, `Bash(npm test:*)` or `Bash(npm test *)` a prefix on a word boundary (the bare `npm test` too),
+    `*` elsewhere a wildcard. Only rules for `tool` count."""
     m = re.fullmatch(r"(Bash|PowerShell)(?:\((.*)\))?", rule.strip(), re.S)
-    if not m or (m[1] == "PowerShell" and not WINDOWS):
+    if not m or m[1] != tool:
         return False
     pat = (m[2] or "*").strip()
     if pat in ("*", ""):
         return True
-    if pat.endswith(":*"):
-        pre = pat[:-2].strip()
-        return command == pre or command.startswith(pre + " ")
+    for tail in (":*", " *"):
+        if pat.endswith(tail) and "*" not in pat[:-len(tail)]:
+            pre = pat[:-len(tail)].strip()
+            return command == pre or command.startswith(pre + " ")
     if "*" in pat:
-        return fnmatch.fnmatchcase(command, pat)
+        return _wild(pat, command)
     return command == pat
+
+
+def command_parts(cmd: str) -> list[str]:
+    """A compound command's simple commands (split on && || ; | & and newlines, not inside quotes)."""
+    parts: list[str] = []
+    for line in cmd.splitlines():
+        lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        try:
+            words = list(lex)
+        except ValueError:  # unbalanced quotes: judge the line whole
+            parts.append(line.strip())
+            continue
+        cur: list[str] = []
+        for w in words:
+            if w in OPERATORS:
+                parts.append(" ".join(cur))
+                cur = []
+            else:
+                cur.append(w)
+        parts.append(" ".join(cur))
+    return [p for p in (x.strip() for x in parts) if p]
 
 
 def check_allowlist(c: Ctx) -> list[Check]:
@@ -492,25 +649,35 @@ def check_allowlist(c: Ctx) -> list[Check]:
         why = note or f"no --test-cmd and no ai-dlc.toml [checks.commands] in {c.target}"
         return [Check("allowlist", SKIP, f"no test or check commands to look for ({why})",
                       "rerun with --test-cmd '<your test command>'")]
-    allow, deny, bypass = _rules(c)
-    missing, denied = [], []
+    tool = shell_tool(c.env)
+    r = _rules(c)
+    missing, asked, denied = [], [], []
     for cmd in cmds:
-        for part in (p.strip() for p in SPLIT.split(cmd) if p.strip()):
-            if any(rule_matches(r, part) for r in deny):
+        for part in command_parts(cmd):
+            if any(rule_matches(x, part, tool) for x in r.deny):
                 denied.append(part)
-            elif not bypass and not any(rule_matches(r, part) for r in allow):
+            elif any(rule_matches(x, part, tool) for x in r.ask):
+                asked.append(part)
+            elif not r.bypass and not any(rule_matches(x, part, tool) for x in r.allow):
                 missing.append(part)
-    missing, denied = list(dict.fromkeys(missing)), list(dict.fromkeys(denied))
+    missing, asked, denied = (list(dict.fromkeys(x)) for x in (missing, asked, denied))
     settings = c.target / ".claude" / il.SETTINGS
+    where = f"{settings}, {c.home / '.claude' / il.SETTINGS}" + (f" and {c.managed}" if c.managed.is_file() else "")
     if denied:
         return [Check("allowlist", FIX, f"a deny rule blocks {', '.join(denied[:3])}",
-                      f"look at permissions.deny in {settings} and {c.home / '.claude' / il.SETTINGS}")]
+                      f"look at permissions.deny in {where}")]
+    if asked:
+        return [Check("allowlist", FIX, f"an ask rule stops {', '.join(asked[:3])} for permission every time",
+                      f"look at permissions.ask in {where}")]
     if missing:
-        rules = ", ".join(json.dumps(f"Bash({p}:*)") for p in missing)
+        rules = ", ".join(json.dumps(f"{tool}({p}:*)") for p in missing)
+        if r.managed_only:
+            how = f"ask your admin to allow {rules} (managed settings allow only their own rules)"
+        else:
+            how = f"add to permissions.allow in {settings}: {rules}"
         return [Check("allowlist", FIX, f"{len(missing)} test or check command(s) would stop for permission: "
-                                        f"{', '.join(missing[:3])}" + (" ..." if len(missing) > 3 else ""),
-                      f"add to permissions.allow in {settings}: {rules}")]
-    return [Check("allowlist", OK, f"the repository's {len(cmds)} test and check command(s) are allowed")]
+                                        f"{', '.join(missing[:3])}" + (" ..." if len(missing) > 3 else ""), how)]
+    return [Check("allowlist", OK, f"the repository's {len(cmds)} test and check command(s) are allowed ({tool})")]
 
 
 def check_capture(c: Ctx) -> list[Check]:
@@ -559,8 +726,9 @@ def diagnose(c: Ctx, skip: tuple[str, ...] = ()) -> list[Check]:
             continue
         try:
             out += fn(c)
-        except (il.Refused, OSError, ValueError, yaml.YAMLError) as e:
-            out.append(Check(cid, FIX, f"the check failed: {e}", "fix what it names, then run the doctor again"))
+        except Exception as e:  # noqa: BLE001  one broken check must not cost the others (or the JSON)
+            out.append(Check(cid, FIX, f"the check failed: {type(e).__name__}: {e}",
+                             "fix what it names, then run the doctor again"))
     return out
 
 
@@ -590,18 +758,20 @@ def main(argv: list[str] | None = None, run: Runner = run_cmd, env: dict[str, st
     ap.add_argument("--test-cmd", action="append", default=[], help="a command the agent must be allowed to run")
     ap.add_argument("--skip", action="append", default=[], choices=[cid for cid, _ in CHECKS],
                     help="leave a check out (repeatable)")
+    ap.add_argument("--managed-settings", type=Path, default=MANAGED_SETTINGS, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     env = dict(os.environ if env is None else env)
     try:
         lock = il._lock_at(a.harness)
-        home, target = a.home.expanduser(), a.target.expanduser()
+        home, target = a.home.expanduser(), a.target.expanduser().resolve()
         scope, base, manifest = find_install(a.scope, home, target)
     except il.Refused as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     c = Ctx(harness=a.harness.resolve(), lock=lock, scope=scope, base=base, home=home, target=target,
             manifest=manifest, run=run, env=env, live=a.live, exact_runtime=a.exact_runtime,
-            github_host=a.github_host or env.get("GH_HOST") or "github.com", test_cmds=tuple(a.test_cmd))
+            github_host=a.github_host or env.get("GH_HOST") or "github.com", test_cmds=tuple(a.test_cmd),
+            managed=a.managed_settings)
     checks = diagnose(c, tuple(a.skip))
     fixes = sum(1 for x in checks if x.status == FIX)
     if a.json:

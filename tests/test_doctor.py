@@ -44,19 +44,21 @@ class Fake:
 
     def __init__(self, over=None):
         self.calls = []
+        self.cwds = []
         self.answers = {
             ("claude", "--version"): (0, f"{PINNED} (Claude Code)\n"),
             ("claude", "mcp", "list"): (0, mcp_list_all()),
             ("claude", "-p"): (0, "ok\n"),
-            ("gh", "auth", "status"): (0, "github.com\n  ✓ Logged in to github.com account dev (keyring)\n"
-                                          "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n"),
+            ("gh", "auth", "status"): (0, ("github.com\n  ✓ Logged in to github.com account dev (keyring)\n"
+                                           "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n")),
             ("hangar", "trace", "import"): (0, "Usage: hangar trace import\n"),
             ("flightdeck", "ingest", "file"): (0, "Usage: flightdeck ingest file\n"),
         }
         self.answers.update(over or {})
 
-    def __call__(self, argv, timeout=60):
+    def __call__(self, argv, timeout=60, cwd=None):
         self.calls.append(argv)
+        self.cwds.append(cwd)
         for n in range(len(argv), 0, -1):
             if tuple(argv[:n]) in self.answers:
                 return self.answers[tuple(argv[:n])]
@@ -96,7 +98,8 @@ def test_scratch_home_prints_every_check(laptop, capsys):
     out = capsys.readouterr().out
     ids = ["claude", "model", "python", "pyyaml", "install", "hooks", "channel", "checkout", "one-harness", "guide",
            "settings", "mcp:ai-dlc", "mcp:atlassian", "mcp:github", "gh", "org", "allowlist", "capture"]
-    lines = [ln.split() for ln in out.splitlines()[1:] if ln.startswith("  ") and ln.split()[0] in ("ok", "fix", "skip")]
+    lines = [ln.split() for ln in out.splitlines()[1:]
+             if ln.startswith("  ") and ln.split()[0] in ("ok", "fix", "skip")]
     assert [ln[1] for ln in lines] == ids
     # the public example org is a placeholder, so a work install always has that one to fix
     assert rc == 1 and out.rstrip().endswith("1 to fix: org")
@@ -107,7 +110,7 @@ def test_json_names_the_install_and_the_fixes(laptop, capsys):
     home, proj = laptop
     rc, _ = doc(home, proj)
     c = checks(capsys)
-    assert rc == 1 and c["org"]["status"] == "fix" and "COMPANY-SITE" in c["org"]["summary"]
+    assert rc == 1 and c["org"]["status"] == "fix" and "placeholder: true" in c["org"]["summary"]
     for cid in ("claude", "python", "pyyaml", "install", "hooks", "channel", "one-harness", "guide", "settings",
                 "mcp:github", "mcp:atlassian", "mcp:ai-dlc", "gh", "capture"):
         assert c[cid]["status"] == "ok", (cid, c[cid])
@@ -132,7 +135,8 @@ def test_not_installed_says_how(tmp_path, capsys):
     rc, _ = doc(tmp_path / "h", tmp_path / "p")
     c = checks(capsys)
     assert rc == 1 and c["install"]["status"] == "fix"
-    assert "install_local.py harnesses/work-default --scope project" in c["install"]["fix"]
+    # absolute paths, since the doctor runs from the project, not the team-harness checkout
+    assert f"{ROOT / 'scripts/install_local.py'} {WORK} --scope project --target" in c["install"]["fix"]
     assert c["hooks"]["status"] == "skip" and c["org"]["status"] == "skip"
 
 
@@ -264,7 +268,8 @@ def test_live_tools_list_per_server(laptop, capsys, mcp_server, monkeypatch):
     assert SECRET not in out
     c = {x["id"]: x for x in json.loads(out)["checks"]}
     assert c["mcp:github"]["status"] == "ok" and "2 tools" in c["mcp:github"]["summary"]
-    assert "ATLASSIAN_MCP_AUTHORIZATION unset" in c["mcp:atlassian"]["summary"]
+    assert c["mcp:atlassian"]["status"] == "skip" and "ATLASSIAN_MCP_AUTHORIZATION is unset" in \
+        c["mcp:atlassian"]["summary"]
 
 
 def test_gh_signed_out_and_without_repo_scope(laptop, capsys):
@@ -273,7 +278,8 @@ def test_gh_signed_out_and_without_repo_scope(laptop, capsys):
         fake=Fake({("gh", "auth", "status"): (1, "You are not logged into any GitHub hosts.")}))
     c = checks(capsys)["gh"]
     assert c["status"] == "fix" and c["fix"] == "gh auth login --hostname github.corp.example --scopes repo"
-    doc(home, proj, fake=Fake({("gh", "auth", "status"): (0, "  - Token scopes: 'gist', 'read:org'\n")}))
+    doc(home, proj, fake=Fake({("gh", "auth", "status"): (0, ("  ✓ Logged in to github.com account dev (keyring)\n"
+                                                             "  - Token scopes: 'gist', 'read:org'\n"))}))
     c = checks(capsys)["gh"]
     assert c["status"] == "fix" and "gh auth refresh" in c["fix"]
 
@@ -342,9 +348,93 @@ def test_allowlist_from_ai_dlc_toml_and_flags(laptop, capsys):
     ("Bash(pytest -q)", "pytest -q tests", False),
     ("Read(**)", "pytest", False),
     ("PowerShell(pytest:*)", "pytest", False),
+    ("Bash(ruff *)", "ruff", True),
+    ("Bash(ruff *)", "ruffle", False),
+    ("Bash(ls ?)", "ls a", False),  # `?` and `[` are literal to Claude Code; only `*` is a wildcard
+    ("Bash(ls [ab])", "ls a", False),
+    ("Bash(make * test)", "make -j4 test", True),
 ])
 def test_rule_matches(rule, cmd, ok):
     assert doctor.rule_matches(rule, cmd) is ok
+
+
+@pytest.mark.parametrize("cmd,parts", [
+    ("ruff check . && ruff format --check .", ["ruff check .", "ruff format --check ."]),
+    ("grep 'a|b' x | wc -l", ["grep a|b x", "wc -l"]),
+    ("make lint; make test & wait", ["make lint", "make test", "wait"]),
+    ("pytest -q\nmypy src", ["pytest -q", "mypy src"]),
+    ("echo 'unbalanced", ["echo 'unbalanced"]),
+])
+def test_command_parts(cmd, parts):
+    assert doctor.command_parts(cmd.replace("\\n", "\n")) == parts
+
+
+def test_windows_without_git_bash_uses_powershell_rules(monkeypatch, tmp_path):
+    monkeypatch.setattr(doctor, "WINDOWS", True)
+    assert doctor.shell_tool({"CLAUDE_CODE_GIT_BASH_PATH": str(tmp_path / "none.exe")}) == "PowerShell"
+    bash = tmp_path / "bash.exe"
+    bash.write_text("")
+    assert doctor.shell_tool({"CLAUDE_CODE_GIT_BASH_PATH": str(bash)}) == "Bash"
+    assert doctor.rule_matches("PowerShell(pytest:*)", "pytest -q", "PowerShell")
+    assert not doctor.rule_matches("Bash(pytest:*)", "pytest -q", "PowerShell")
+
+
+def test_windows_fix_strings_use_py_launcher(monkeypatch, laptop, capsys):
+    monkeypatch.setattr(doctor, "WINDOWS", True)
+    home, proj = laptop
+    c = doctor.Ctx(harness=WORK, lock=LOCK, scope="project", base=proj / ".claude", home=home, target=proj,
+                   manifest=None, run=Fake(), env={})
+    cmd = c.install_cmd()
+    assert cmd.startswith("py -3 ") and str(ROOT / "scripts" / "install_local.py") in cmd
+    assert "--uninstall" in c.install_cmd("suite-default", "user", "--uninstall")
+    assert "--target" not in c.install_cmd("suite-default", "user", "--uninstall")
+
+
+def test_ask_rules_and_managed_settings(laptop, capsys, tmp_path):
+    home, proj = laptop
+    s = proj / ".claude" / "settings.local.json"
+    data = json.loads(s.read_text()) if s.exists() else {}
+    data.setdefault("permissions", {})["allow"] = ["Bash(pytest:*)", "Bash(ruff:*)"]
+    data["permissions"]["ask"] = ["Bash(ruff:*)"]
+    s.write_text(json.dumps(data))
+    doc(home, proj, "--test-cmd", "pytest -q", "--test-cmd", "ruff check .")
+    c = checks(capsys)["allowlist"]
+    assert c["status"] == "fix" and "ask rule" in c["summary"] and "ruff check ." in c["summary"]
+    data["permissions"]["ask"] = []
+    s.write_text(json.dumps(data))
+    managed = tmp_path / "managed-settings.json"
+    managed.write_text(json.dumps({"allowManagedPermissionRulesOnly": True,
+                                   "permissions": {"allow": ["Bash(ruff:*)"]}}))
+    doc(home, proj, "--test-cmd", "pytest -q", "--test-cmd", "ruff check .", "--managed-settings", str(managed))
+    c = checks(capsys)["allowlist"]
+    assert c["status"] == "fix" and "pytest -q" in c["summary"] and "ask your admin" in c["fix"]
+    managed.write_text(json.dumps({"permissions": {"deny": ["Bash(pytest:*)"]}}))
+    doc(home, proj, "--test-cmd", "pytest -q", "--managed-settings", str(managed))
+    c = checks(capsys)["allowlist"]
+    assert c["status"] == "fix" and "deny rule" in c["summary"] and str(managed) in c["fix"]
+
+
+def test_managed_settings_can_turn_bypass_off(laptop, capsys, tmp_path):
+    home, proj = laptop
+    s = proj / ".claude" / "settings.local.json"
+    data = json.loads(s.read_text()) if s.exists() else {}
+    data.setdefault("permissions", {})["defaultMode"] = "bypassPermissions"
+    s.write_text(json.dumps(data))
+    doc(home, proj, "--test-cmd", "pytest -q")
+    assert checks(capsys)["allowlist"]["status"] == "ok"
+    managed = tmp_path / "managed-settings.json"
+    managed.write_text(json.dumps({"permissions": {"disableBypassPermissionsMode": "disable"}}))
+    doc(home, proj, "--test-cmd", "pytest -q", "--managed-settings", str(managed))
+    assert checks(capsys)["allowlist"]["status"] == "fix"
+
+
+def test_ai_dlc_toml_is_read_without_tomllib(laptop, capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "tomllib", None)  # Python 3.10
+    home, proj = laptop
+    (proj / "ai-dlc.toml").write_text('[project]\nname = "x"\n[checks.commands]\ntest = "uv run pytest -q"  # tests\n')
+    doc(home, proj)
+    c = checks(capsys)["allowlist"]
+    assert c["status"] == "fix" and "uv run pytest -q" in c["summary"]
 
 
 def test_capture_not_ready(laptop, capsys):
@@ -365,6 +455,88 @@ def test_doctor_writes_nothing(laptop, capsys):
     doc(home, proj, "--live")
     after = {p: p.read_bytes() for d in (home, proj) for p in d.rglob("*") if p.is_file()}
     assert before == after
+
+
+def test_mcp_list_runs_in_the_project(laptop, capsys):
+    # project-scope servers live in <project>/.mcp.json, which `claude mcp list` reads only from inside the project
+    home, proj = laptop
+    _, fake = doc(home, proj)
+    i = fake.calls.index(["claude", "mcp", "list"])
+    assert fake.cwds[i] == proj.resolve()
+
+
+@pytest.mark.parametrize("line, words", [
+    ("github: https://api.githubcopilot.com/mcp/ (HTTP) - ✗ Disconnected", "doesn't answer"),
+    ("github: https://api.githubcopilot.com/mcp/ (SSE) - ✓ Connected", "over sse"),
+    ("github: https://api.githubcopilot.com/mcp-other (HTTP) - ✓ Connected", "points at"),
+    ("github: https://api.githubcopilot.com/mcp/?token=abc (HTTP) - ✓ Connected", "points at"),
+])
+def test_mcp_lines_that_are_not_ok(laptop, capsys, line, words):
+    home, proj = laptop
+    listing = "\n".join(ln if not ln.startswith("github:") else line for ln in mcp_list_all().splitlines())
+    doc(home, proj, fake=Fake({("claude", "mcp", "list"): (0, listing)}))
+    c = checks(capsys)["mcp:github"]
+    assert c["status"] == "fix" and words in c["summary"] and "abc" not in c["summary"]
+
+
+def test_mcp_trailing_slash_is_the_same_endpoint(laptop, capsys):
+    home, proj = laptop
+    listing = mcp_list_all().replace("https://api.githubcopilot.com/mcp/", "https://api.githubcopilot.com/mcp")
+    doc(home, proj, fake=Fake({("claude", "mcp", "list"): (0, listing)}))
+    assert checks(capsys)["mcp:github"]["status"] == "ok"
+
+
+def test_gh_only_the_active_account_counts(laptop, capsys):
+    home, proj = laptop
+    status = ("github.com\n  ✓ Logged in to github.com account old (keyring)\n  - Active account: false\n"
+              "  - Token scopes: 'repo'\n\n  ✓ Logged in to github.com account dev (keyring)\n"
+              "  - Active account: true\n  - Token scopes: 'read:org'\n")
+    doc(home, proj, fake=Fake({("gh", "auth", "status"): (0, status)}))
+    c = checks(capsys)["gh"]
+    assert c["status"] == "fix" and "as dev" in c["summary"]
+    doc(home, proj, fake=Fake({("gh", "auth", "status"): (0, "  ✓ Logged in to github.com account dev (keyring)\n")}))
+    c = checks(capsys)["gh"]
+    assert c["status"] == "skip" and "lists no scopes" in c["summary"]
+
+
+def test_real_org_with_leftover_placeholder_values(laptop, capsys, monkeypatch):
+    # a company org that replaced org-process but kept the example's params still leaves COMPANY-SITE in the skills
+    monkeypatch.setattr(doctor, "_org_of", lambda c: ("orgs/acme", {"placeholder": False}))
+    home, proj = laptop
+    doc(home, proj)
+    c = checks(capsys)["org"]
+    assert c["status"] == "fix" and "COMPANY-SITE" in c["summary"] and "rebuild with your org" in c["fix"]
+
+
+def test_org_fix_never_points_at_the_checkout_channel(laptop, capsys):
+    home, proj = laptop
+    doc(home, proj)
+    fix = checks(capsys)["org"]["fix"]
+    assert "--channel checkout" not in fix and "--channel candidate" in fix
+
+
+def test_user_scope_install(tmp_path, capsys):
+    home, proj = tmp_path / "home", tmp_path / "proj"
+    (home / ".claude" / "projects").mkdir(parents=True)
+    proj.mkdir()
+    assert il.main([str(WORK), "--scope", "user", "--home", str(home), "--channel", channel_of(WORK),
+                    "--allow-dirty", "--apply"]) == 0
+    capsys.readouterr()
+    doc(home, proj)
+    out = json.loads(capsys.readouterr().out)
+    c = {x["id"]: x for x in out["checks"]}
+    assert out["scope"] == "user" and c["install"]["status"] == "ok" and c["hooks"]["status"] == "ok"
+    assert c["one-harness"]["status"] == "ok"
+
+
+def test_a_check_that_crashes_is_reported_not_raised(laptop, capsys, monkeypatch):
+    def boom(c):
+        raise KeyError("surprise")
+    monkeypatch.setattr(doctor, "CHECKS", [("gh", boom), *[x for x in doctor.CHECKS if x[0] != "gh"]])
+    home, proj = laptop
+    doc(home, proj)
+    c = checks(capsys)["gh"]
+    assert c["status"] == "fix" and "KeyError" in c["summary"]
 
 
 def test_bad_harness_is_exit_2(tmp_path, capsys):
