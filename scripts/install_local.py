@@ -810,7 +810,7 @@ def _var(name: str, header: str, binding: dict[str, Any]) -> str:
 
 def mcp_commands(h: Harness, scope: str) -> list[str]:
     bfile = h.root.parent.parent / "bindings" / f"{h.name}.yaml"
-    binding = (yaml.safe_load(bfile.read_text()) or {}) if bfile.is_file() else {}
+    binding = (yaml.safe_load(bfile.read_text(encoding="utf-8")) or {}) if bfile.is_file() else {}
     # user scope: your shell fills $VAR when you run the command, so the value lands only in your own ~/.claude.json;
     # project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never commit a token)
     # on Windows the user-scope line is for PowerShell, which reads an environment variable as $env:NAME
