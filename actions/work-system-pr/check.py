@@ -11,8 +11,10 @@ earlier. Rules:
 3. The body has a non-empty `Docs:` line; `none needed` must give a reason.
 4. If the body says `Decision: <KEY>`, the PR adds or changes a file under the ADR directory that mentions that key.
 5. The branch should contain the key (a warning only: cloud sessions are assigned branch names).
-6. With Jira credentials: the ticket exists, is not Done or Wont Do, carries an execution label (`exec:`, or the older
-   `lane:`), is a work item (not an Epic or a Decision, nor a Task labelled `type:decision`), and no open Decision blocks it.
+6. With tracker credentials: the ticket exists, is not finished (Done, Wont Do), carries an execution label (`exec:`,
+   or the older `lane:`), is a work item (not an Epic or a Decision, nor one labelled `type:decision`), and no open
+   Decision blocks it. The ticket is read through tracker.py's provider (`tracker-provider`, default jira-cloud) as a
+   normalised issue, so this file names no tracker's fields (KAN-437).
 7. With an org file (`org-file`, schema team-harness.org/v1), read from the PR's base commit so a PR can't loosen its
    own gates: every merge gate whose `when` matches the PR (always, its changed paths, or the labels on the PR or its
    work ticket) needs a `<pr_line>: <KEY>` line naming a ticket in the gate ticket type's project (`pending` or a
@@ -45,10 +47,15 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from importlib.util import module_from_spec, spec_from_file_location
+
+# the tracker role (KAN-437): loaded by path, next to this file, so the action needs no package or sys.path entry
+_spec = spec_from_file_location("work_system_pr_tracker", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                       "tracker.py"))
+tracker = module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(tracker)  # type: ignore[union-attr]
 
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
-DONE_CATEGORIES = {"done"}
-NOT_WORK_TYPES = {"epic", "decision"}
 EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
 
 
@@ -121,30 +128,26 @@ def check_pr(pr: dict, files: list[dict] | None, *, key_pattern: str = DEFAULT_K
     return r
 
 
-def check_ticket(issue: dict, blockers: list[dict], key: str) -> list[str]:
-    """Rule 6, from Jira's issue JSON and the issues that block it."""
+def _is_decision(item: dict) -> bool:
+    return item.get("kind") == "decision" or "type:decision" in item.get("labels", [])
+
+
+def check_ticket(issue: dict, key: str) -> list[str]:
+    """Rule 6, from the ticket as tracker.py normalises it (key, status, category, kind, labels, blocked_by)."""
     errs = []
-    f = issue.get("fields") or {}
-    cat = ((f.get("status") or {}).get("statusCategory") or {}).get("key")
-    status = (f.get("status") or {}).get("name")
-    if cat in DONE_CATEGORIES:
-        errs.append(f"{key} is {status}: reopen it or file a new ticket")
-    itype = ((f.get("issuetype") or {}).get("name") or "").lower()
-    if itype in NOT_WORK_TYPES:
-        errs.append(f"{key} is a {itype}; a PR implements a story, task or bug (use 'Decision: {key}' for a decision)")
-    labels = [str(lab) for lab in f.get("labels") or []]
-    if itype not in NOT_WORK_TYPES and "type:decision" in labels:
+    if issue["category"] == "done":
+        errs.append(f"{key} is {issue['status']}: reopen it or file a new ticket")
+    if issue["kind"] != "work":
+        errs.append(f"{key} is a {issue['kind']}; a PR implements a story, task or bug "
+                    f"(use 'Decision: {key}' for a decision)")
+    elif _is_decision(issue):
         errs.append(f"{key} is a decision (type:decision); a PR implements a story, task or bug "
                     f"(use 'Decision: {key}' for a decision)")
-    if not any(lab.startswith(EXEC_PREFIXES) for lab in labels):
+    if not any(lab.startswith(EXEC_PREFIXES) for lab in issue["labels"]):
         errs.append(f"{key} has no execution label (exec:agent, exec:pair or exec:human; lane:* is still accepted)")
-    for b in blockers:
-        bf = b.get("fields") or {}
-        is_decision = ((bf.get("issuetype") or {}).get("name") or "").lower() == "decision" or \
-            "type:decision" in [str(lab) for lab in bf.get("labels") or []]
-        if is_decision and \
-                ((bf.get("status") or {}).get("statusCategory") or {}).get("key") not in DONE_CATEGORIES:
-            errs.append(f"{key} is blocked by open Decision {b.get('key')}: answer it before merging")
+    for b in issue["blocked_by"]:
+        if _is_decision(b) and b["category"] != "done":
+            errs.append(f"{key} is blocked by open Decision {b['key']}: answer it before merging")
     return errs
 
 
@@ -610,24 +613,6 @@ def _pr_files(repo: str, number: int, token: str, api: str) -> list[dict] | None
     return out
 
 
-def _jira(base: str, user: str, token: str, key: str) -> tuple[dict, list[dict]]:
-    auth = {"Authorization": "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()}
-    q = urllib.parse.quote(key)
-    issue = _get(f"{base.rstrip('/')}/rest/api/3/issue/{q}?fields=status,labels,issuetype,issuelinks", auth)
-    blockers = []
-    for link in (issue.get("fields") or {}).get("issuelinks") or []:  # type: ignore[union-attr]
-        if (link.get("type") or {}).get("name") == "Blocks" and link.get("inwardIssue"):
-            blockers.append(link["inwardIssue"])  # "is blocked by": the inward issue blocks this one
-    for i, b in enumerate(blockers):
-        # link summaries carry no labels; a Decision filed as a Task (`type:decision`) needs one more GET
-        if ((b.get("fields") or {}).get("issuetype") or {}).get("name", "").lower() != "decision" and b.get("key"):
-            full = _get(f"{base.rstrip('/')}/rest/api/3/issue/{urllib.parse.quote(b['key'])}"
-                        "?fields=status,labels,issuetype", auth)
-            if isinstance(full, dict):
-                blockers[i] = {**full, "key": b["key"]}
-    return issue, blockers  # type: ignore[return-value]
-
-
 def _jira_fetcher(base: str, user: str, token: str) -> tuple[Callable[[str], object], Callable[[str], object]]:
     """(fetch the issue, fetch its remote links) for the gate tickets; GET only."""
     auth = {"Authorization": "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()}
@@ -714,29 +699,38 @@ def main() -> int:
     # the work ticket: the title's key, also on an exempt PR (its labels can apply a gate)
     work_key = res.key or _title_key(pr, _out("KEY_PATTERN") or DEFAULT_KEY)
     work_labels: list[str] | None = None if work_key else []  # None: unknown, so label gates apply
-    if work_key and creds:
+    reader, skipped = None, ""
+    if work_key:
         try:
-            issue, blockers = _jira(base, user, token, work_key)
-            if not isinstance(issue, dict) or not isinstance(issue.get("fields"), dict):
-                raise TypeError("Jira's answer was not an issue")
-            work_labels = [str(lab) for lab in issue["fields"].get("labels") or []]
+            reader, skipped = tracker.from_inputs(_out)
+        except ValueError as e:  # an unknown provider: fail rather than skip, so a typo can't turn rule 6 off
+            res.errors.append(f"{e}; the ticket was not checked")
+    if work_key and reader:
+        try:
+            issue = reader.read(work_key)
+            work_labels = issue["labels"]
             if res.key and not res.errors:
-                res.errors += check_ticket(issue, blockers, res.key)
-        except urllib.error.HTTPError as e:
+                res.errors += check_ticket(issue, res.key)
+        except tracker.TicketMissing as e:
             if res.key and not res.errors:
-                res.errors.append(f"{res.key} could not be read from Jira (HTTP {e.code}): does the ticket exist?")
-        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError, TypeError,
-                AttributeError) as e:
+                res.errors.append(f"{res.key} could not be read from {reader.label} ({e}): does the ticket exist?")
+        except tracker.BlockerUnreadable as e:
+            if res.key and not res.errors:
+                res.errors.append(f"{res.key}: {e}; whether an open Decision blocks it is unknown")
+        except tracker.BadAnswer as e:
+            res.errors.append(f"{work_key}: {e}; the ticket was not checked")
+        except tracker.TrackerUnreachable as e:
             # credentials are set, so the repository asked for the ticket check: fail closed, as the gates do
-            msg = f"Jira was not reachable ({e}); the ticket {work_key} itself was not checked"
+            msg = f"{reader.label} was not reachable ({e}); the ticket {work_key} itself was not checked"
             if allow_unverified or not res.key:
                 res.warnings.append(msg + (" (allow-unverified is set)" if res.key else ""))
             else:
-                res.errors.append(msg + "; re-run the check once Jira answers (or set allow-unverified for a "
-                                  "repository that knowingly accepts this)")
-    elif res.key:
-        res.warnings.append("no Jira credentials given; the ticket's status, execution label and blocking decisions were not checked")
-    if not creds and allow_unverified:
+                res.errors.append(msg + f"; re-run the check once {reader.label} answers (or set allow-unverified "
+                                  "for a repository that knowingly accepts this)")
+    elif res.key and skipped:
+        res.warnings.append(f"{skipped}; rule 6 skipped: the ticket's status, execution label and blocking decisions "
+                            "were not checked")
+    if reader is None and allow_unverified:
         work_labels = []
 
     gates: list[Gate] | None = None
