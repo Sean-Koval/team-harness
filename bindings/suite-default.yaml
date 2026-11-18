@@ -45,4 +45,4 @@ mcp:
 # ai-dlc for the knowledge skills and the `ai-dlc` MCP binding: `uv tool install` at the commit
 # environments/agent.yaml pins as AI_DLC_REF (tests/test_knowledge_skills.py holds the two equal).
 dependencies:
-  pip: ["ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@67323a98e5426b067ca017f1dfcc023bbcf12906"]
+  pip: ["ai-dlc @ git+https://github.com/Sean-Koval/ai-dlc@c217bd0c09918a26db8d5d42e02e00cf9e9d9e81"]
