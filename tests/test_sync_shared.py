@@ -173,14 +173,15 @@ def test_a_changed_org_restales_the_work_spec(tmp_path):
     shutil.copytree(ROOT / "flightdeck" / "specs", root / "flightdeck" / "specs")
     assert sync_shared.plan(root) == ([], [])
     org = root / "orgs/example-co/org.yaml"
-    org.write_text(org.read_text(encoding="utf-8").replace("SRE approval: {pr_title}", "Change request: {pr_title}"),
+    org.write_text(org.read_text(encoding="utf-8").replace("Release: {pr_title}", "Change request: {pr_title}"),
                    encoding="utf-8", newline="\n")
     stale, problems = sync_shared.plan(root)
     assert problems == []
     spec = root / "flightdeck/specs/work-default.yaml"
     entry = next(s for s in stale if s[1] == spec)
     rendered = entry[2][""].decode("utf-8")
-    assert rendered.count(r'"(?i)(\\bChange request:|\\bInfosec review:)"') == 2 and "SRE approval:" not in rendered
+    want = r'"(?i)(\\bInfosec review:|\\bESS request:|\\bArchitecture review:|\\bChange request:)"'
+    assert rendered.count(want) == 2 and "Release:" not in rendered
     sync_shared.write([entry], root)
     assert spec.read_text(encoding="utf-8") == rendered and not [s for s in sync_shared.plan(root)[0] if s[1] == spec]
 

@@ -72,9 +72,10 @@ def results(spec_id, otlp):
     return set(py.values())
 
 
-SRE = ("mcp", "jira", "createJiraIssue", '{"projectKey": "OPS", "summary": "SRE approval: SVC-1 add the queue"}')
+# an approval ticket an agent files: the example org's ESS request (SRE approves the work ticket itself, KAN-373)
+SRE = ("mcp", "jira", "createJiraIssue", '{"projectKey": "OPS", "summary": "ESS request: SVC-1 add the queue"}')
 INFOSEC = ("mcp", "jira", "createJiraIssue", '{"projectKey": "SEC", "summary": "Infosec review: svc SVC-1"}')
-AI_DLC_SRE = ("mcp", "ai-dlc", "tracker_create", '{"title": "SRE approval: SVC-1 add the queue", "body": "x"}')
+AI_DLC_SRE = ("mcp", "ai-dlc", "tracker_create", '{"title": "ESS request: SVC-1 add the queue", "body": "x"}')
 GH_PR = ("shell", "gh pr create --draft --title 'SVC-1: add the queue' --body-file pr.md", ["pr.open"])
 
 CASES = [
