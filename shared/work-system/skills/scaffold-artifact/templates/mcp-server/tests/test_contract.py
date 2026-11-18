@@ -11,6 +11,8 @@ from typing import Any
 import pytest
 from fakes import FakeBackend
 from jsonschema import Draft202012Validator
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 
 from @@package@@.server import build_server
 
@@ -44,7 +46,12 @@ def test_golden_call(case: Path):
     spec = json.loads(case.read_text(encoding="utf-8"))
     schema = next(t.input_schema for t in tools() if t.name == spec["tool"])
     Draft202012Validator(schema).validate(spec["arguments"])
-    result = asyncio.run(build_server(FakeBackend()).call_tool(spec["tool"], spec["arguments"]))
-    assert getattr(result, "is_error", False) is spec.get("is_error", False)
+    call = build_server(FakeBackend()).call_tool(spec["tool"], spec["arguments"])
+    if spec.get("is_error"):
+        with pytest.raises(ToolError):
+            asyncio.run(call)
+        return
+    result = asyncio.run(call)
+    assert isinstance(result, CallToolResult) and not result.is_error
     if "structured_content" in spec:
-        assert getattr(result, "structured_content", None) == spec["structured_content"]
+        assert result.structured_content == spec["structured_content"]

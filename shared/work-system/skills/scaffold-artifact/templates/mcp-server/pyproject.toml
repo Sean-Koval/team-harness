@@ -10,7 +10,8 @@ requires-python = ">=3.11"
 dependencies = ["mcp>=2.3,<3"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "pyright>=1.1.380", "jsonschema>=4"]
+# pinned: a new ruff or pyright rule would turn every fresh scaffold red; move them in a PR of their own
+dev = ["pytest>=8,<10", "ruff~=0.17.5", "pyright==1.1.414", "jsonschema>=4,<5"]
 
 [project.scripts]
 @@project@@ = "@@package@@.__main__:main"

@@ -14,17 +14,21 @@ those, say there is no template yet and stop.
 
 1. **Have the ticket.** The ticket key comes first (skill `work-start`). From the ticket take the server's name, as
    lowercase words joined by hyphens (`weather-tools`), and one line saying what it does.
-2. **Pick the destination.** A new, empty directory: the new repository's clone, or a new folder in the repository
-   the ticket names. Never scaffold over existing files; the script refuses a directory that is not empty.
-3. **Render the template.** From this skill's directory:
+2. **Pick the destination.** A new, empty directory as an absolute path: the new repository's clone. The template is a
+   whole repository (its CI, `AGENTS.md`, `changes/`); scaffolding into a folder of an existing repository means
+   moving its CI into that repository's workflow with `working-directory`, so say so in the PR. Never scaffold over
+   existing files; the script refuses a directory that is not empty.
+3. **Render the template**, with the script's full path:
 
    ```sh
-   python scaffold.py mcp-server <destination> --name <name> --ticket <KEY> --description "<one line>"
+   python <this skill's directory>/scaffold.py mcp-server <destination> --name <name> --ticket <KEY> --description "<one line>"
    ```
 
    It copies `templates/mcp-server/`, fills `@@project@@` (the name), `@@package@@` (the name as a Python package,
-   `weather_tools`), `@@ticket@@` and `@@description@@` in file names and contents, and fails if any token is left.
-4. **Run the template's verify command** in the destination, before the first commit:
+   `weather_tools`), `@@ticket@@` and `@@description@@` (at most 70 characters) in file names and contents, and fails
+   if any token is left. It refuses a name that is a Python keyword or would shadow a module the server uses.
+4. **Run the template's verify command** in the destination, in a virtual environment of its own
+   (`python -m venv .venv`, then activate it), before the first commit:
 
    ```sh
    python -m pip install -e ".[dev]"
@@ -58,5 +62,7 @@ The owner and approval steps in the rendered `AGENTS.md` come from this harness:
 ## Rules
 
 - Generated files (lock files the tools write, build output) never go in a PR by hand.
+- In the template's files, write each GitHub expression with a dot (`${{ github.ref }}`): this harness fills any
+  double-braced bare word it finds there from its profile.
 - No person, company, site or credential goes into the template's files beyond what this harness's profile filled.
 - Keep each PR small: one ticket, one PR, its own changelog fragment.

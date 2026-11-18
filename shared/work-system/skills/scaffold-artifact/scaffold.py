@@ -11,6 +11,7 @@ nothing behind, when an argument is malformed or a token is left over.
 from __future__ import annotations
 
 import argparse
+import keyword
 import re
 import shutil
 import sys
@@ -21,17 +22,26 @@ KINDS = sorted(p.name for p in (HERE / "templates").iterdir() if p.is_dir())
 TOKEN = re.compile(r"@@[a-z_]+@@")
 NAME = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 TICKET = re.compile(r"[A-Z][A-Z0-9]{1,9}-[0-9]+")
+DESCRIPTION_MAX = 70  # the description lands in a source line and a docstring; longer would break ruff's E501
+# packages the template itself installs or imports: a project of the same name would shadow or replace them
+TAKEN = {"mcp", "mcp_types", "pytest", "ruff", "pyright", "jsonschema", "setuptools", "pip", "fakes", "tests", "src"}
 
 
 def values(name: str, ticket: str, description: str) -> dict[str, str]:
     if not NAME.fullmatch(name):
         raise ValueError(f"--name {name!r} must be lowercase words joined by hyphens, like 'weather-tools'")
+    package = name.replace("-", "_")
+    if keyword.iskeyword(package) or package in sys.stdlib_module_names or package in TAKEN:
+        raise ValueError(f"--name {name!r} is a Python keyword or names a module it would shadow; pick another")
     if not TICKET.fullmatch(ticket):
         raise ValueError(f"--ticket {ticket!r} must be a ticket key, like 'PROJ-12'")
     description = " ".join(description.split())
-    if not description or '"' in description or "\\" in description or "@@" in description:
-        raise ValueError("--description must be one non-empty line without quotes, backslashes or '@@'")
-    return {"@@project@@": name, "@@package@@": name.replace("-", "_"), "@@ticket@@": ticket,
+    if (not description or not description.isprintable() or '"' in description or "\\" in description
+            or "@@" in description or "{{" in description):
+        raise ValueError("--description must be one printable line without quotes, backslashes, '@@' or '{{'")
+    if len(description) > DESCRIPTION_MAX:
+        raise ValueError(f"--description is {len(description)} characters; keep it to {DESCRIPTION_MAX}")
+    return {"@@project@@": name, "@@package@@": package, "@@ticket@@": ticket,
             "@@description@@": description}
 
 
@@ -47,7 +57,7 @@ def render(kind: str, dest: Path, vals: dict[str, str]) -> list[Path]:
         raise ValueError(f"no template {kind!r} (have: {', '.join(KINDS)})")
     if dest.exists() and (not dest.is_dir() or any(dest.iterdir())):
         raise ValueError(f"{dest} is not an empty directory; scaffold into a new one")
-    created = not dest.exists()
+    first_new = next((p for p in [*reversed(dest.parents), dest] if not p.exists()), None)  # removed on failure
     written: list[Path] = []
     try:
         for f in sorted(p for p in src.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
@@ -66,11 +76,11 @@ def render(kind: str, dest: Path, vals: dict[str, str]) -> list[Path]:
         if left:
             raise ValueError("tokens left unfilled: " + "; ".join(left[:5]))
     except BaseException:
-        if created:
-            shutil.rmtree(dest, ignore_errors=True)
-        else:
-            for p in written:
-                p.unlink(missing_ok=True)
+        if first_new is not None:
+            shutil.rmtree(first_new, ignore_errors=True)
+        else:  # dest was there and empty: empty it again
+            for p in dest.iterdir():
+                shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
         raise
     return written
 
