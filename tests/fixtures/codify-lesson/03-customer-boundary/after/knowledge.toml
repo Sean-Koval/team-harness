@@ -1,5 +1,10 @@
+# A customer knowledge repository (ai-dlc KAN-475): a boundary: customer record lives only in one (KAN-503).
 [format]
 version = 1
+
+[repo]
+boundary = "customer"
+project = "harbor-portal"
 
 [check]
 roots = ["projects"]
