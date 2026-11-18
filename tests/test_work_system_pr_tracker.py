@@ -109,7 +109,7 @@ def run_main(tmp_path, monkeypatch, key, env):
     ev.write_text(json.dumps({"pull_request": pr}))
     summary = tmp_path / "summary.md"
     summary.write_text("")
-    for k in ("INPUT_ORG_FILE", "INPUT_JIRA_BASE_URL", "INPUT_JIRA_USER", "INPUT_JIRA_TOKEN"):
+    for k in ("INPUT_ORG_FILE", "INPUT_JIRA_BASE_URL", "INPUT_JIRA_USER", "INPUT_JIRA_TOKEN", "INPUT_ALLOW_UNVERIFIED"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(ev))
     monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
