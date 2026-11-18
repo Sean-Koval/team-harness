@@ -26,11 +26,14 @@ earlier. Rules:
    down, an SSO page instead of JSON) fails, and so does the work ticket when Jira credentials are set but Jira can't
    be read, unless `allow-unverified` is set. An org file marked `placeholder: true` is not enforced (a warning says
    so).
+8. The PR's shape (pr_shape.py, settings from AGENTS.md at the base commit): within its diff budget unless the body has
+   a `Budget: <reason>` line, no hand-edited generated files, and a `changes/<KEY>.md` fragment when it changes source.
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots) skip rules 1-6; the org's gates (rule 7) still hold, since an exemption is about the ticket, not the approvals.
-Reads the event payload, the PR's file list through the GitHub API, the org file, and Jira only with GET; writes
-nothing except the job summary.
+Rule 8 holds on a `no-ticket` PR too (without a key, no fragment is asked for); the exempt authors skip it.
+Reads the event payload, the PR's file list through the GitHub API, the org file and AGENTS.md, and Jira only with GET;
+writes nothing except the job summary.
 """
 
 from __future__ import annotations
@@ -54,6 +57,9 @@ _spec = spec_from_file_location("work_system_pr_tracker", os.path.join(os.path.d
                                                                        "tracker.py"))
 tracker = module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(tracker)  # type: ignore[union-attr]
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pr_shape  # noqa: E402  (rule 8, beside this file)
 
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
 EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
@@ -671,6 +677,11 @@ def _title_key(pr: dict, key_pattern: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def _out(name: str) -> str:
     return os.environ.get(f"INPUT_{name}", "").strip()
 
@@ -732,6 +743,15 @@ def main() -> int:
                             "were not checked")
     if reader is None and allow_unverified:
         work_labels = []
+
+    if not (res.exempt or "").startswith("author"):
+        base_sha = (pr.get("base") or {}).get("sha") or ""
+        cfg, cwarns = pr_shape.load_config(
+            (lambda: _org_at_base(repo, pr_shape.CONFIG_FILE, base_sha, _out("GITHUB_TOKEN"), api)) if base_sha else None,
+            files, lambda: _read(os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), pr_shape.CONFIG_FILE)))
+        serrs, swarns = pr_shape.check_shape(pr, files, cfg, key=res.key)
+        res.errors += serrs
+        res.warnings += cwarns + swarns
 
     gates: list[Gate] | None = None
     org_file = _out("ORG_FILE")
