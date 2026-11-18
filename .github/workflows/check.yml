@@ -107,7 +107,7 @@ jobs:
       # each test step runs even when an earlier one failed, so one failure can't hide the others' results
       - name: SessionEnd hook tests
         if: ${{ !cancelled() }}
-        run: python -m pytest -q -rs tests/test_knowledge_skills.py -k hook
+        run: python -m pytest -q -rs tests/test_knowledge_skills.py tests/test_usage_hook.py -k hook
       - name: Installer tests
         if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_install_local.py

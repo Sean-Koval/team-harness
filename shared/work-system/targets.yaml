@@ -31,6 +31,11 @@ session_hooks:
 - file: hooks/knowledge_session_end.py
   event: SessionEnd
   command: python3 "$HOME/.claude/hooks/knowledge_session_end.py"
+# One usage line per session for cost per PR (KAN-514); `data:` files land beside the hook.
+- file: hooks/usage_session_end.py
+  event: SessionEnd
+  command: python3 "$HOME/.claude/hooks/usage_session_end.py"
+  data: [hooks/prices.json]
 guide_fragment: guide/knowledge.md        # -> a marked block at the end of harnesses/<h>/CLAUDE.md
 env_example: env.example                  # -> harnesses/<h>/.env.example: the session's environment names
 harnesses:
