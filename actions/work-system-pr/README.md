@@ -81,7 +81,7 @@ exempt authors skip these rules; a `no-ticket` PR keeps the budget and generated
 
 ## Hold merge on the org's approval gates
 
-A company's org overlay (`orgs/<org>/org.yaml`, schema `team-harness.org/v1`) lists merge gates: approval tickets that
+A company's org overlay (`orgs/<org>/org.yaml`, schema `team-harness.org/v1` or `v2`) lists merge gates: approval tickets that
 must exist, and be approved, before a PR merges. Pass the file as `org-file` and the check enforces them.
 
 ```yaml
@@ -142,6 +142,32 @@ Set `allow-unverified: "true"` only for a repository that knowingly accepts appr
 pass with a warning (state `not checked`). Never set it at work before KAN-450. When the work ticket's labels can't be
 read, gates with `when: labels` apply, as gates with `when: paths` do when the PR's files can't be listed. Gates
 without `approved_statuses` or `links` only warn when Jira can't be read (state `not checked`).
+
+**What a v2 org adds** (KAN-373; the keys are in [`orgs/README.md`](../../orgs/README.md)):
+
+- A gate with a `stage` applies when the PR's base branch matches one of the stage's `branches`. A stage without
+  branches is a later step, so the check doesn't hold the merge for it. An unknown base branch applies the gate.
+- `when: issue_types` and `when: projects` match the work ticket. When its type can't be read, or the PR names no
+  work ticket (an exempt PR), the gate applies.
+- A gate with `approved_on: work` checks the work ticket itself, with the gate's statuses, field and `pr` link. It
+  needs no body line, and the work ticket must be in a work ticket type's project.
+- `approved_field` passes only when the Jira field holds one of its values. A missing field fails and names it.
+- `needs_approval: false` gates still need their line; the summary says nothing waits on them.
+- `github_review: true` needs an approving review of the PR's head commit from an active member of the approvers'
+  GitHub team. Each reviewer's latest approve, request-changes or dismissal counts, and the PR's author never does.
+  A team member's request for changes holds the gate until they approve or the review is dismissed.
+  It is unverified, and fails, when the reviews or the team can't be read.
+
+For `github_review`, pass `review-token`: a token that can read the org's team membership. Also run the check on
+reviews, so an approval re-runs it:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+```
 
 An org file marked `placeholder: true`, like the shipped example, is not enforced: the check warns instead. An org file
 that can't be read or doesn't fit the schema fails the check with the reason. The job summary lists each gate and its

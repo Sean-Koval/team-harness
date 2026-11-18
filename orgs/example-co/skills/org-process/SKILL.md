@@ -16,7 +16,8 @@ are, file no approval ticket, and say in the PR that the org overlay is not appl
 ## Ticket types
 
 The kinds of ticket the flow uses, where each one lives and what it is for. For example: the work ticket in
-`WORKPROJ`, and one approval ticket per gate in `SREPROJ` or `SECPROJ`.
+`WORKPROJ`, where SRE approves the work ticket itself, and one approval ticket per gate in `SECPROJ`, `ESSPROJ`,
+`ARCHPROJ` or `CHGPROJ`.
 
 ## Approval tickets
 

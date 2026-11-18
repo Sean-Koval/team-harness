@@ -28,22 +28,30 @@ below disagree, `org-process` wins: follow it, and say in the PR which row diffe
 
 Run each gate after the PR is open, in the order above:
 
-1. **Does it apply?** `always` applies to every PR. A path rule applies when any path the PR changes matches one of
-   its globs; a label rule when the PR or the work ticket carries one of its labels. If none matches, skip the gate
-   and say so in the hand-back.
-2. **File it, or ask for it.** Filed by `agent`: on the tracker server (another project and a work type, which
+1. **Does it apply?** A gate with a stage applies only at that stage. A stage that merges into a branch is this PR's
+   when the PR targets that branch; a later stage (no branch) is run by people at release, so list its gates in the
+   hand-back and do nothing for them now. Then `always` applies to every PR. A path rule applies when a path the PR
+   changes matches one of its globs; a label rule when the PR or the work ticket has one of its labels; an issue type
+   or project rule when the work ticket is of that type or in that project. If none matches, say so in the hand-back.
+2. **Approved on the work ticket?** File nothing and add no line. If its Links column names `pr`, add the PR to the
+   work ticket as a remote link (or its URL in the description): the PR check looks there, not in comments. Comment
+   that it waits on the Approvers. If the gate names a GitHub review, say in the hand-back which team must approve
+   the PR on GitHub; a person requests it.
+3. **File it, or ask for it.** Filed by `agent`: on the tracker server (another project and a work type, which
    ai-dlc's `tracker_create` doesn't set; tools: see `jira-ticket`), create one ticket of the gate's type, in its
    project, with its issue type and summary (fill `{work_key}`, `{pr_title}`, `{repo}` and `{pr_url}`). Its
    description gives the PR URL, what changes, the rollout and rollback, and what a reviewer should look at first.
    Link what the Links column names: `pr` as a remote link (or its URL in the description), `work` as `relates to`
    the work ticket, `repo` as the repository URL. Filed by `person`: file nothing; ask for that ticket in the PR,
-   and leave its line to them.
-3. **Record it.** Add the gate's PR line to the PR body (for example `SRE: <KEY>`), and comment on the work ticket:
-   `<PR line>: <KEY> for <PR URL>`. The PR check requires the line of every gate that applies before a merge.
+   and leave its line to them. One per repository: search the project for an open ticket for this repository first
+   and reuse its key; file one only when none is open.
+4. **Record it.** Add the gate's PR line to the PR body (for example `Infosec: <KEY>`), and comment on the work
+   ticket: `<PR line>: <KEY> for <PR URL>`. The PR check requires the line of every gate that applies at this
+   stage before a merge. A gate whose ticket nothing waits on still needs its line.
 
-One ticket per gate per PR. If one already exists (search its project by the summary), reuse its key instead of
-filing again. If a project or issue type doesn't exist, or you may not create in it, file nothing for that gate: say
-which value is missing, in the PR and on the work ticket.
+One ticket per gate per PR, unless the gate is one per repository. If one already exists (search its project by the
+summary), reuse its key instead of filing again. If a project or issue type doesn't exist, or you may not create in
+it, file nothing for that gate: say which value is missing, in the PR and on the work ticket.
 
 ## Review request: drafted, never posted
 

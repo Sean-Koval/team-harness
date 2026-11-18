@@ -43,11 +43,17 @@ inputs:
     default: ""
   org-file:
     description: >-
-      Path to an org.yaml (schema team-harness.org/v1) relative to the repository root (optional; absolute paths and
+      Path to an org.yaml (schema team-harness.org/v1 or v2) relative to the repository root (optional; absolute paths and
       ".." are refused). It is read at the PR's base commit
       through the contents API, so a PR can't loosen its own gates. Every merge gate whose `when` matches the PR then
       needs a `<pr_line>: <KEY>` line in the body naming a ticket in the gate's project; with Jira credentials the
       ticket must also have the gate's issue type and links and, if the gate lists approved_statuses, be in one of them.
+      A v2 gate approved on the work ticket needs no line; a gate with github_review needs an approving review.
+    default: ""
+  review-token:
+    description: >-
+      Token that can read the org's teams (organisation Members: read), for gates with github_review (optional; pass
+      from a secret). Without it github-token is tried, which usually can't read team membership, so such gates fail.
     default: ""
   allow-unverified:
     description: >-
@@ -88,4 +94,5 @@ runs:
         INPUT_JIRA_USER: ${{ inputs.jira-user }}
         INPUT_JIRA_TOKEN: ${{ inputs.jira-token }}
         INPUT_ORG_FILE: ${{ inputs.org-file }}
+        INPUT_REVIEW_TOKEN: ${{ inputs.review-token }}
         INPUT_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}

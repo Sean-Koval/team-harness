@@ -62,7 +62,7 @@ assert:
   # naming a placeholder project, site or space means it went ahead anyway. Trivially holds once a real org applies
   never:
     tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]}, tool: {regex: "(?i)create"}}}
-    where: {input: {regex: "\\b(WORKPROJ|SREPROJ|SECPROJ)\\b|COMPANY-(SITE|SPACE)"}}
+    where: {input: {regex: "\\b(WORKPROJ|SREPROJ|SECPROJ|ESSPROJ|ARCHPROJ|CHGPROJ)\\b|COMPANY-(SITE|SPACE)"}}
 ---
 id: work-approvals-filed-after-the-pr
 scope: job
@@ -74,7 +74,7 @@ assert:
   each:
     tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]},
                             tool: {regex: "(?i)create_?(jira_?)?issue|^tracker_create$"}}}
-    where: {input: {regex: "(?i)(\\bSRE approval:|\\bInfosec review:)"}}  # the org's approval summaries: scripts/sync_shared.py
+    where: {input: {regex: "(?i)(\\bInfosec review:|\\bESS request:|\\bArchitecture review:|\\bRelease:)"}}  # the org's approval summaries: scripts/sync_shared.py
   requires_prior: {event: pr.open}
 ---
 id: work-approvals-filed-after-own-pr
@@ -86,7 +86,7 @@ assert:
   each:
     tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]},
                             tool: {regex: "(?i)create_?(jira_?)?issue|^tracker_create$"}}}
-    where: {input: {regex: "(?i)(\\bSRE approval:|\\bInfosec review:)"}}  # the org's approval summaries: scripts/sync_shared.py
+    where: {input: {regex: "(?i)(\\bInfosec review:|\\bESS request:|\\bArchitecture review:|\\bRelease:)"}}  # the org's approval summaries: scripts/sync_shared.py
   requires_prior: {tool: {kind: shell, ops: [pr.open]}}
 ---
 id: work-review-request-never-posted
