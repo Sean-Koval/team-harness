@@ -1431,7 +1431,7 @@ def _http(words: list[str], stdin: str = "") -> str | None:
         if MERGE_RULE != "allowed" and "github" in url.lower():
             if GH_API_MERGE.search(path) or GH_MUTATIONS.search(payload):
                 return NEVER_MERGE
-            if GH_DISMISS.search(path) or (path.rstrip("/").endswith("/reviews") and _approves(payload)):
+            if GH_DISMISS.search(path) or (path.rstrip("/").endswith(("/reviews", "/graphql")) and _approves(payload)):
                 return NEVER_APPROVE
         if ATLASSIAN_URL.search(url) and write:
             return ("a write to Jira or Confluence over HTTP skips the tracker and wiki rules: use the tracker MCP "
