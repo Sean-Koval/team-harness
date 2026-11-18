@@ -53,6 +53,7 @@ params:
   session_env: |
     GITHUB_MCP_AUTHORIZATION=        # binding github: "Bearer <token>"
     ATLASSIAN_MCP_AUTHORIZATION=     # binding atlassian: unused until a credential method is approved
+    WORK_COPILOT_DATA_DIR=           # binding work-copilot, laptop only: its data directory (empty: its default)
   # Where the knowledge skills' preflight says ai-dlc comes from. The work environments do not install it: they name
   # no personal account or repository (the wall), and a company installs tools from its own approved source.
   ai_dlc_install: >-

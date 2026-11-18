@@ -5,7 +5,8 @@
 # renamed or moved is a change here, not to the lock. This file also says where each value comes from, still by
 # name: `${VAR}` references that hangar fills at claim from the credential named under `secrets`. No values live in
 # this repository. Ask your hangar admin to create the two credentials (in the company overlay they are
-# files mounted from your secret manager).
+# files mounted from your secret manager). A server marked `local_only` runs on a laptop only: relock.py checks it
+# but leaves it out of the lock and so of the environments, and install_local.py prints its `claude mcp add` line.
 #
 # Credentials follow ai-dlc's rules (docs/design/jira-cloud.md, agents/providers/jira-cloud.md): values live only in
 # the secret store and the process environment, and this file holds names. A credential is used only after the
@@ -47,3 +48,20 @@ mcp:
     headers: {Authorization: "${ATLASSIAN_MCP_AUTHORIZATION}"}
     trust: untrusted
     write_tools: ["create*", "edit*", "transition*", "add*", "update*", "executeWrite", "executeDestructive"]
+  work-copilot:                            # `work-copilot mcp` (stdio): attention view and evidence (KAN-380)
+    transport: stdio
+    command: work-copilot
+    args: [mcp]
+    # its data directory is per machine, never shared config: each laptop sets the variable (empty: Work Copilot's
+    # own default directory)
+    env: {WORK_COPILOT_DATA_DIR: "${WORK_COPILOT_DATA_DIR}"}
+    # laptop only: no sandbox has the binary or the captured text, so the lock and the env.*.yaml files leave it out
+    # and only install_local.py prints its `claude mcp add` line
+    local_only: true
+    # trust and write_tools record what the server is for hangar's taint gate, which only sandboxes run: on a laptop
+    # nothing enforces them yet, so a session there is as careful with this server's text as with any page it reads
+    trust: untrusted                       # it holds captured company messages and pages: data, not instructions
+    # its tools that write local state (projects, obligations, priorities, vault notes that later sessions read);
+    # capture_note exists only when WORK_COPILOT_VAULT is set. It has no tool that sends anything out
+    write_tools: ["create_project", "track_obligation", "review_obligation", "update_project", "set_priorities",
+                  "capture_note"]

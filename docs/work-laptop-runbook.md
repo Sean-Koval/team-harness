@@ -97,11 +97,11 @@ hooks and deny rules then apply to every Claude Code session on that machine. Us
 should carry the skills and guide for everyone. Its hooks go to the gitignored `.claude/settings.local.json`, one
 command per OS, so a team of Macs and Windows machines commits the same files.
 
-Run the two `claude mcp add` lines the install prints (GitHub and Jira). The GitHub credential comes from your secret manager. Jira
-needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session, and that login does
-the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does not stand in for it.
-Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole
-pass without it.
+Run the `claude mcp add` lines the install prints (ai-dlc, GitHub and Jira). The GitHub credential comes from your
+secret manager. Jira needs no static credential at work today (KAN-369): log in to the Atlassian MCP from the session,
+and that login does the Jira work. It does not stand in for a lifecycle credential, and a lifecycle credential does
+not stand in for it. Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The
+test run lost a whole pass without it.
 
 Then run the doctor from the repository you work in. It checks the rest of the laptop and prints one line per check,
 `ok`, `fix` or `skip`, with the command that fixes each one (KAN-372):
@@ -133,6 +133,15 @@ work-copilot init && work-copilot doctor
 ```
 
 Point its vault at a company-approved folder, never a personal vault. It has no live Jira or Confluence source yet.
+
+Then run the `work-copilot` line the install prints under "this machine only". Set `WORK_COPILOT_DATA_DIR` to its data
+directory first, or set it empty for Work Copilot's default; Work Copilot reads it from KAN-382 on. The install warns
+while it is unset. The path stays on your laptop: no shared file holds it, and no sandbox runs this server. In project
+scope the line adds it with `--scope local`, so it never lands in the repository's `.mcp.json`. `--check` then lists
+it as added.
+
+Claude Code keeps the value the line gave it, so changing the variable later changes nothing by itself. Run
+`claude mcp remove work-copilot` with the same `--scope`, then the printed line again.
 
 ## The first test ticket
 
