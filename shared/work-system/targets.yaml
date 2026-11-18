@@ -33,6 +33,9 @@ session_hooks:
   command: python3 "$HOME/.claude/hooks/knowledge_session_end.py"
 guide_fragment: guide/knowledge.md        # -> a marked block at the end of harnesses/<h>/CLAUDE.md
 env_example: env.example                  # -> harnesses/<h>/.env.example: the session's environment names
+# Stage subagents (KAN-513), each -> native/claude-code/agents/<file>: its `model:` is a profile tier
+# ({{model_cheap}}, {{model_build}}, {{model_strong}}), so a harness runs only the models its profile names.
+agents: [agents/triage.md, agents/review-lint.md, agents/designer.md]
 harnesses:
   suite-default:
     profile: profiles/suite-default.yaml

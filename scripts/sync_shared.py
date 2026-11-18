@@ -12,6 +12,8 @@ file and each harness gets concrete text. For each target harness this:
 - renders `guide_fragment:` into the harness's `CLAUDE.md` (and `AGENTS.md`, its copy), between the markers FRAGMENT_BEGIN and FRAGMENT_END (a
   write appends the block when the markers are missing); the rest of the guide is the harness's own;
 - renders `env_example:` into `harnesses/<h>/.env.example`, the session's environment contract (names only);
+- renders each `agents:` file (a Claude Code subagent, `<stage>.md`) into `harnesses/<h>/native/claude-code/agents/`,
+  its `model:` filled from the profile's `model_*` tiers, so the lock pins them with the other native files;
 - deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
   own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
@@ -511,6 +513,12 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
                     problems.append(f"{h}: {name} has broken {t['guide_fragment']} markers (one without the other)")
                 elif want_guide != current:
                     stale.append((src, guide, {"": want_guide.encode("utf-8")}))
+        for rel in t.get("agents") or []:
+            src = shared / rel
+            dst = hd / "native" / "claude-code" / "agents" / src.name
+            want_agent = render(src.read_bytes(), params, f"{h}: {rel}", problems)
+            if not dst.is_file() or dst.read_bytes() != want_agent:
+                stale.append((src, dst, {"": want_agent}))
         if t.get("env_example"):
             src = shared / t["env_example"]
             dst = hd / ".env.example"

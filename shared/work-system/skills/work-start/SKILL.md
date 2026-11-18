@@ -7,6 +7,9 @@ description: Use at the start of any coding task that has no ticket key yet (a r
 
 Nothing is edited before the work has a ticket key. If you were given a key, skip to step 3.
 
+Steps 1 and 2 are intake: delegate them to the `triage` subagent (it runs on {{model_cheap}}), which finds or drafts
+the ticket and says whether it is ready, and file what it drafts yourself.
+
 1. **Find the ticket.** Search {{tracker}} with `tracker_search` (`text`, `labels`, `state`), or with the tracker
    server's search (tools: see `jira-ticket`). Look in the project's epic for an open ticket that already covers the
    request: {{tracker_open_query}}.
@@ -27,7 +30,9 @@ Nothing is edited before the work has a ticket key. If you were given a key, ski
    moving it is not.
 3. **Name the branch** `<KEY>-<short-slug>`, for example `SVC-412-retry-queue`. In a cloud session whose branch name
    is assigned for you, keep that branch: the key in the PR title and the `Jira:` line link it instead.
-4. **Read the ticket** with `jira-ticket`, and begin.
+4. **Read the ticket** with `jira-ticket`, and begin. When it needs a design first (an interface, a choice between
+   approaches, work across repositories, or a split into several tickets), delegate that to the `designer` subagent
+   (it runs on {{model_strong}}) before writing code.
 
 Some work has no ticket at all: a typo fix, an outside contribution, a dependency bump. It goes on a branch starting
 `nokey/`, and its PR carries the `no-ticket` label. That is a deliberate choice, visible in the PR, never a default.

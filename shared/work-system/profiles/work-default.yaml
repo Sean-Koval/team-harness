@@ -36,6 +36,12 @@ params:
     `project = <KEY> AND issuetype = Epic AND labels = roadmap` on the tracker server
   # Site and space pairs where a session may write wiki pages itself, JSON. Empty: only the render job writes.
   wiki_write_allow: '[]'
+  # Model per stage (KAN-513): the stage subagents' `model:` and the extraction model. Only models the company has
+  # approved go here. Until the cheaper tiers are approved, every tier is the model harness.lock pins, so routing
+  # changes nothing at work; set model_cheap and model_build once the company approves them.
+  model_cheap: "claude-opus-5-5"
+  model_build: "claude-opus-5-5"
+  model_strong: "claude-opus-5-5"
   merge_mode: "never"
   merge_rule: >-
     **Merging: never.** You never merge, approve a PR, enable auto-merge or dismiss a review at work. The approvers
