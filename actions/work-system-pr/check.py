@@ -720,7 +720,7 @@ def main() -> int:
         except tracker.BadAnswer as e:
             res.errors.append(f"{work_key}: {e}; the ticket was not checked")
         except tracker.TrackerUnreachable as e:
-            # credentials are set, so the repository asked for the ticket check: fail closed, as the gates do
+            # a tracker is configured, so the repository asked for the ticket check: fail closed, as the gates do
             msg = f"{reader.label} was not reachable ({e}); the ticket {work_key} itself was not checked"
             if allow_unverified or not res.key:
                 res.warnings.append(msg + (" (allow-unverified is set)" if res.key else ""))

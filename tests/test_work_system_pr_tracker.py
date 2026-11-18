@@ -109,7 +109,7 @@ def run_main(tmp_path, monkeypatch, key, env):
     ev.write_text(json.dumps({"pull_request": pr}))
     summary = tmp_path / "summary.md"
     summary.write_text("")
-    for k in ("INPUT_ORG_FILE", "INPUT_JIRA_BASE_URL", "INPUT_JIRA_USER", "INPUT_JIRA_TOKEN", "INPUT_ALLOW_UNVERIFIED"):
+    for k in ("INPUT_ORG_FILE", "INPUT_JIRA_BASE_URL", "INPUT_JIRA_USER", "INPUT_JIRA_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(ev))
     monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
@@ -140,9 +140,9 @@ def test_rule_6_end_to_end_through_a_fake_tracker(tmp_path, monkeypatch, fakes, 
 def test_a_missing_ticket_fails_and_an_unreachable_tracker_fails_closed(tmp_path, monkeypatch, fakes):
     rc, summary = run_main(tmp_path, monkeypatch, "KAN-999", A)
     assert rc == 1 and "KAN-999 could not be read from Tracker A (no such item)" in summary
-    # credentials are set, so an unanswered ticket fails (KAN-365) unless allow-unverified is set
+    # a configured tracker that doesn't answer fails the check (KAN-365), unless allow-unverified is set
     rc, summary = run_main(tmp_path, monkeypatch, "KAN-999", B)
-    assert rc == 1 and "Tracker B was not reachable (tracker B timed out)" in summary
+    assert rc == 1 and "error: Tracker B was not reachable (tracker B timed out)" in summary
     rc, summary = run_main(tmp_path, monkeypatch, "KAN-999", {**B, "ALLOW_UNVERIFIED": "true"})
     assert rc == 0 and "Tracker B was not reachable (tracker B timed out)" in summary
     assert "(allow-unverified is set)" in summary
