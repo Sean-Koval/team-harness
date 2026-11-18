@@ -23,6 +23,9 @@ params:
   # How the work-system skills name the tracker server and its searches; the skills themselves name no vendor
   # server or query language (seam rule 6, KAN-502). tracker_server is one of mcp_bindings' tracker servers.
   tracker_server: "named `atlassian`"
+  # The server the skills name for the wiki role (confluence-context reads pages with it); one of mcp_bindings'
+  # wiki servers.
+  wiki_server: "named `atlassian`"
   tracker_open_query: >-
     `project = <KEY> AND statusCategory != Done AND text ~ "<words>"` on the tracker server
   tracker_epic_query: >-

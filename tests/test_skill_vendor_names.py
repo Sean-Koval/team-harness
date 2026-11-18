@@ -76,6 +76,13 @@ def test_the_named_tracker_server_is_the_bound_one(profile):
     assert named and set(named) <= set(json.loads(params["mcp_bindings"])["tracker"]), profile.name
 
 
+@pytest.mark.parametrize("profile", sorted(PROFILES.glob("*.yaml")), ids=lambda p: p.stem)
+def test_the_named_wiki_server_is_the_bound_one(profile):
+    params = yaml.safe_load(profile.read_text(encoding="utf-8"))["params"]
+    named = re.findall(r"`([^`]+)`", params["wiki_server"])
+    assert named and set(named) <= set(json.loads(params["mcp_bindings"])["wiki"]), profile.name
+
+
 @functools.cache
 def _pinned_mcp_server() -> str | None:
     """The pinned ai-dlc's mcp_server.py: from a checkout (AI_DLC_CHECKOUT) at the pin, or from the `ai-dlc` CLI on
