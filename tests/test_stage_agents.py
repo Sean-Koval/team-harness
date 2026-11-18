@@ -153,8 +153,15 @@ def test_the_stage_servers_follow_the_bindings():
                 "github": ["github"]}
     assert sync_shared.stage_mcp_tools({"mcp_bindings": json.dumps(bindings)}) == \
         "mcp__ai-dlc__*, mcp__corp-jira__*, mcp__wiki_corp__*"
-    for bad in ('{"github": ["github"]}', "not json", "[]", ""):
+    for bad in ('{"github": ["github"]}', '{"tracker": "atlassian"}', "not json", "[]", ""):
         assert sync_shared.stage_mcp_tools({"mcp_bindings": bad}) == ""
+
+
+@pytest.mark.parametrize("h", HARNESSES)
+def test_the_stage_servers_are_the_locks(h):
+    # the allowlist names servers as the lock binds them, and doctor holds an install to the lock's names
+    lock = yaml.safe_load((ROOT / "harnesses" / h / "harness.lock").read_text(encoding="utf-8"))
+    assert read_servers(h) <= {m["name"] for m in lock["binding"]["mcp"]}, (h, sorted(read_servers(h)))
 
 
 def test_a_harness_binding_no_read_server_is_a_problem(tmp_path):

@@ -178,7 +178,9 @@ def stage_mcp_tools(params: dict) -> str:
     """The generated `{{stage_mcp_tools}}` (KAN-544): the MCP part of the stage subagents' `tools:` allowlist, one
     `mcp__<server>__*` for each server the profile binds as tracker, wiki or ai-dlc (`mcp_bindings`), spelled as
     Claude Code spells a server in a tool name. A stage reaches no other server's tools (the GitHub server's, say).
-    Empty when the bindings name none, or can't be read (`_json_params` reports that)."""
+    The names are the lock's (`binding.mcp`, which doctor holds an install to): a server added under another name,
+    such as a connector or a run-time WORK_SYSTEM_MCP_BINDINGS entry, is not in the list. Empty when the bindings
+    name none, or can't be read (`_json_params` reports that)."""
     try:
         bindings = json.loads(str(params.get("mcp_bindings") or "{}"))
     except ValueError:
@@ -186,7 +188,7 @@ def stage_mcp_tools(params: dict) -> str:
     if not isinstance(bindings, dict):
         return ""
     servers = {re.sub(r"[^A-Za-z0-9_-]", "_", s) for role in STAGE_READ_ROLES
-               for s in (bindings.get(role) or []) if isinstance(s, str) and s}
+               if isinstance(bindings.get(role), list) for s in bindings[role] if isinstance(s, str) and s}
     return ", ".join(f"mcp__{s}__*" for s in sorted(servers))
 
 
