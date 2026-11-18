@@ -24,6 +24,9 @@ def skill_files() -> list[Path]:
     for root in SKILL_ROOTS:
         for skill in (ROOT / root).rglob("SKILL.md"):
             out += [f for f in skill.parent.rglob("*.md")]
+    # the stage subagents (KAN-513): their sources and every harness's rendered copy
+    out += list((ROOT / "shared/work-system/agents").glob("*.md"))
+    out += list((ROOT / "harnesses").glob("*/native/claude-code/agents/*.md"))
     return sorted(set(out))
 
 

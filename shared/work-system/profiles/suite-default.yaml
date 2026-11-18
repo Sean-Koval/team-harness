@@ -32,6 +32,11 @@ params:
     `project = <KEY> AND issuetype = Epic AND labels = roadmap` on the tracker server
   # Site and space pairs where a session may write wiki pages itself, JSON. Empty: only the render job writes.
   wiki_write_allow: '[]'
+  # Model per stage (KAN-513): the stage subagents' `model:` and the extraction model. Cheap for triage, lint-style
+  # review and extraction; build for routine implementation (reserved: no stage reads it yet); strong for design.
+  model_cheap: "claude-haiku-5-5"
+  model_build: "claude-sonnet-5-5"
+  model_strong: "claude-opus-5-5"
   merge_mode: "allowed"
   merge_rule: >-
     **Merging (suite repositories only):** you may merge your own PR once every required check is green, every review

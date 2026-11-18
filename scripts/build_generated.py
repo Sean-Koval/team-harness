@@ -71,6 +71,7 @@ def generated_prefixes(root: Path) -> list[str]:
         out += [f"harnesses/{h}/skills/{s}/" for s in skills]
         hooks = [t["hook"], *[f for x in t.get("session_hooks") or [] for f in [x["file"], *(x.get("data") or [])]]]
         out += [f"harnesses/{h}/native/claude-code/hooks/{Path(x).name}" for x in hooks]
+        out += [f"harnesses/{h}/native/claude-code/agents/{Path(x).name}" for x in t.get("agents") or []]
         out.append(f"harnesses/{h}/.env.example")
     for d in sorted((root / "harnesses").iterdir()):
         if (d / hl.LOCK_FILE).is_file():
