@@ -136,3 +136,10 @@ jobs:
       - name: Guide PowerShell
         if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_guide_powershell.py
+      # the scaffold template's verify line in Windows PowerShell 5.1, as a coworker without Git Bash runs it: it
+      # passes on a clean render and stops at ruff on a lint error (KAN-547). One Python is enough for a shell line.
+      - name: Scaffold verify in Windows PowerShell
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        env:
+          SCAFFOLD_POWERSHELL_REQUIRED: "1"
+        run: python -m pytest -q -rs tests/test_scaffold_powershell.py
