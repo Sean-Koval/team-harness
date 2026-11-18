@@ -7,4 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 RUN git clone https://github.com/Sean-Koval/flightdeck.git /workspace && git -C /workspace checkout -q --detach 6a79ebc1f3689b8185e14c29b4b24eba5d4f038d \
     && cd /workspace && uv export --frozen --no-hashes --no-emit-project --all-groups > /tmp/requirements.txt \
     && uv pip install --system -r /tmp/requirements.txt pytest
+# DuckDB loads its icu extension on first use, downloading it, and the grader has no network: fetch it now.
+# The same call fails offline in flightdeck-53 and -82 with the reference fix (KAN-222, re-checked 2026-11-18).
+RUN python -c "import duckdb; duckdb.connect(config={'TimeZone': 'UTC'})"
 WORKDIR /workspace

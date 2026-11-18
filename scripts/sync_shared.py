@@ -8,10 +8,14 @@ file and each harness gets concrete text. For each target harness this:
 
 - renders `shared/work-system/skills/<name>/` into `harnesses/<h>/skills/<name>/` (the whole directory), for every
   shared skill directory (a new one needs no edit to targets.yaml) plus the harness's own `skills:` from targets.yaml;
-- renders the hook into `harnesses/<h>/native/claude-code/hooks/`, and each `session_hooks:` entry beside it;
+- renders the hook into `harnesses/<h>/native/claude-code/hooks/`, and each `session_hooks:` entry beside it, with
+  the entry's `data:` files (such as a price table) copied there too;
 - renders `guide_fragment:` into the harness's `CLAUDE.md` (and `AGENTS.md`, its copy), between the markers FRAGMENT_BEGIN and FRAGMENT_END (a
   write appends the block when the markers are missing); the rest of the guide is the harness's own;
 - renders `env_example:` into `harnesses/<h>/.env.example`, the session's environment contract (names only);
+- renders each `agents:` file (a Claude Code subagent, `<stage>.md`) into `harnesses/<h>/native/claude-code/agents/`,
+  its `model:` filled from the profile's `model_*` tiers, so the lock pins them with the other native files, and
+  deletes any other `.md` there that the harness does not declare as its own (`own_agents:`);
 - deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
   own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
@@ -56,10 +60,25 @@ PLACEHOLDER = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}")
 
 # The work/home wall: these harnesses never carry a company's org overlay.
 NO_ORG = frozenset({"suite-default"})
-ORG_SCHEMA = "team-harness.org/v1"
-ORG_KEYS = {"schema", "name", "placeholder", "params", "ticket_types", "gates", "review_request"}
+ORG_SCHEMA_V1 = "team-harness.org/v1"
+ORG_SCHEMA = "team-harness.org/v2"  # v2 adds review teams, stages and the v2 gate keys; v1 files still validate
+ORG_SCHEMAS = {ORG_SCHEMA_V1, ORG_SCHEMA}
+ORG_KEYS_V1 = {"schema", "name", "placeholder", "params", "ticket_types", "gates", "review_request"}
+ORG_KEYS = ORG_KEYS_V1 | {"reviewers", "stages"}
 TICKET_KEYS = {"id", "project", "issue_type", "role", "summary"}
-GATE_KEYS = {"id", "ticket", "when", "pr_line", "links", "filed_by", "approved_statuses"}
+GATE_KEYS_V1 = {"id", "ticket", "when", "pr_line", "links", "filed_by", "approved_statuses"}
+GATE_KEYS = GATE_KEYS_V1 | {"approved_on", "approvers", "needs_approval", "github_review", "scope", "stage", "approved_field"}
+WHEN_KEYS_V1 = {"paths", "labels"}
+WHEN_KEYS = WHEN_KEYS_V1 | {"issue_types", "projects"}  # the work ticket's issue type and project
+# approved_on: ticket, a separate approval ticket; work, recorded on the work ticket. (Not `on:`, which YAML reads as
+# the boolean true.)
+GATE_ON = {"ticket", "work"}
+SCOPES = {"pr", "repo"}  # repo: one approval ticket for the repository, reused across PRs
+REVIEWER_KEYS = {"name", "github_team"}
+STAGE_KEYS = {"name", "branches"}
+REVIEWER_ID = re.compile(r"^[a-z][a-z0-9-]*$")
+GITHUB_TEAM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")  # org/team-slug
+JIRA_FIELD = re.compile(r"^(customfield_[0-9]+|[a-z][A-Za-z0-9]*)$")
 REVIEW_KEYS = {"room", "template"}
 ROLES = {"work", "approval"}
 LINKS = {"pr", "work", "repo"}
@@ -168,23 +187,137 @@ def _template_problems(where: str, template: str, allowed: set[str]) -> list[str
     return [f"{where} field {{{f}}} is not one of {sorted(allowed)}" for f in sorted(fields - allowed)]
 
 
-def _unknown(where: str, d: dict, allowed: set[str], problems: list[str]) -> None:
-    for k in sorted(set(d) - allowed):
-        problems.append(f"{where}: unknown key {k!r}")
+def _unknown(where: str, d: dict, allowed: set[str], problems: list[str], v2_only: set[str] = frozenset()) -> None:
+    for k in sorted(set(d) - allowed, key=str):
+        hint = f" (it needs schema {ORG_SCHEMA!r})" if k in v2_only else ""
+        problems.append(f"{where}: unknown key {k!r}{hint}")
+
+
+def _str_list(v: object) -> bool:
+    return isinstance(v, list) and bool(v) and all(isinstance(x, str) and x.strip() for x in v)
+
+
+def _validate_reviewers(org: dict, where: str, problems: list[str]) -> dict[str, dict]:
+    reviewers = org.get("reviewers", {})
+    if not isinstance(reviewers, dict):
+        problems.append(f"{where}: reviewers must be a mapping of review team ids (sre: {{name: SRE}})")
+        return {}
+    out: dict[str, dict] = {}
+    for rid, r in reviewers.items():
+        w = f"{where}: reviewers.{rid}"
+        if not isinstance(rid, str) or not REVIEWER_ID.match(rid):
+            problems.append(f"{w}: a review team id is lower case letters, digits and - (like architecture-board)")
+            continue
+        if not isinstance(r, dict):
+            problems.append(f"{w}: must be a mapping with name (and optionally github_team)")
+            continue
+        _unknown(w, r, REVIEWER_KEYS, problems)
+        if not isinstance(r.get("name"), str) or not r["name"].strip():
+            problems.append(f"{w}: name is required (a string)")
+        if "github_team" in r and (not isinstance(r["github_team"], str) or not GITHUB_TEAM.match(r["github_team"])):
+            problems.append(f"{w}: github_team must be <org>/<team-slug>")
+        out[rid] = r
+    return out
+
+
+def _validate_stages(org: dict, where: str, problems: list[str]) -> set[str]:
+    stages = org.get("stages", [])
+    if not isinstance(stages, list):
+        problems.append(f"{where}: stages must be a list of {{name, branches}}")
+        return set()
+    names: set[str] = set()
+    for i, st in enumerate(stages):
+        w = f"{where}: stages[{i}]"
+        if not isinstance(st, dict):
+            problems.append(f"{w}: not a mapping")
+            continue
+        _unknown(w, st, STAGE_KEYS, problems)
+        name = st.get("name")
+        if not isinstance(name, str) or not name.strip():
+            problems.append(f"{w}: name is required (a string)")
+        elif name in names:
+            problems.append(f"{w}: stage {name!r} is not unique")
+        else:
+            names.add(name)
+        if "branches" in st and not _str_list(st["branches"]):
+            problems.append(f"{w}: branches must be a non-empty list of branch globs")
+    return names
+
+
+def _validate_gate_v2(g: dict, w: str, types: dict[str, dict], reviewers: dict[str, dict], stages: set[str],
+                      problems: list[str]) -> None:
+    """The v2 keys of one gate, and how they combine."""
+    on = g.get("approved_on", "ticket")
+    if on not in GATE_ON:
+        problems.append(f"{w}: approved_on must be ticket or work")
+        return
+    needs = g.get("needs_approval", True)
+    if not isinstance(needs, bool):
+        problems.append(f"{w}: needs_approval must be true or false")
+    review = g.get("github_review", False)
+    if not isinstance(review, bool):
+        problems.append(f"{w}: github_review must be true or false")
+    scope = g.get("scope", "pr")
+    if scope not in SCOPES:
+        problems.append(f"{w}: scope must be pr or repo")
+    if "approvers" in g:
+        if g["approvers"] not in reviewers:
+            problems.append(f"{w}: approvers {g['approvers']!r} is not a reviewers id")
+        elif review is True and not reviewers[g["approvers"]].get("github_team"):
+            problems.append(f"{w}: github_review needs reviewers.{g['approvers']}.github_team")
+    elif review is True:
+        problems.append(f"{w}: github_review needs approvers (a reviewers id with a github_team)")
+    if "stage" in g and g["stage"] not in stages:
+        problems.append(f"{w}: stage {g['stage']!r} is not one of the stages")
+    field = g.get("approved_field")
+    if field is not None:
+        if not isinstance(field, dict) or set(field) != {"field", "values"} or not isinstance(field.get("field"), str) \
+                or not JIRA_FIELD.match(field["field"]) or not _str_list(field.get("values")):
+            problems.append(f"{w}: approved_field must be {{field: customfield_NNNNN, values: [names]}}")
+    approved = "approved_statuses" in g or field is not None
+    if needs is False and (approved or review is True):
+        problems.append(f"{w}: needs_approval: false takes no approved_statuses, approved_field or github_review")
+    links = g.get("links", [])
+    if on == "work":
+        for k in ("ticket", "pr_line", "filed_by"):
+            if k in g:
+                problems.append(f"{w}: an approved_on: work gate is approved on the work ticket, so it has no {k}")
+        if not any(t.get("role") == "work" for t in types.values()):
+            problems.append(f"{w}: approved_on: work needs a ticket_types entry with role work")
+        if scope != "pr":
+            problems.append(f"{w}: an approved_on: work gate is per PR (scope: pr)")
+        if isinstance(links, list) and set(links) - {"pr"}:
+            problems.append(f"{w}: an approved_on: work gate may link only pr (the work ticket links the PR)")
+        if needs is False:
+            problems.append(f"{w}: an approved_on: work gate is an approval; needs_approval: false has nothing to record")
+        elif not approved and review is not True:
+            problems.append(f"{w}: an approved_on: work gate needs approved_statuses, approved_field or github_review")
+        elif approved and not (isinstance(links, list) and "pr" in links):
+            problems.append(f"{w}: an approved_on: work gate approved in Jira needs links: [pr], so the approval is "
+                            "for this PR's work ticket")
+    elif scope == "repo" and isinstance(links, list):
+        if set(links) & {"pr", "work"}:
+            problems.append(f"{w}: a scope: repo ticket is shared by the repository's PRs, so it links repo, not "
+                            "pr or work")
+        if "repo" not in links:
+            problems.append(f"{w}: a scope: repo gate needs links: [repo]")
 
 
 def validate_org(org: object, where: str, profile_keys: set[str] | None = None) -> list[str]:
-    """Problems with an org.yaml (team-harness.org/v1); empty when it is valid."""
+    """Problems with an org.yaml (team-harness.org/v1 or v2); empty when it is valid."""
     problems: list[str] = []
     if not isinstance(org, dict):
         return [f"{where}: not a mapping"]
-    _unknown(where, org, ORG_KEYS, problems)
-    if org.get("schema") != ORG_SCHEMA:
-        problems.append(f"{where}: schema must be {ORG_SCHEMA!r}")
+    v2 = org.get("schema") == ORG_SCHEMA
+    if org.get("schema") not in ORG_SCHEMAS:
+        problems.append(f"{where}: schema must be {ORG_SCHEMA!r} (or the older {ORG_SCHEMA_V1!r})")
+    _unknown(where, org, ORG_KEYS if v2 else ORG_KEYS_V1, problems, ORG_KEYS - ORG_KEYS_V1)
     if not isinstance(org.get("name"), str) or not org.get("name"):
         problems.append(f"{where}: name must be a non-empty string")
     if not isinstance(org.get("placeholder", False), bool):
         problems.append(f"{where}: placeholder must be true or false")
+    reviewers = _validate_reviewers(org, where, problems) if v2 else {}
+    stages = _validate_stages(org, where, problems) if v2 else set()
 
     params = org.get("params") or {}
     if not isinstance(params, dict):
@@ -239,8 +372,11 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
         if not isinstance(g, dict):
             problems.append(f"{w}: not a mapping")
             continue
-        _unknown(w, g, GATE_KEYS, problems)
-        for k in ("id", "ticket", "pr_line", "filed_by"):
+        _unknown(w, g, GATE_KEYS if v2 else GATE_KEYS_V1, problems, GATE_KEYS - GATE_KEYS_V1)
+        on_work = v2 and g.get("approved_on") == "work"
+        if True in g:
+            problems.append(f"{w}: a key reads as true: YAML reads `on:` as a boolean; write approved_on: instead")
+        for k in ("id",) if on_work else ("id", "ticket", "pr_line", "filed_by"):
             if not isinstance(g.get(k), str) or not g.get(k):
                 problems.append(f"{w}: {k} is required (a string)")
         if isinstance(g.get("id"), str):
@@ -257,15 +393,17 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
                 problems.append(f"{w}: pr_line {line!r} is not unique")
             pr_lines.add(line.lower())
         ticket = g.get("ticket")
-        if isinstance(ticket, str) and ticket:
+        if isinstance(ticket, str) and ticket and not on_work:
             if ticket not in types:
                 problems.append(f"{w}: ticket {ticket!r} is not a ticket_types id")
             elif types[ticket].get("role") != "approval":
                 problems.append(f"{w}: ticket {ticket!r} must have role approval (only approval tickets gate a PR)")
         when = g.get("when")
+        when_keys = WHEN_KEYS if v2 else WHEN_KEYS_V1
         if when != "always":
-            if not isinstance(when, dict) or not when or set(when) - {"paths", "labels"}:
-                problems.append(f"{w}: when must be always, {{paths: [globs]}} or {{labels: [names]}}")
+            if not isinstance(when, dict) or not when or set(when) - when_keys:
+                more = ", {issue_types: [names]}, {projects: [keys]}" if v2 else ""
+                problems.append(f"{w}: when must be always, {{paths: [globs]}}, {{labels: [names]}}{more}")
             else:
                 for k, v in when.items():
                     if not isinstance(v, list) or not v or not all(isinstance(x, str) and x for x in v):
@@ -276,9 +414,10 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
         if not isinstance(links, list) or set(links) - LINKS:
             problems.append(f"{w}: links must be a list of {sorted(LINKS)}")
         statuses = g.get("approved_statuses")
-        if statuses is not None and (not isinstance(statuses, list) or not statuses
-                                     or not all(isinstance(x, str) and x for x in statuses)):
+        if statuses is not None and not _str_list(statuses):
             problems.append(f"{w}: approved_statuses must be a non-empty list of status names")
+        if v2:
+            _validate_gate_v2(g, w, types, reviewers, stages, problems)
     if not gate_ids:
         problems.append(f"{where}: gates must list at least one gate")
 
@@ -306,11 +445,24 @@ def _code(s: object) -> str:
 def _when(when: object) -> str:
     if when == "always":
         return "always"
+    say = {"paths": "a changed path matches {}", "labels": "the PR or work ticket has label {}",
+           "issue_types": "the work ticket is a {}", "projects": "the work ticket is in project {}"}
+    return " or ".join(say[k].format(", ".join(_code(x) for x in v)) for k, v in (when or {}).items())
+
+
+def _approved_when(g: dict, reviewers: dict[str, dict]) -> str:
+    if g.get("needs_approval") is False:
+        return "nothing waits on it (filed for the record)"
     parts = []
-    for k, v in (when or {}).items():
-        names = ", ".join(_code(x) for x in v)
-        parts.append(f"a changed path matches {names}" if k == "paths" else f"the PR or work ticket has label {names}")
-    return " or ".join(parts)
+    if g.get("approved_statuses"):
+        parts.append("status " + " or ".join(_cell(x) for x in g["approved_statuses"]))
+    field = g.get("approved_field")
+    if field:
+        parts.append(f"field `{_cell(field['field'])}` is " + " or ".join(_cell(x) for x in field["values"]))
+    if g.get("github_review"):
+        team = reviewers[g["approvers"]]["github_team"]
+        parts.append(f"an approving GitHub review of the PR's latest commit from a member of `@{_cell(team)}`")
+    return " and ".join(parts) or "the approvers say so"
 
 
 def _literal(s: str) -> str:
@@ -341,20 +493,39 @@ def render_spec(text: str, regex: str) -> tuple[str, int]:
 
 
 def org_markdown(org: dict, org_path: str) -> dict[str, str]:
-    """The generated {{org_*}} placeholders for a valid org."""
+    """The generated {{org_*}} placeholders for a valid org (v1 or v2)."""
     types = {t["id"]: t for t in org["ticket_types"]}
+    reviewers = org.get("reviewers") or {}
+    stages = org.get("stages") or []
     rows = ["| Ticket type | Project | Issue type | Role | Summary |", "| --- | --- | --- | --- | --- |"]
     for t in org["ticket_types"]:
         rows.append(f"| {_code(t['id'])} | {_code(t['project'])} | {_cell(t['issue_type'])} | {t['role']} | "
                     f"{_code(t['summary']) if t.get('summary') else '-'} |")
-    gates = ["| Gate | Ticket | Applies when | Links | Filed by | PR line | Approved when |",
-             "| --- | --- | --- | --- | --- | --- | --- |"]
+    head = []
+    if reviewers:
+        head.append("Review teams: " + "; ".join(
+            f"{_cell(r['name'])} (`{rid}`" + (f", GitHub team `@{_cell(r['github_team'])}`" if r.get("github_team")
+                                              else "") + ")" for rid, r in reviewers.items()) + ".")
+    if stages:
+        head.append("Stages, in order: " + "; ".join(
+            f"{_cell(st['name'])} (" + (f"merges into {', '.join(_code(b) for b in st['branches'])}"
+                                         if st.get("branches") else "a later step: the PR check does not hold the "
+                                         "merge for it") + ")" for st in stages) + ".")
+    gates = ["| Gate | Stage | Approved on | Approvers | Applies when | Links | Filed by | PR line | Approved when |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for g in org["gates"]:
-        t = types[g["ticket"]]
-        statuses = ", ".join(_cell(s) for s in g.get("approved_statuses") or []) or "the approver says so"
-        gates.append(f"| {_code(g['id'])} | {_code(g['ticket'])} in {_code(t['project'])} | {_when(g['when'])} | "
-                     f"{', '.join(g.get('links') or []) or '-'} | {g['filed_by']} | `{_cell(g['pr_line'])}: <KEY>` | "
-                     f"{statuses} |")
+        if g.get("approved_on") == "work":
+            where, filed, line = "the work ticket", "-", "-"
+        else:
+            t = types[g["ticket"]]
+            where = f"{_code(g['ticket'])} in {_code(t['project'])}"
+            if g.get("scope") == "repo":
+                where += ", one per repository (reuse an open one)"
+            filed, line = g["filed_by"], f"`{_cell(g['pr_line'])}: <KEY>`"
+        who = _cell(reviewers[g["approvers"]]["name"]) if g.get("approvers") else "-"
+        gates.append(f"| {_code(g['id'])} | {_cell(g.get('stage') or 'every')} | {where} | {who} | "
+                     f"{_when(g['when'])} | {', '.join(g.get('links') or []) or '-'} | {filed} | {line} | "
+                     f"{_approved_when(g, reviewers)} |")
     rr = org["review_request"]
     review = (f"Room: {rr['room'].strip()}. Template:\n\n````text\n{rr['template'].rstrip()}\n````")
     if org.get("placeholder"):
@@ -365,7 +536,8 @@ def org_markdown(org: dict, org_path: str) -> dict[str, str]:
     else:
         status = (f"The gates below are the `{org['name']}` org overlay's (`{org_path}/org.yaml`). Run them as "
                   f"written.")
-    return {"org_status": status, "org_ticket_types": "\n".join(rows), "org_gates": "\n".join(gates),
+    return {"org_status": status, "org_ticket_types": "\n".join(rows),
+            "org_gates": "\n\n".join([*head, "\n".join(gates)]),
             "org_review_request": review, "org_approval_regex": approval_regex(org)}
 
 
@@ -529,11 +701,12 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         if not dst.is_file() or dst.read_bytes() != want_hook:
             stale.append((hook_src, dst, {"": want_hook}))
         for sh in t.get("session_hooks") or []:
-            src = shared / sh["file"]
-            dst = hd / "native" / "claude-code" / "hooks" / src.name
-            want_hook = render(src.read_bytes(), params, f"{h}: {sh['file']}", problems)
-            if not dst.is_file() or dst.read_bytes() != want_hook:
-                stale.append((src, dst, {"": want_hook}))
+            for rel in [sh["file"], *(sh.get("data") or [])]:
+                src = shared / rel
+                dst = hd / "native" / "claude-code" / "hooks" / src.name
+                want_hook = render(src.read_bytes(), params, f"{h}: {rel}", problems)
+                if not dst.is_file() or dst.read_bytes() != want_hook:
+                    stale.append((src, dst, {"": want_hook}))
         if t.get("guide_fragment"):
             src = shared / t["guide_fragment"]
             fragment = render(src.read_bytes(), params, f"{h}: {t['guide_fragment']}", problems).decode("utf-8")
@@ -547,6 +720,17 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
                     problems.append(f"{h}: {name} has broken {t['guide_fragment']} markers (one without the other)")
                 elif want_guide != current:
                     stale.append((src, guide, {"": want_guide.encode("utf-8")}))
+        agents_dir = hd / "native" / "claude-code" / "agents"
+        for rel in t.get("agents") or []:
+            src = shared / rel
+            dst = agents_dir / src.name
+            want_agent = render(src.read_bytes(), params, f"{h}: {rel}", problems)
+            if not dst.is_file() or dst.read_bytes() != want_agent:
+                stale.append((src, dst, {"": want_agent}))
+        made = {Path(rel).name for rel in t.get("agents") or []} | set(entry.get("own_agents") or [])
+        for f in sorted(agents_dir.glob("*.md")) if agents_dir.is_dir() else []:
+            if f.name not in made:
+                stale.append((f, f, None))  # left over: a dropped or renamed stage would otherwise stay pinned
         if t.get("env_example"):
             src = shared / t["env_example"]
             dst = hd / ".env.example"
@@ -585,7 +769,7 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
 def write(stale: list[tuple[Path, Path, dict[str, bytes] | None]], root: Path = ROOT) -> None:
     for src, dst, files in stale:
         if files is None:
-            shutil.rmtree(dst)
+            shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
             print(f"removed {dst.relative_to(root)} (no longer produced)")
             continue
         if src.is_dir():
@@ -617,8 +801,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         for src, dst, files in stale:
             if files is None:
-                print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org or own_skills "
-                      "(a removed or renamed skill?); python scripts/sync_shared.py deletes it", file=sys.stderr)
+                print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org, own_skills or "
+                      "own_agents (removed or renamed?); python scripts/sync_shared.py deletes it", file=sys.stderr)
                 continue
             where = src.relative_to(ROOT).as_posix() if src.name == "org.yaml" else "shared/work-system/"
             print(f"error: {dst.relative_to(ROOT)} differs from the rendering of {src.relative_to(ROOT)} "

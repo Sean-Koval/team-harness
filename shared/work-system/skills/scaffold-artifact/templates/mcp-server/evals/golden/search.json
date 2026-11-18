@@ -1,0 +1,5 @@
+{
+  "tool": "search",
+  "arguments": {"query": "example", "limit": 5},
+  "structured_content": {"result": [{"id": "1", "title": "First example item"}, {"id": "2", "title": "Second example item"}]}
+}

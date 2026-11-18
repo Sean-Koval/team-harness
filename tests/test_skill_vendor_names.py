@@ -34,9 +34,7 @@ AI_DLC_TOOL = re.compile(r"`((?:tracker|knowledge)_[a-z][a-z_]*)`")
 # Tools a shared skill may name before the pinned ai-dlc serves them, each with the open ticket that moves the pin
 # (it removes the entry in the same PR). Only a skill with a paragraph that says to stop when the tool is missing may
 # name one. test_a_pending_ai_dlc_tool_is_not_served_yet fails once the pin serves it, so the entry can't stay.
-PENDING_AI_DLC_TOOLS = {
-    "tracker_create_decision": "KAN-525: pin ai-dlc with #291 (KAN-518); decision-ticket stops and reports without it",
-}
+PENDING_AI_DLC_TOOLS: dict[str, str] = {}
 STOPS_WHEN_MISSING = re.compile(r"\bIf it is missing\b.*?\bstop\b", re.DOTALL)
 
 
@@ -76,6 +74,13 @@ def test_the_named_tracker_server_is_the_bound_one(profile):
     params = yaml.safe_load(profile.read_text(encoding="utf-8"))["params"]
     named = re.findall(r"`([^`]+)`", params["tracker_server"])
     assert named and set(named) <= set(json.loads(params["mcp_bindings"])["tracker"]), profile.name
+
+
+@pytest.mark.parametrize("profile", sorted(PROFILES.glob("*.yaml")), ids=lambda p: p.stem)
+def test_the_named_wiki_server_is_the_bound_one(profile):
+    params = yaml.safe_load(profile.read_text(encoding="utf-8"))["params"]
+    named = re.findall(r"`([^`]+)`", params["wiki_server"])
+    assert named and set(named) <= set(json.loads(params["mcp_bindings"])["wiki"]), profile.name
 
 
 @functools.cache

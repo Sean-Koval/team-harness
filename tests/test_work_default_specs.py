@@ -72,10 +72,13 @@ def results(spec_id, otlp):
     return set(py.values())
 
 
-SRE = ("mcp", "jira", "createJiraIssue", '{"projectKey": "OPS", "summary": "SRE approval: SVC-1 add the queue"}')
+# an approval ticket an agent files: the example org's ESS request (SRE approves the work ticket itself, KAN-373)
+SRE = ("mcp", "jira", "createJiraIssue", '{"projectKey": "OPS", "summary": "ESS request: SVC-1 add the queue"}')
 INFOSEC = ("mcp", "jira", "createJiraIssue", '{"projectKey": "SEC", "summary": "Infosec review: svc SVC-1"}')
-AI_DLC_SRE = ("mcp", "ai-dlc", "tracker_create", '{"title": "SRE approval: SVC-1 add the queue", "body": "x"}')
+AI_DLC_SRE = ("mcp", "ai-dlc", "tracker_create", '{"title": "ESS request: SVC-1 add the queue", "body": "x"}')
 GH_PR = ("shell", "gh pr create --draft --title 'SVC-1: add the queue' --body-file pr.md", ["pr.open"])
+
+MERGE_BY_API = "work-never-merges-in-shell-by-api"
 
 CASES = [
     ("work-nothing-filed-to-placeholders", [SRE], "pass"),
@@ -129,6 +132,11 @@ CASES = [
     ("work-nothing-filed-to-placeholders",
      [("mcp", "ai-dlc", "tracker_create", '{"title": "SRE approval: SVC-1", "body": "WORKPROJ"}')], "fail"),
     ("work-nothing-filed-to-placeholders", [("mcp", "ai-dlc", "knowledge_propose", '{"body": "WORKPROJ"}')], "pass"),
+    # KAN-373: the v2 example's approval projects are placeholders too
+    ("work-nothing-filed-to-placeholders",
+     [("mcp", "jira", "createJiraIssue", '{"projectKey": "ESSPROJ", "summary": "ESS request: SVC-1"}')], "fail"),
+    ("work-nothing-filed-to-placeholders",
+     [("mcp", "atlassian", "createJiraIssue", '{"projectKey": "CHGPROJ", "summary": "Release: SVC-1"}')], "fail"),
     # an approval filed with ai-dlc's tracker_create is judged like one filed on the tracker server
     ("work-approvals-filed-after-the-pr", [AI_DLC_SRE, ("pr.open",)], "fail"),
     ("work-approvals-filed-after-the-pr", [("pr.open",), ("turn",), AI_DLC_SRE], "pass"),
@@ -140,12 +148,92 @@ CASES = [
     ("ws-never-sets-lane-agent",
      [("mcp", "ai-dlc", "tracker_comment", '{"reference": "SVC-1", "body": "not exec:agent yet"}')], "pass"),
     ("ws-never-sets-lane-agent", [("mcp", "jira", "createJiraIssue", '{"labels": ["exec:agent"]}')], "fail"),
+    # KAN-539: the never-merge routes the hook refuses beyond `gh pr merge`, `gh pr review --approve` and the gh api
+    # merge, approve and auto-merge calls work-never-merges-in-shell counts
+    (MERGE_BY_API, [("shell", "gh api -X POST repos/o/svc/merges -f base=main -f head=SVC-1-queue", [])], "fail"),
+    (MERGE_BY_API, [("shell", "gh api -X PUT repos/o/svc/pulls/12/reviews/34/dismissals -f message=stale", [])],
+     "fail"),
+    (MERGE_BY_API,
+     [("shell", "gh api graphql -f query='mutation { dismissPullRequestReview(input: {pullRequestReviewId: \"R\", "
+                "message: \"x\"}) { clientMutationId } }'", [])], "fail"),
+    (MERGE_BY_API, [("shell", "gh api graphql -f query='mutation { approvePullRequest(input: {}) { clientMutationId } }'",
+                     [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -s -X POST https://api.github.com/graphql -H 'Authorization: bearer x' "
+                "-d '{\"query\": \"mutation { mergePullRequest(input: {pullRequestId: \\\"P\\\"}) { clientMutationId } }\"}'",
+       [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "wget -qO- --post-data '{\"query\": \"mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }\"}' "
+                "https://api.github.com/graphql", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/graphql -d '{\"query\": \"mutation { addPullRequestReview(input: "
+                "{pullRequestId: \\\"P\\\", event: APPROVE}) { clientMutationId } }\"}'", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews -d '{\"event\": \"APPROVE\"}'", [])],
+     "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X PUT https://api.github.com/repos/o/svc/pulls/12/reviews/34/dismissals -d '{\"message\": \"x\"}'",
+       [])], "fail"),
+    (MERGE_BY_API, [("shell", "curl -X POST https://api.github.com/repos/o/svc/merges -d '{\"base\": \"main\"}'", [])],
+     "fail"),
+    (MERGE_BY_API,
+     [("shell", "Invoke-RestMethod -Method Post -Uri https://api.github.com/graphql -Body '{\"query\": "
+                "\"mutation { mergePullRequest(input: {}) { clientMutationId } }\"}'", [])], "fail"),
+    # a call split over lines or fed by a heredoc, and a lower-case event, count too
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/graphql \\\n  -H 'Authorization: bearer x' \\\n"
+                "  -d '{\"query\": \"mutation { mergePullRequest(input: {}) { clientMutationId } }\"}'", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews --data-binary @- <<'EOF'\n"
+                "{\"event\": \"APPROVE\"}\nEOF", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews -d '{\"event\": \"approve\"}'", [])],
+     "fail"),
+    # reads, comments and a review that only comments still pass, even when they say APPROVE or name a merges page
+    (MERGE_BY_API, [("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12 && echo 'waiting for SRE to APPROVE'",
+                     []),
+                    ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12/reviews | grep -c APPROVE", []),
+                    ("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews "
+                              "-d '{\"event\": \"COMMENT\", \"body\": \"SRE must APPROVE in OPS-1\"}'", []),
+                    ("shell", "curl -s https://docs.example.com/guide/merges", []),
+                    ("shell", "gh api graphql -f query='{ repository(owner: \"o\", name: \"svc\") { pullRequest(number: 12) "
+                              "{ reviews(states: APPROVED, first: 5) { nodes { state } } } } }'", [])],
+     "pass"),
+    # reads, comments and a review that only comments still pass
+    (MERGE_BY_API, [("shell", "gh pr view 12 --json state,reviews", []),
+                    ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12", []),
+                    ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12/reviews", []),
+                    ("shell", "gh api repos/o/svc/pulls/12/reviews", []),
+                    ("shell", "gh pr review 12 --comment -b 'see the SRE ticket'", []),
+                    ("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews "
+                              "-d '{\"event\": \"COMMENT\", \"body\": \"approved by SRE in OPS-1?\"}'", [])],
+     "pass"),
 ]
 
 
 @pytest.mark.parametrize(("spec_id", "steps", "want"), CASES, ids=lambda x: x if isinstance(x, str) else "")
 def test_job_exports(spec_id, steps, want):
     assert results(spec_id, trace(steps)) == {want}
+
+
+WIKI_READS = [("mcp", "atlassian", "getConfluencePage", '{"pageId": "123"}'),
+              ("mcp", "atlassian", "searchConfluenceUsingCql", '{"cql": "title ~ queue"}'),
+              ("mcp", "atlassian", "executeRead", '{"name": "getConfluenceContent", "inputs": {"id": "123"}}')]
+
+
+@pytest.mark.parametrize("steps, want", [
+    ([("mcp", "atlassian", "createConfluencePage", '{"spaceId": "1", "title": "Queue design"}')], "fail"),
+    ([("mcp", "atlassian", "updateConfluenceContent", '{"pageId": "123", "body": "x"}')], "fail"),
+    ([("mcp", "atlassian", "createConfluenceFooterComment", '{"pageId": "123", "body": "x"}')], "fail"),
+    ([("mcp", "atlassian", "executeWrite", '{"name": "updateConfluenceContent", "inputs": {"id": "123"}}')], "fail"),
+    (WIKI_READS, "pass"),
+    # a ticket comment is not a wiki write
+    ([("mcp", "atlassian", "executeWrite", '{"name": "addCommentToJiraIssue", "inputs": {"issueIdOrKey": "SVC-1"}}')],
+     "pass"),
+], ids=["create", "update", "comment", "execute", "reads", "ticket-comment"])
+def test_the_wiki_is_read_never_written(steps, want):
+    """KAN-303: confluence-context reads the pages a ticket links; a page write is counted even when refused."""
+    assert results("work-never-writes-the-wiki", trace(steps)) == {want}
 
 
 def test_a_local_session_files_the_approvals_after_its_own_pr():

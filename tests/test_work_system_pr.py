@@ -23,12 +23,13 @@ spec.loader.exec_module(wsp)
 
 PR_URL = "https://github.com/o/r/pull/7"
 BASE_SHA = "b" * 40
+HEAD_SHA = "h" * 40
 BODY = "## What and why\nAdds the gate.\n\nJira: KAN-315\nDocs: actions/work-system-pr/README.md\n"
 
 
 def pr(title="KAN-315: add the PR gate", body=BODY, branch="KAN-315-work-system-layer", labels=(), author="sean"):
-    return {"number": 7, "title": title, "body": body, "head": {"ref": branch}, "html_url": PR_URL,
-            "base": {"sha": BASE_SHA},
+    return {"number": 7, "title": title, "body": body, "head": {"ref": branch, "sha": HEAD_SHA}, "html_url": PR_URL,
+            "base": {"sha": BASE_SHA, "ref": "main"},
             "labels": [{"name": n} for n in labels], "user": {"login": author}}
 
 
@@ -880,3 +881,402 @@ def test_main_invalid_org_file_fails_without_a_crash(tmp_path, fake_api):
     assert r.returncode == 1 and f"::error::org-file {ORG_PATH}" in r.stdout and "Traceback" not in r.stderr
     r, _ = run_main(tmp_path, BODY, org_file="orgs/none/org.yaml", api=fake_api)
     assert r.returncode == 1 and "could not be read" in r.stdout and "Traceback" not in r.stderr
+
+
+# --- rule 7, team-harness.org/v2 (KAN-373): stages, the work ticket's type and project, approval on the work ticket,
+# --- approval fields, GitHub reviews by a team, and gates filed for the record --------------------------------------
+
+ORG_V2 = """\
+schema: team-harness.org/v2
+name: test-co
+placeholder: false
+reviewers:
+  sre: {name: SRE, github_team: test-org/sre}
+  infosec: {name: Infosec}
+  ess: {name: ESS}
+  board: {name: Architecture board}
+stages:
+  - {name: dev, branches: [main]}
+  - {name: prod}
+ticket_types:
+  - {id: work, project: KAN, issue_type: Story, role: work}
+  - {id: infosec-review, project: SECPROJ, issue_type: Task, role: approval}
+  - {id: ess-request, project: ESSPROJ, issue_type: Task, role: approval}
+  - {id: arch-review, project: ARCHPROJ, issue_type: Task, role: approval}
+  - {id: change-request, project: CHGPROJ, issue_type: Change, role: approval}
+gates:
+  - {id: sre, approved_on: work, approvers: sre, stage: dev, when: always, links: [pr],
+     approved_statuses: [SRE Approved], github_review: true}
+  - {id: infosec, ticket: infosec-review, scope: repo, approvers: infosec, stage: dev, when: always,
+     pr_line: Infosec, links: [repo], filed_by: agent, approved_statuses: [Approved]}
+  - {id: ess, ticket: ess-request, approvers: ess, stage: dev, when: {issue_types: [Change Request]}, pr_line: ESS,
+     filed_by: person, approved_field: {field: customfield_10050, values: [Approved]}}
+  - {id: architecture, ticket: arch-review, approvers: board, when: {labels: [architecture], projects: [OPS]},
+     pr_line: Architecture, filed_by: agent, needs_approval: false}
+  - {id: release, ticket: change-request, approvers: sre, stage: prod, when: always, pr_line: Release,
+     filed_by: person, approved_statuses: [Approved]}
+review_request:
+  room: "the team's review room"
+  template: |
+    Review please: {pr_url}
+"""
+
+
+@pytest.fixture
+def org2(tmp_path):
+    p = tmp_path / "org2.yaml"
+    p.write_text(ORG_V2)
+    return wsp.load_org(str(p))
+
+
+def review(login, state="APPROVED", commit=HEAD_SHA):
+    return {"user": {"login": login}, "state": state, "commit_id": commit}
+
+
+def gh(reviews=(), members=("sre-1",), *, reviews_error=None, member_error=None):
+    def list_reviews():
+        if reviews_error:
+            raise reviews_error
+        return list(reviews)
+
+    def member(team, login):
+        assert team == "test-org/sre"
+        if member_error:
+            raise member_error
+        return login in members
+    return {"reviews": list_reviews, "team_member": member}
+
+
+def work_issue(status="SRE Approved", description=PR_URL, **extra):
+    issue = jira_issue("KAN-315", "KAN", status, issue_type="Story", links=(), description=description)
+    issue["fields"].update(extra)
+    return issue
+
+
+def v2(org2, body="Infosec: SECPROJ-8\n", issues=None, files=(), **kw):
+    """check_gates on the v2 org, with Jira holding an approved work ticket and infosec ticket unless told otherwise."""
+    issues = {"KAN-315": work_issue(), "SECPROJ-8": jira_issue("SECPROJ-8", "SECPROJ", "Approved",
+                                                                description="https://github.com/o/r"),
+              **(issues or {})}
+    kw.setdefault("work_key", "KAN-315")
+    kw.setdefault("work_issue_type", "Story")
+    for k, v in gh([review("sre-1")]).items():
+        kw.setdefault(k, v)
+    p = kw.pop("pr", None) or gated(lines=body)
+    return wsp.check_gates(p, list(files), org2, fetch=fake_jira(issues), remote_links=lambda key: [], **kw)
+
+
+def test_v2_passes_with_the_work_ticket_approved_and_a_team_review(org2):
+    gates, errs, warns = v2(org2)
+    g = by_id(gates)
+    assert errs == [] and warns == [], errs
+    assert g["sre"].state == "checked" and g["sre"].key == "KAN-315" and g["sre"].on == "work"
+    assert g["infosec"].state == "checked"
+    assert [g[i].state for i in ("ess", "architecture", "release")] == ["not required"] * 3
+
+
+def test_v2_a_review_only_work_gate_reads_checked_once_approved(org2):
+    """R2's note: a work gate with only github_review (nothing in Jira) shows checked, not linked, once approved."""
+    gate = org2["gates"][0]
+    for k in ("approved_statuses", "links"):
+        gate.pop(k)
+    gates, errs, _ = v2(org2)
+    assert errs == [] and by_id(gates)["sre"].state == "checked"
+    gates, errs, _ = v2(org2, **gh([]))
+    assert by_id(gates)["sre"].state == "not approved" and errs
+
+
+def test_v2_a_later_stage_is_not_held_at_merge(org2):
+    gates, _, _ = v2(org2)
+    assert "stage prod is a later step" in by_id(gates)["release"].why
+
+
+@pytest.mark.parametrize("base, applies", [("main", True), ("release/1.2", False), (None, True)])
+def test_v2_stage_follows_the_prs_base_branch(org2, base, applies):
+    p = gated(lines="Infosec: SECPROJ-8\n")
+    p["base"]["ref"] = base
+    gates, _, _ = v2(org2, pr=p)
+    assert by_id(gates)["infosec"].applies is applies and by_id(gates)["sre"].applies is applies
+    if base is None:
+        assert "base branch is unknown, so the gate applies" in by_id(gates)["infosec"].why
+
+
+@pytest.mark.parametrize("itype, applies", [("Change Request", True), ("change request", True), ("Story", False),
+                                            (None, True)])
+def test_v2_issue_types_gate_reads_the_work_tickets_type(org2, itype, applies):
+    gates, errs, _ = v2(org2, work_issue_type=itype)
+    assert by_id(gates)["ess"].applies is applies
+    assert any("'ess'" in e and "a person files that ticket" in e for e in errs) is applies
+    if itype is None:
+        assert "issue type is unknown" in by_id(gates)["ess"].why
+
+
+def test_v2_projects_gate_reads_the_work_keys_project(org2):
+    gates, _, _ = v2(org2)
+    assert not by_id(gates)["architecture"].applies
+    gates, _, _ = v2(org2, pr=gated(title="OPS-4: tune", lines=""), work_key="OPS-4")
+    assert by_id(gates)["architecture"].applies and "work ticket project OPS" in by_id(gates)["architecture"].why
+    gates, _, _ = v2(org2, work_key=None)
+    assert by_id(gates)["architecture"].applies  # no work ticket: its project is unknown, so the gate applies
+
+
+def test_v2_record_only_gate_needs_its_line_and_no_approval(org2):
+    issues = {"ARCHPROJ-3": jira_issue("ARCHPROJ-3", "ARCHPROJ", "Open", links=())}
+    gates, errs, _ = v2(org2, pr=gated(lines="Infosec: SECPROJ-8\n", labels=["architecture"]), issues=issues)
+    assert by_id(gates)["architecture"].applies and by_id(gates)["architecture"].record_only
+    assert any("'architecture'" in e and "Architecture: <KEY>" in e for e in errs)
+    gates, errs, _ = v2(org2, pr=gated(lines="Infosec: SECPROJ-8\nArchitecture: ARCHPROJ-3\n",
+                                       labels=["architecture"]), issues=issues)
+    assert errs == [] and by_id(gates)["architecture"].state == "checked"
+    assert "for the record" in "\n".join(wsp.gate_summary(gates))
+
+
+def test_v2_work_gate_fails_when_the_work_ticket_is_not_approved(org2):
+    gates, errs, _ = v2(org2, issues={"KAN-315": work_issue("In Progress")})
+    assert by_id(gates)["sre"].state == "not approved"
+    assert any("'sre': KAN-315 is In Progress; it must be SRE Approved" in e for e in errs)
+
+
+def test_v2_work_gate_needs_the_work_ticket_to_link_the_pr(org2):
+    _, errs, _ = v2(org2, issues={"KAN-315": work_issue(description=None)})
+    assert any("'sre': KAN-315 does not link this PR" in e for e in errs)
+
+
+def test_v2_work_gate_needs_a_work_key_in_a_work_project(org2):
+    gates, errs, _ = v2(org2, work_key=None)
+    assert by_id(gates)["sre"].state == "invalid" and any("names no work ticket" in e for e in errs)
+    gates, errs, _ = v2(org2, pr=gated(title="OPS-4: tune", lines="Infosec: SECPROJ-8\n"), work_key="OPS-4")
+    assert any("OPS-4 is not in KAN, where work tickets are filed" in e for e in errs)
+
+
+def test_v2_work_gate_fails_closed_without_jira(org2):
+    gates, errs, _ = wsp.check_gates(gated(lines="Infosec: SECPROJ-8\n"), [], org2, work_key="KAN-315",
+                                     **gh([review("sre-1")]))
+    assert by_id(gates)["sre"].state == "unverified"
+    assert any("'sre': KAN-315 could not be verified as SRE Approved" in e for e in errs)
+    gates, errs, warns = wsp.check_gates(gated(lines="Infosec: SECPROJ-8\n"), [], org2, work_key="KAN-315",
+                                         allow_unverified=True, **gh([review("sre-1")]))
+    assert errs == [] and by_id(gates)["sre"].state == "not checked" and any("unverified" in w for w in warns)
+
+
+def test_v2_work_gate_with_jira_unreachable_fails_closed(org2):
+    def down(key):
+        raise urllib.error.URLError("timed out")
+    gates, errs, _ = wsp.check_gates(gated(lines=""), [], org2, work_key="KAN-315", fetch=down,
+                                     remote_links=lambda k: [], **gh([review("sre-1")]))
+    assert by_id(gates)["sre"].state == "unverified" and any("'sre'" in e for e in errs)
+
+
+@pytest.mark.parametrize("reviews, words", [
+    ([], "needs an approving review on the PR's latest commit from a member of @test-org/sre;"),
+    ([review("sre-1", commit="0" * 40)], "sre-1 approved an earlier commit"),
+    ([review("dev-2")], "dev-2 approved but is not on @test-org/sre"),
+    ([review("sean")], "needs an approving review"),  # the PR's author never counts
+    ([review("sre-1"), review("sre-1", "CHANGES_REQUESTED")], "sre-1 of @test-org/sre requested changes"),
+    ([review("sre-1"), review("sre-1", "DISMISSED")], "needs an approving review"),
+])
+def test_v2_github_review_must_come_from_the_team_on_the_head_commit(org2, reviews, words):
+    gates, errs, _ = v2(org2, **gh(reviews, members=("sre-1", "sean")))
+    assert by_id(gates)["sre"].state == "not approved"
+    assert any("'sre'" in e and words in e for e in errs), errs
+
+
+def test_v2_github_review_comment_after_approval_keeps_it(org2):
+    _, errs, _ = v2(org2, **gh([review("sre-1"), review("sre-1", "COMMENTED", "0" * 40)]))
+    assert errs == []
+
+
+@pytest.mark.parametrize("reviews, members, blocked", [
+    ([review("sre-1"), review("sre-2", "CHANGES_REQUESTED")], ("sre-1", "sre-2"), True),
+    ([review("sre-1"), review("sre-2", "CHANGES_REQUESTED", "0" * 40)], ("sre-1", "sre-2"), True),  # any commit
+    ([review("sre-1"), review("dev-2", "CHANGES_REQUESTED")], ("sre-1",), False),  # not on the team
+    ([review("sre-1"), review("sre-2", "CHANGES_REQUESTED"), review("sre-2", "DISMISSED")], ("sre-1", "sre-2"),
+     False),
+    ([review("sre-1"), review("sean", "CHANGES_REQUESTED")], ("sre-1", "sean"), False),  # the author
+])
+def test_v2_github_review_a_members_request_for_changes_holds_it(org2, reviews, members, blocked):
+    """KAN-373 review: as on GitHub, one member's approval doesn't outweigh another member's request for changes."""
+    gates, errs, _ = v2(org2, **gh(reviews, members=members))
+    assert bool(errs) is blocked, errs
+    if blocked:
+        assert by_id(gates)["sre"].state == "not approved"
+        assert any("sre-2 of @test-org/sre requested changes" in e for e in errs), errs
+
+
+def test_v2_no_work_key_applies_issue_type_and_project_gates(org2):
+    """KAN-373 review: an exempt PR has no key, so the work ticket's type and project are unknown, not "no match"."""
+    gates, _, _ = v2(org2, work_key=None, work_issue_type=None)
+    g = by_id(gates)
+    assert g["ess"].applies and "issue type is unknown" in g["ess"].why
+    assert g["architecture"].applies and "PR names no work ticket" in g["architecture"].why
+
+
+def test_v2_github_reviews_reader_pages_and_reads_membership(fake_api):
+    page1 = [review(f"u{i}", "COMMENTED") for i in range(100)]
+    fake_api.routes["/repos/o/r/pulls/7/reviews?per_page=100&page=1"] = (200, page1)
+    fake_api.routes["/repos/o/r/pulls/7/reviews?per_page=100&page=2"] = (200, [review("sre-1")])
+    fake_api.routes["/orgs/test-org/teams/sre"] = (200, {"slug": "sre"})
+    fake_api.routes["/orgs/test-org/teams/sre/memberships/sre-1"] = (200, {"state": "active"})
+    fake_api.routes["/orgs/test-org/teams/sre/memberships/sre-2"] = (200, {"state": "pending"})
+    fake_api.routes["/orgs/test-org/teams/sre/memberships/sre-3"] = (500, {"message": "boom"})
+    reviews, member = wsp._github_reviews("o/r", 7, "t", fake_api.url)
+    assert len(reviews()) == 101
+    assert member("test-org/sre", "sre-1") is True
+    assert member("test-org/sre", "sre-2") is False  # invited, not yet on the team
+    assert member("test-org/sre", "nobody") is False  # 404
+    with pytest.raises(OSError, match="HTTP 500"):
+        member("test-org/sre", "sre-3")
+
+
+def test_v2_github_review_one_member_is_enough(org2):
+    _, errs, _ = v2(org2, **gh([review("dev-2"), review("sre-1")]))
+    assert errs == []
+
+
+@pytest.mark.parametrize("kw, words", [
+    ({"reviews_error": urllib.error.URLError("down")}, "the PR's reviews could not be read"),
+    ({"member_error": OSError("the team could not be read (HTTP 404)")}, "whether sre-1 is on @test-org/sre"),
+])
+def test_v2_github_review_unreadable_fails_closed(org2, kw, words):
+    gates, errs, _ = v2(org2, **gh([review("sre-1")], **kw))
+    assert by_id(gates)["sre"].state == "unverified" and any(words in e for e in errs), errs
+    gates, errs, warns = v2(org2, allow_unverified=True, **gh([review("sre-1")], **kw))
+    assert errs == [] and by_id(gates)["sre"].state == "not checked" and any(words in w for w in warns)
+
+
+def test_v2_github_review_without_a_reader_fails_closed(org2):
+    gates, errs, _ = v2(org2, reviews=None, team_member=None)
+    assert by_id(gates)["sre"].state == "unverified" and any("no way to read the PR's reviews" in e for e in errs)
+
+
+ESS = "Infosec: SECPROJ-8\nESS: ESSPROJ-2\n"
+
+
+@pytest.mark.parametrize("value, ok", [
+    ({"value": "Approved", "id": "1"}, True), ([{"value": "Pending"}, {"value": "approved"}], True), ("Approved", True),
+    ({"value": "Pending"}, False), (None, False),
+])
+def test_v2_approved_field_reads_the_jira_field(org2, value, ok):
+    ess = jira_issue("ESSPROJ-2", "ESSPROJ", "Open", links=())
+    ess["fields"]["customfield_10050"] = value
+    gates, errs, _ = v2(org2, body=ESS, work_issue_type="Change Request", issues={"ESSPROJ-2": ess})
+    assert (by_id(gates)["ess"].state == "checked") is ok
+    if not ok:
+        assert any("ESSPROJ-2's customfield_10050 is" in e and "it must be Approved" in e for e in errs)
+
+
+def test_v2_approved_field_missing_from_jira_fails(org2):
+    gates, errs, _ = v2(org2, body=ESS, work_issue_type="Change Request",
+                        issues={"ESSPROJ-2": jira_issue("ESSPROJ-2", "ESSPROJ", "Open", links=())})
+    assert by_id(gates)["ess"].state == "not approved" and any("returned no customfield_10050" in e for e in errs)
+
+
+def test_v2_approved_field_needs_jira(org2):
+    gates, errs, _ = wsp.check_gates(gated(lines=ESS), [], org2, work_key="KAN-315",
+                                     work_issue_type="Change Request", **gh([review("sre-1")]))
+    assert by_id(gates)["ess"].state == "unverified"
+    assert any("'ess': ESSPROJ-2 could not be verified as customfield_10050 Approved" in e for e in errs)
+
+
+def test_v2_gate_summary_shows_the_work_ticket_and_approvers(org2):
+    gates, _, _ = v2(org2)
+    table = "\n".join(wsp.gate_summary(gates))
+    assert "| sre | - | the work ticket KAN-315; approvers SRE |" in table
+    assert "| infosec | `Infosec: SECPROJ-8` | Task in SECPROJ; approvers Infosec |" in table
+
+
+def test_v2_example_org_loads_in_the_check():
+    org = wsp.load_org(str(ROOT / "orgs/example-co/org.yaml"))
+    assert org["schema"] == "team-harness.org/v2" and org["gates"][0]["approved_on"] == "work"
+
+
+def test_v1_org_files_still_load_and_refuse_v2_keys(tmp_path):
+    p = tmp_path / "org.yaml"
+    p.write_text(ORG_YAML.replace("    approved_statuses: [Approved, Done]\n",
+                                  "    approved_statuses: [Approved, Done]\n    stage: dev\n", 1))
+    with pytest.raises(wsp.OrgError, match="unknown key"):
+        wsp.load_org(str(p))
+
+
+@pytest.mark.parametrize("old, new, words", [
+    ("approved_on: work, approvers: sre,", "on: work, approvers: sre,", "write approved_on"),
+    ("approved_on: work,", "approved_on: board,", "approved_on must be ticket or work"),
+    ("github_team: test-org/sre", "github_team: sre", "github_team must be"),
+    ("approvers: infosec, stage: dev", "approvers: nobody, stage: dev", "is not a reviewers id"),
+    ("stage: prod, when", "stage: staging, when", "is not one of the stages"),
+    ("needs_approval: false", "needs_approval: false, approved_statuses: [Done]", "takes no approved_statuses"),
+    ("scope: repo,", "scope: org,", "scope must be pr or repo"),
+    ("links: [repo], filed_by: agent", "links: [repo, pr], filed_by: agent", "links repo only"),
+    ("when: always, links: [pr],\n", "when: always, links: [pr, work],\n", "approved_on: work is per PR"),
+    # KAN-373 review: a work gate approved in Jira must tie the work ticket to this PR
+    ("when: always, links: [pr],\n", "when: always,\n", "needs links:"),
+    ("branches: [main]", "branches: [' ']", "branches must be"),
+    ("values: [Approved]}}", "values: [' ']}}", "approved_field"),
+    ("approvers: ess, stage: dev", "approvers: infosec, github_review: true, stage: dev",
+     "github_review needs approvers with a github_team"),
+    ("customfield_10050", "custom field 10050", "approved_field must be"),
+    ("when: {issue_types: [Change Request]}", "when: {issue_types: []}", "when.issue_types must be"),
+])
+def test_v2_org_errors_in_the_check_match_sync_shared(tmp_path, old, new, words):
+    assert old in ORG_V2
+    p = tmp_path / "org.yaml"
+    p.write_text(ORG_V2.replace(old, new, 1))
+    with pytest.raises(wsp.OrgError, match=words.replace("(", r"\(")):
+        wsp.load_org(str(p))
+    # the renderer's validator refuses the same file
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import sync_shared
+    import yaml
+    assert sync_shared.validate_org(yaml.safe_load(p.read_text()), "org.yaml") != []
+
+
+# main() with a v2 org: the work ticket read with the approval field, the reviews and the team through the API
+
+def _v2_world(api, *, approved=True, reviewer="sre-1", member=True):
+    api.files(["README.md"])
+    api.base_org(ORG_V2)
+    api.routes["/rest/api/3/issue/KAN-315?fields=status,labels,issuetype,issuelinks"] = (200, {
+        "key": "KAN-315", "fields": {"status": {"name": "SRE Approved", "statusCategory": {"key": "indeterminate"}},
+                                     "labels": ["exec:pair"], "issuetype": {"name": "Change Request"},
+                                     "issuelinks": []}})
+    gate_fields = "status,project,issuetype,issuelinks,description,customfield_10050"
+    work = work_issue("SRE Approved" if approved else "In Progress")
+    api.routes[f"/rest/api/3/issue/KAN-315?fields={gate_fields}"] = (200, work)
+    api.routes[f"/rest/api/3/issue/SECPROJ-8?fields={gate_fields}"] = (
+        200, jira_issue("SECPROJ-8", "SECPROJ", "Approved", description="https://github.com/o/r"))
+    ess = jira_issue("ESSPROJ-2", "ESSPROJ", "Open", links=())
+    ess["fields"]["customfield_10050"] = {"value": "Approved"}
+    api.routes[f"/rest/api/3/issue/ESSPROJ-2?fields={gate_fields}"] = (200, ess)
+    api.routes["/rest/api/3/issue/KAN-315/remotelink"] = (200, [])
+    api.routes["/rest/api/3/issue/SECPROJ-8/remotelink"] = (200, [])
+    api.routes["/rest/api/3/issue/ESSPROJ-2/remotelink"] = (200, [])
+    api.routes["/repos/o/r/pulls/7/reviews?per_page=100&page=1"] = (200, [review(reviewer)])
+    api.routes["/orgs/test-org/teams/sre"] = (200, {"slug": "sre"})
+    if member:
+        api.routes[f"/orgs/test-org/teams/sre/memberships/{reviewer}"] = (200, {"state": "active"})
+
+
+def test_main_v2_passes_with_every_approval(tmp_path, fake_api):
+    _v2_world(fake_api)
+    r, summary = run_main(tmp_path, BODY + ESS, ORG_V2, api=fake_api, jira=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "| sre | - | the work ticket KAN-315; approvers SRE |" in summary and "| ess |" in summary
+    assert "work ticket type Change Request" in summary and "Passes for KAN-315." in summary
+
+
+@pytest.mark.parametrize("kw, words", [
+    ({"approved": False}, "::error::gate 'sre': KAN-315 is In Progress"),
+    ({"member": False}, "sre-1 approved but is not on @test-org/sre"),
+])
+def test_main_v2_holds_the_merge(tmp_path, fake_api, kw, words):
+    _v2_world(fake_api, **kw)
+    r, _ = run_main(tmp_path, BODY + ESS, ORG_V2, api=fake_api, jira=True)
+    assert r.returncode == 1 and words in r.stdout, r.stdout
+
+
+def test_main_v2_an_unreadable_team_fails_closed(tmp_path, fake_api):
+    _v2_world(fake_api)
+    del fake_api.routes["/orgs/test-org/teams/sre"]
+    r, _ = run_main(tmp_path, BODY + ESS, ORG_V2, api=fake_api, jira=True)
+    assert r.returncode == 1 and "the team could not be read (HTTP 404)" in r.stdout
+    assert "/orgs/test-org/teams/sre/memberships/sre-1" not in fake_api.seen

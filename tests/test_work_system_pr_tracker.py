@@ -169,6 +169,8 @@ def test_an_unknown_provider_fails_rather_than_skipping(tmp_path, monkeypatch, f
     ({"key": "KAN-315", "category": "todo", "kind": "work", "labels": ["exec:pair"],
       "blocked_by": [{"key": "KAN-330", "category": "todo", "kind": "work"}]},
      "an issue blocking KAN-315 has no labels"),
+    ({"key": "KAN-315", "category": "todo", "kind": "work", "labels": ["exec:pair"], "blocked_by": [],
+      "issue_type": ["Story"]}, "issue_type must be a string"),
 ])
 def test_an_answer_that_is_not_normalised_fails_the_check(tmp_path, monkeypatch, fakes, answer, words):
     monkeypatch.setattr(FakeA, "read", lambda self, key: answer)
@@ -260,7 +262,8 @@ def test_jira_cloud_normalises_status_kind_labels_and_blockers():
                    "labels": ["exec:pair", "DATA-change"],
                    "blocked_by": [{"key": "KAN-320", "category": "todo", "kind": "decision", "labels": []},
                                   {"key": "KAN-330", "category": "todo", "kind": "work", "labels": ["type:decision"]},
-                                  {"key": "KAN-340", "category": "done", "kind": "work", "labels": ["exec:pair"]}]}
+                                  {"key": "KAN-340", "category": "done", "kind": "work", "labels": ["exec:pair"]}],
+                   "issue_type": "Task"}
     assert seen[0] == "https://example.atlassian.net/rest/api/3/issue/KAN-315?fields=status,labels,issuetype,issuelinks"
     assert not any("KAN-320" in u for u in seen)  # a Decision's link summary is enough; no second read
     errs = wsp.check_ticket(got, "KAN-315")
@@ -331,3 +334,16 @@ def test_providers_are_built_in_only():
     assert set(tracker.PROVIDERS) == {"jira-cloud"}
     reader, why = tracker.from_inputs(lambda k: "")
     assert reader is None and "jira-cloud needs jira-base-url, jira-user, jira-token" in why
+
+
+def test_issue_type_is_optional_in_the_normalised_shape():
+    # KAN-373: org gates with `when: issue_types` read it; a provider that doesn't give it reads as unknown (None)
+    base = {"key": "KAN-1", "category": "todo", "kind": "work", "labels": [], "blocked_by": []}
+    assert tracker.normalised(base, "KAN-1")["issue_type"] is None
+    assert tracker.normalised({**base, "issue_type": ""}, "KAN-1")["issue_type"] is None
+    assert tracker.normalised({**base, "issue_type": "Change Request"}, "KAN-1")["issue_type"] == "Change Request"
+
+
+def test_jira_cloud_gives_the_issue_type_name():
+    r, _ = provider({"KAN-1": jira("KAN-1", itype="Change Request")})
+    assert r.read("KAN-1")["issue_type"] == "Change Request"

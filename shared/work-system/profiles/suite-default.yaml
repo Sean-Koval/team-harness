@@ -23,12 +23,20 @@ params:
   # How the work-system skills name the tracker server and its searches; the skills themselves name no vendor
   # server or query language (seam rule 6, KAN-502). tracker_server is one of mcp_bindings' tracker servers.
   tracker_server: "named `atlassian`"
+  # The server the skills name for the wiki role (confluence-context reads pages with it); one of mcp_bindings'
+  # wiki servers.
+  wiki_server: "named `atlassian`"
   tracker_open_query: >-
     `project = <KEY> AND statusCategory != Done AND text ~ "<words>"` on the tracker server
   tracker_epic_query: >-
     `project = <KEY> AND issuetype = Epic AND labels = roadmap` on the tracker server
   # Site and space pairs where a session may write wiki pages itself, JSON. Empty: only the render job writes.
   wiki_write_allow: '[]'
+  # Model per stage (KAN-513): the stage subagents' `model:` and the extraction model. Cheap for triage, lint-style
+  # review and extraction; build for routine implementation (reserved: no stage reads it yet); strong for design.
+  model_cheap: "claude-haiku-5-5"
+  model_build: "claude-sonnet-5-5"
+  model_strong: "claude-opus-5-5"
   merge_mode: "allowed"
   merge_rule: >-
     **Merging (suite repositories only):** you may merge your own PR once every required check is green, every review

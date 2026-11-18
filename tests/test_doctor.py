@@ -1,10 +1,8 @@
 """scripts/doctor.py: one readable preflight for a laptop, with fakes for claude, gh, hangar, flightdeck and MCP."""
 
-import http.server
 import json
 import os
 import sys
-import threading
 from pathlib import Path
 
 import pytest
@@ -14,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import doctor  # noqa: E402
 import install_local as il  # noqa: E402
+from test_doctor_live import mcp_server  # noqa: E402, F401  (the fake MCP server, shared)
 
 WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
@@ -198,66 +197,7 @@ def test_mcp_failed_names_the_unset_variable_never_its_value(laptop, capsys):
     assert SECRET not in out and "GITHUB_MCP_AUTHORIZATION set" in out
 
 
-class FakeMCP(http.server.BaseHTTPRequestHandler):
-    sse = False
-    status = 200
-    seen: list = []
-
-    def do_POST(self):  # noqa: N802
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        FakeMCP.seen.append((self.headers.get("Authorization"), self.headers.get("Mcp-Session-Id"), body))
-        if FakeMCP.status != 200:
-            self.send_response(FakeMCP.status)
-            self.end_headers()
-            return
-        if "id" not in body:
-            self.send_response(202)
-            self.end_headers()
-            return
-        result = {"tools": [{"name": "a"}, {"name": "b"}]} if body["method"] == "tools/list" else {"capabilities": {}}
-        data = json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": result})
-        self.send_response(200)
-        self.send_header("Mcp-Session-Id", "sess-1")
-        if FakeMCP.sse:
-            self.send_header("Content-Type", "text/event-stream")
-            data = f"event: message\ndata: {data}\n\n"
-        else:
-            self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(data.encode())
-
-    def log_message(self, *a):
-        pass
-
-
-@pytest.fixture
-def mcp_server():
-    FakeMCP.seen, FakeMCP.sse, FakeMCP.status = [], False, 200
-    srv = http.server.HTTPServer(("127.0.0.1", 0), FakeMCP)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_port}/mcp"
-    srv.shutdown()
-
-
-@pytest.mark.parametrize("sse", [False, True])
-def test_tools_list_handshake(mcp_server, sse, monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    FakeMCP.sse = sse
-    n, err = doctor.tools_list(mcp_server, "Authorization", SECRET)
-    assert (n, err) == (2, None)
-    assert [b.get("method") for _, _, b in FakeMCP.seen] == ["initialize", "notifications/initialized", "tools/list"]
-    assert FakeMCP.seen[-1][:2] == (SECRET, "sess-1")
-
-
-def test_tools_list_refused(mcp_server, monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    FakeMCP.status = 401
-    n, err = doctor.tools_list(mcp_server, "Authorization", SECRET)
-    assert n == 0 and "401" in err and SECRET not in err
-
-
 def test_live_tools_list_per_server(laptop, capsys, mcp_server, monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     home, proj = laptop
     lock = dict(LOCK, binding=dict(LOCK["binding"], mcp=[dict(m, endpoint=mcp_server) if m["name"] == "github" else m
                                                          for m in LOCK["binding"]["mcp"]]))
@@ -270,6 +210,26 @@ def test_live_tools_list_per_server(laptop, capsys, mcp_server, monkeypatch):
     assert c["mcp:github"]["status"] == "ok" and "2 tools" in c["mcp:github"]["summary"]
     assert c["mcp:atlassian"]["status"] == "skip" and "ATLASSIAN_MCP_AUTHORIZATION is unset" in \
         c["mcp:atlassian"]["summary"]
+
+
+def test_live_sends_no_credential_to_a_plain_http_server(laptop, capsys, monkeypatch):
+    home, proj = laptop
+    endpoint = "http://mcp.example.invalid/mcp"
+    lock = dict(LOCK, binding=dict(LOCK["binding"], mcp=[dict(m, endpoint=endpoint) if m["name"] == "github" else m
+                                                         for m in LOCK["binding"]["mcp"]]))
+    monkeypatch.setattr(doctor.il, "_lock_at", lambda root: lock)
+
+    def refuse(*a, **k):
+        raise AssertionError("a request was made")
+    monkeypatch.setattr(doctor, "tools_list", refuse)
+    fake = Fake({("claude", "mcp", "list"): (0, mcp_list_all(lock))})
+    for env in ({"GITHUB_MCP_AUTHORIZATION": SECRET}, {}):  # unset here too: the fix comes first, not a skip
+        doc(home, proj, "--live", "--skip", "channel", fake=fake, env=env)
+        out = capsys.readouterr().out
+        assert SECRET not in out
+        c = {x["id"]: x for x in json.loads(out)["checks"]}["mcp:github"]
+        assert c["status"] == "fix" and "github" in c["summary"] and \
+            "endpoint is not https; doctor won't send the credential" in c["summary"]
 
 
 def test_gh_signed_out_and_without_repo_scope(laptop, capsys):
@@ -506,6 +466,13 @@ def test_real_org_with_leftover_placeholder_values(laptop, capsys, monkeypatch):
     doc(home, proj)
     c = checks(capsys)["org"]
     assert c["status"] == "fix" and "COMPANY-SITE" in c["summary"] and "rebuild with your org" in c["fix"]
+
+
+def test_v2_example_placeholders_are_known():
+    # KAN-373: the v2 example org adds a GitHub org and three approval projects, all placeholders
+    for value in ("COMPANY-ORG", "ESSPROJ", "ARCHPROJ", "CHGPROJ"):
+        assert value in doctor.ORG_PLACEHOLDERS
+        assert value in (ROOT / "orgs/example-co/org.yaml").read_text(encoding="utf-8")
 
 
 def test_org_fix_never_points_at_the_checkout_channel(laptop, capsys):
