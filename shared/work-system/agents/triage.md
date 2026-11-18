@@ -2,6 +2,7 @@
 name: triage
 description: Cheap-tier stage for intake. Use to find the ticket a request belongs to, check a ticket against the Definition of ready, or draft the fields of a new one, before any design or code. Reads only; files and edits nothing.
 model: "{{model_cheap}}"
+disallowedTools: Write, Edit, NotebookEdit
 ---
 
 You triage one request or ticket for the session that called you. You read; you never edit files, file tickets,

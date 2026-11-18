@@ -99,3 +99,32 @@ def test_relock_pins_each_stage_file(stage, tmp_path):
         f.write("\nOne more line.\n")
     after, _ = relock.relock(h)
     assert hl.harness_digest(after) != hl.harness_digest(before)
+
+
+@pytest.mark.parametrize("stage", sorted(TIERS))
+def test_no_stage_edits_files(stage):
+    # Claude Code's own edit tools are denied; the guard hook still covers the tracker's write tools
+    denied = {t.strip() for t in str(frontmatter(SHARED / "agents" / f"{stage}.md")["disallowedTools"]).split(",")}
+    assert {"Write", "Edit", "NotebookEdit"} <= denied
+
+
+def test_work_default_tiers_stay_on_its_locked_model():
+    # work-default routes nothing to another model until the company approves one: every tier is the lock's model,
+    # so a lock that moves to a new model must move the tiers with it (or name the approved cheaper ones here)
+    lock = yaml.safe_load((ROOT / "harnesses/work-default/harness.lock").read_text(encoding="utf-8"))
+    p = params("work-default")
+    assert {p["model_cheap"], p["model_build"], p["model_strong"]} == {lock["model"]["id"]}
+
+
+def test_a_dropped_stage_file_is_removed_not_pinned(tmp_path):
+    import sync_shared
+
+    for d in ("shared", "harnesses", "orgs"):
+        shutil.copytree(ROOT / d, tmp_path / d, ignore=shutil.ignore_patterns("__pycache__"))
+    stray = tmp_path / "harnesses/suite-default/native/claude-code/agents/old-stage.md"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("---\nname: old-stage\n---\n", encoding="utf-8")
+    stale, _ = sync_shared.plan(tmp_path)
+    assert (stray, stray, None) in stale
+    sync_shared.write([s for s in stale if s[0] == stray], root=tmp_path)
+    assert not stray.exists()

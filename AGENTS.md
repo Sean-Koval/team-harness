@@ -48,6 +48,7 @@ This is the example team harness: `harnesses/<name>/` is what agents run with, p
   generated: CHANGELOG.md, harnesses/*/harness.lock, harnesses/*/env.*.yaml, harnesses/*/.env.example
   generated: harnesses/suite-default/skills/**, harnesses/work-default/skills/**, !harnesses/work-default/skills/change-set/**
   generated: harnesses/suite-default/native/claude-code/hooks/**, harnesses/work-default/native/claude-code/hooks/**
+  generated: harnesses/suite-default/native/claude-code/agents/**, harnesses/work-default/native/claude-code/agents/**
   generated: !harnesses/work-default/native/claude-code/hooks/guard_work.py
   ```
 - `stable` and `releases/` still move only by `scripts/promote.py`, in a PR of its own.

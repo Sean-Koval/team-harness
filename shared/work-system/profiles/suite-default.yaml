@@ -30,7 +30,7 @@ params:
   # Site and space pairs where a session may write wiki pages itself, JSON. Empty: only the render job writes.
   wiki_write_allow: '[]'
   # Model per stage (KAN-513): the stage subagents' `model:` and the extraction model. Cheap for triage, lint-style
-  # review and extraction; build for routine implementation; strong for design and hard implementation.
+  # review and extraction; build for routine implementation (reserved: no stage reads it yet); strong for design.
   model_cheap: "claude-haiku-5-5"
   model_build: "claude-sonnet-5-5"
   model_strong: "claude-opus-5-5"

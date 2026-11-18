@@ -7,8 +7,9 @@ description: Use at the start of any coding task that has no ticket key yet (a r
 
 Nothing is edited before the work has a ticket key. If you were given a key, skip to step 3.
 
-Steps 1 and 2 are intake: delegate them to the `triage` subagent (it runs on {{model_cheap}}), which finds or drafts
-the ticket and says whether it is ready, and file what it drafts yourself.
+Steps 1 and 2 are intake (skipped when you were given a key): delegate them to the `triage` subagent (it runs on
+{{model_cheap}}). It finds the ticket or drafts one and says whether it is ready; it files nothing, so you file and
+link what it drafts.
 
 1. **Find the ticket.** Search {{tracker}} with `tracker_search` (`text`, `labels`, `state`), or with the tracker
    server's search (tools: see `jira-ticket`). Look in the project's epic for an open ticket that already covers the

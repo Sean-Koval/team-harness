@@ -13,7 +13,8 @@ file and each harness gets concrete text. For each target harness this:
   write appends the block when the markers are missing); the rest of the guide is the harness's own;
 - renders `env_example:` into `harnesses/<h>/.env.example`, the session's environment contract (names only);
 - renders each `agents:` file (a Claude Code subagent, `<stage>.md`) into `harnesses/<h>/native/claude-code/agents/`,
-  its `model:` filled from the profile's `model_*` tiers, so the lock pins them with the other native files;
+  its `model:` filled from the profile's `model_*` tiers, so the lock pins them with the other native files, and
+  deletes any other `.md` there that the harness does not declare as its own (`own_agents:`);
 - deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
   own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
@@ -513,12 +514,17 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
                     problems.append(f"{h}: {name} has broken {t['guide_fragment']} markers (one without the other)")
                 elif want_guide != current:
                     stale.append((src, guide, {"": want_guide.encode("utf-8")}))
+        agents_dir = hd / "native" / "claude-code" / "agents"
         for rel in t.get("agents") or []:
             src = shared / rel
-            dst = hd / "native" / "claude-code" / "agents" / src.name
+            dst = agents_dir / src.name
             want_agent = render(src.read_bytes(), params, f"{h}: {rel}", problems)
             if not dst.is_file() or dst.read_bytes() != want_agent:
                 stale.append((src, dst, {"": want_agent}))
+        made = {Path(rel).name for rel in t.get("agents") or []} | set(entry.get("own_agents") or [])
+        for f in sorted(agents_dir.glob("*.md")) if agents_dir.is_dir() else []:
+            if f.name not in made:
+                stale.append((f, f, None))  # left over: a dropped or renamed stage would otherwise stay pinned
         if t.get("env_example"):
             src = shared / t["env_example"]
             dst = hd / ".env.example"
@@ -549,7 +555,7 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
 def write(stale: list[tuple[Path, Path, dict[str, bytes] | None]], root: Path = ROOT) -> None:
     for src, dst, files in stale:
         if files is None:
-            shutil.rmtree(dst)
+            shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
             print(f"removed {dst.relative_to(root)} (no longer produced)")
             continue
         if src.is_dir():
@@ -576,8 +582,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         for src, dst, files in stale:
             if files is None:
-                print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org or own_skills "
-                      "(a removed or renamed skill?); python scripts/sync_shared.py deletes it", file=sys.stderr)
+                print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org, own_skills or "
+                      "own_agents (removed or renamed?); python scripts/sync_shared.py deletes it", file=sys.stderr)
                 continue
             print(f"error: {dst.relative_to(ROOT)} differs from the rendering of {src.relative_to(ROOT)} "
                   "(edit shared/work-system/, then python scripts/sync_shared.py)", file=sys.stderr)
