@@ -508,6 +508,13 @@ def test_real_org_with_leftover_placeholder_values(laptop, capsys, monkeypatch):
     assert c["status"] == "fix" and "COMPANY-SITE" in c["summary"] and "rebuild with your org" in c["fix"]
 
 
+def test_v2_example_placeholders_are_known():
+    # KAN-373: the v2 example org adds a GitHub org and three approval projects, all placeholders
+    for value in ("COMPANY-ORG", "ESSPROJ", "ARCHPROJ", "CHGPROJ"):
+        assert value in doctor.ORG_PLACEHOLDERS
+        assert value in (ROOT / "orgs/example-co/org.yaml").read_text(encoding="utf-8")
+
+
 def test_org_fix_never_points_at_the_checkout_channel(laptop, capsys):
     home, proj = laptop
     doc(home, proj)

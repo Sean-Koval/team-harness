@@ -52,7 +52,8 @@ SCHEMA = "team-harness.doctor/v1"
 OK, FIX, SKIP = "ok", "fix", "skip"
 WINDOWS = il.WINDOWS
 # What the public example org leaves in a work harness until a company's overlay replaces it (orgs/README.md).
-ORG_PLACEHOLDERS = ("COMPANY-SITE", "COMPANY-SPACE", "WORKPROJ", "SREPROJ", "SECPROJ", "The org overlay is not applied")
+ORG_PLACEHOLDERS = ("COMPANY-SITE", "COMPANY-SPACE", "COMPANY-ORG", "WORKPROJ", "SREPROJ", "SECPROJ", "ESSPROJ",
+                    "ARCHPROJ", "CHGPROJ", "The org overlay is not applied")
 # `claude mcp list`: `name: <url or command> (HTTP) - ✓ Connected` (or `× Failed to connect — why`, `! Needs ...`)
 MCP_LINE = re.compile(r"^(?P<name>[^\s:][^:]*): (?P<target>.*?)(?: \((?P<kind>HTTP|SSE|stdio)\))? - (?P<status>.+)$")
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
