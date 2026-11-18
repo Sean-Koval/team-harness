@@ -32,6 +32,8 @@ earlier. Rules:
    (`review-token`). Data a v2 rule needs that can't be read applies the gate, or leaves it unverified.
 8. The PR's shape (pr_shape.py, settings from AGENTS.md at the base commit): within its diff budget unless the body has
    a `Budget: <reason>` line, no hand-edited generated files, and a `changes/<KEY>.md` fragment when it changes source.
+9. With `artifact-receipt` (receipt.py, KAN-517): the artifact check's receipt is there, well formed, and says `pass`.
+   It holds on every PR, exempt ones too; a missing receipt passes with a warning only under `allow-unverified`.
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots) skip rules 1-6; the org's gates (rule 7) still hold, since an exemption is about the ticket, not the approvals.
@@ -64,6 +66,7 @@ _spec.loader.exec_module(tracker)  # type: ignore[union-attr]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pr_shape  # noqa: E402  (rule 8, beside this file)
+import receipt  # noqa: E402  (rule 9, beside this file)
 
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
 EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
@@ -1105,6 +1108,13 @@ def main() -> int:
         res.errors += serrs
         res.warnings += cwarns + swarns
 
+    receipt_lines: list[str] = []
+    if _out("ARTIFACT_RECEIPT"):
+        rerrs, rwarns, receipt_lines = receipt.check(_out("ARTIFACT_RECEIPT"), os.environ.get("GITHUB_WORKSPACE", "."),
+                                                     allow_unverified=allow_unverified)
+        res.errors += rerrs
+        res.warnings += rwarns
+
     gates: list[Gate] | None = None
     org_file = _out("ORG_FILE")
     if org_file:
@@ -1140,6 +1150,7 @@ def main() -> int:
         lines.append(f"- error: {e}")
     if gates is not None:
         lines += ["", "### Merge gates", ""] + gate_summary(gates)
+    lines += receipt_lines
     if not res.errors and not res.exempt:
         lines.append(f"Passes for {res.key}.")
     elif not res.errors and gates:

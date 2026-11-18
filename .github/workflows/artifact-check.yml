@@ -1,0 +1,109 @@
+# The artifact check (KAN-517): a reusable workflow a scaffolded repository calls on each PR. It contract-tests an MCP
+# server, or runs a capped agent or bot eval, and uploads its receipt (artifact-check.json, schema
+# actions/artifact-check/receipt.schema.json) as the `artifact-check` artifact for the work-system PR check to read
+# (`artifact-receipt`). See actions/artifact-check/README.md. Callers pin it by commit and pass the same commit as
+# harness-ref, so the check's code is the code they pinned.
+name: artifact-check
+on:
+  workflow_call:
+    inputs:
+      kind:
+        description: mcp-server, agent or bot
+        type: string
+        required: true
+      harness-repository:
+        description: The repository this workflow comes from (owner/name)
+        type: string
+        required: true
+      harness-ref:
+        description: The full commit SHA the caller pinned this workflow at
+        type: string
+        required: true
+      server:
+        description: "mcp-server: the command that starts the server over stdio on its fake backend"
+        type: string
+        default: ""
+      runner:
+        description: "agent, bot: the command that runs one evals/tasks/*.yaml file and prints its JSON result"
+        type: string
+        default: ""
+      model:
+        description: "agent, bot: the model the runner uses (pick a cheap one)"
+        type: string
+        default: ""
+      budget-usd:
+        description: "agent, bot: the hard cap for the whole run, in US dollars"
+        type: string
+        default: "1"
+      pass-rate:
+        description: "agent, bot: the share of tasks that must pass (0 to 1)"
+        type: string
+        default: "1"
+      install:
+        description: The command that installs the repository and its dev dependencies
+        type: string
+        default: python -m pip install -e ".[dev]"
+      python-version:
+        type: string
+        default: "3.12"
+    secrets:
+      model-api-key:
+        description: "agent, bot: the model key, given to the runner as ARTIFACT_CHECK_API_KEY (fork PRs get none)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Refuse a moving harness ref
+        env:
+          REF: ${{ inputs.harness-ref }}
+        run: |
+          if ! printf '%s' "$REF" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::harness-ref must be the full commit SHA this workflow is pinned at (got '$REF')"; exit 1
+          fi
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.harness-repository }}
+          ref: ${{ inputs.harness-ref }}
+          path: .artifact-check-harness
+          sparse-checkout: actions/artifact-check
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install
+        env:
+          INSTALL: ${{ inputs.install }}
+        run: |
+          python -m pip install --disable-pip-version-check "jsonschema==4.26.0" "pyyaml==6.0.3"
+          sh -c "$INSTALL"
+      - name: Check
+        env:
+          KIND: ${{ inputs.kind }}
+          SERVER: ${{ inputs.server }}
+          RUNNER: ${{ inputs.runner }}
+          MODEL: ${{ inputs.model }}
+          BUDGET: ${{ inputs.budget-usd }}
+          PASS_RATE: ${{ inputs.pass-rate }}
+          ARTIFACT_CHECK_API_KEY: ${{ secrets.model-api-key }}
+        run: |
+          script=.artifact-check-harness/actions/artifact-check/artifact_check.py
+          if [ "$KIND" = mcp-server ]; then
+            python "$script" mcp-server --server "$SERVER" --out artifact-check.json
+          else
+            python "$script" "$KIND" --runner "$RUNNER" --model "$MODEL" --budget-usd "$BUDGET" \
+              --pass-rate "$PASS_RATE" --out artifact-check.json
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-check
+          path: artifact-check.json
+          if-no-files-found: warn

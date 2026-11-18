@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "team-harness.artifact-check/v1",
+  "title": "Artifact check receipt",
+  "description": "What actions/artifact-check/artifact_check.py found (KAN-517). The work-system PR check reads it with artifact-receipt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "result", "model", "budget_usd", "pass_rate", "required_pass_rate",
+               "stopped_at_budget", "tokens", "cost_usd", "cases"],
+  "properties": {
+    "schema": {"const": "team-harness.artifact-check/v1"},
+    "kind": {"enum": ["mcp-server", "agent", "bot"]},
+    "result": {"enum": ["pass", "fail", "incomplete"], "description": "incomplete: stopped at the budget, never a pass"},
+    "model": {"type": ["string", "null"]},
+    "budget_usd": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "required_pass_rate": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "stopped_at_budget": {"type": "boolean"},
+    "tokens": {"type": "integer", "minimum": 0},
+    "cost_usd": {"type": "number", "minimum": 0},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "result", "detail"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["server", "tool", "golden", "task"]},
+          "result": {"enum": ["pass", "fail", "skipped"]},
+          "detail": {"type": "string"},
+          "tokens": {"type": "integer", "minimum": 0},
+          "cost_usd": {"type": "number", "minimum": 0}
+        }
+      }
+    }
+  }
+}

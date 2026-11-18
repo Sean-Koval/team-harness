@@ -1280,3 +1280,30 @@ def test_main_v2_an_unreadable_team_fails_closed(tmp_path, fake_api):
     r, _ = run_main(tmp_path, BODY + ESS, ORG_V2, api=fake_api, jira=True)
     assert r.returncode == 1 and "the team could not be read (HTTP 404)" in r.stdout
     assert "/orgs/test-org/teams/sre/memberships/sre-1" not in fake_api.seen
+
+
+def _receipt(result: str, cases: list) -> str:
+    return json.dumps({"schema": "team-harness.artifact-check/v1", "kind": "mcp-server", "result": result,
+                       "model": None, "budget_usd": None, "pass_rate": 1.0 if result == "pass" else 0.5,
+                       "required_pass_rate": 1.0, "stopped_at_budget": False, "tokens": 0, "cost_usd": 0.0,
+                       "cases": cases})
+
+
+@pytest.mark.parametrize("result", ["pass", "fail", None])
+def test_main_reads_the_artifact_check_receipt(tmp_path, fake_api, result):
+    # rule 9 (KAN-517): a passing receipt passes; a failing one names the case; none fails closed
+    fake_api.files(["README.md"])
+    if result:
+        case = {"name": "tool:search", "kind": "tool", "result": result,
+                "detail": "" if result == "pass" else "tool search has no description"}
+        (tmp_path / "artifact-check.json").write_text(_receipt(result, [case]))
+    r, summary = run_main(tmp_path, BODY, org_file="", api=fake_api,
+                          extra_env={"INPUT_ARTIFACT_RECEIPT": "artifact-check.json"})
+    if result == "pass":
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "### Artifact check" in summary and "mcp-server: pass" in summary
+    elif result == "fail":
+        assert r.returncode == 1
+        assert "::error::the artifact check (mcp-server) says fail: tool:search: tool search has no description" in r.stdout
+    else:
+        assert r.returncode == 1 and "receipt artifact-check.json could not be read" in r.stdout

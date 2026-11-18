@@ -49,6 +49,12 @@ a new provider in `tracker.py`, chosen with `tracker-provider`, and no change to
 name and never loaded from the repository, so a PR can't bring its own. Today there is one, `jira-cloud`, with the
 `jira-*` inputs above. The org's approval gates (below) still read Jira directly until they move behind the same seam.
 
+## The artifact check's receipt
+
+With `artifact-receipt`, the check also reads the receipt of the [artifact check](../artifact-check/README.md)
+(KAN-517, rule 9). The PR needs that receipt with result `pass`; the summary lists what it found. A missing or malformed
+receipt fails, unless `allow-unverified` is set, and a run stopped at its budget never passes.
+
 ## Keep PRs small and source-only
 
 Parallel PRs conflict on generated files, and big PRs conflict more (KAN-481), so the check also holds every PR to
