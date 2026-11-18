@@ -15,8 +15,8 @@ earlier. Rules:
    or the older `lane:`), is a work item (not an Epic or a Decision, nor one labelled `type:decision`), and no open
    Decision blocks it. The ticket is read through tracker.py's provider (`tracker-provider`, default jira-cloud) as a
    normalised issue, so this file names no tracker's fields (KAN-437).
-7. With an org file (`org-file`, schema team-harness.org/v1 or v2), read from the PR's base commit so a PR can't loosen its
-   own gates: every merge gate whose `when` matches the PR (always, its changed paths, or the labels on the PR or its
+7. With an org file (`org-file`, schema team-harness.org/v1 or v2), read from the PR's base commit so a PR can't
+   loosen its own gates: every merge gate whose `when` matches the PR (always, its changed paths, or the labels on the PR or its
    work ticket) needs a `<pr_line>: <KEY>` line naming a ticket in the gate ticket type's project (`pending` or a
    missing line fails, so merge waits on the approval tickets). With Jira credentials, each gate ticket must exist, be
    in that project, have the ticket type's issue type, carry the links the gate names (`work`: an issue link to the
@@ -30,11 +30,14 @@ earlier. Rules:
    gates `approved_on: work`, checked on the work ticket itself and needing no line; `approved_field` values; and
    `github_review`, an approving review of the head commit from an active member of the approvers' GitHub team
    (`review-token`). Data a v2 rule needs that can't be read applies the gate, or leaves it unverified.
+8. The PR's shape (pr_shape.py, settings from AGENTS.md at the base commit): within its diff budget unless the body has
+   a `Budget: <reason>` line, no hand-edited generated files, and a `changes/<KEY>.md` fragment when it changes source.
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots) skip rules 1-6; the org's gates (rule 7) still hold, since an exemption is about the ticket, not the approvals.
-Reads the event payload, the PR's file list through the GitHub API, the org file, and Jira only with GET; writes
-nothing except the job summary.
+Rule 8 holds on a `no-ticket` PR too (without a key, no fragment is asked for); the exempt authors skip it.
+Reads the event payload, the PR's file list through the GitHub API, the org file and AGENTS.md, and Jira only with GET;
+writes nothing except the job summary.
 """
 
 from __future__ import annotations
@@ -58,6 +61,9 @@ _spec = spec_from_file_location("work_system_pr_tracker", os.path.join(os.path.d
                                                                        "tracker.py"))
 tracker = module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(tracker)  # type: ignore[union-attr]
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pr_shape  # noqa: E402  (rule 8, beside this file)
 
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
 EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
@@ -1007,6 +1013,11 @@ def _title_key(pr: dict, key_pattern: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def _out(name: str) -> str:
     return os.environ.get(f"INPUT_{name}", "").strip()
 
@@ -1070,6 +1081,15 @@ def main() -> int:
                             "were not checked")
     if reader is None and allow_unverified:
         work_labels, work_issue_type = [], ""
+
+    if not (res.exempt or "").startswith("author"):
+        base_sha = (pr.get("base") or {}).get("sha") or ""
+        cfg, cwarns = pr_shape.load_config(
+            (lambda: _org_at_base(repo, pr_shape.CONFIG_FILE, base_sha, _out("GITHUB_TOKEN"), api)) if base_sha else None,
+            files, lambda: _read(os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), pr_shape.CONFIG_FILE)))
+        serrs, swarns = pr_shape.check_shape(pr, files, cfg, key=res.key)
+        res.errors += serrs
+        res.warnings += cwarns + swarns
 
     gates: list[Gate] | None = None
     org_file = _out("ORG_FILE")

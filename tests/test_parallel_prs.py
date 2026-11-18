@@ -281,3 +281,141 @@ def test_generated_yml_runs_the_checks_with_check_yml_tools():
     for line in "\n".join(str(s.get("run", "")) for s in check_steps).splitlines():
         if "GITHUB_PATH" in line:
             assert line.strip() in build, f"generated.yml's build lacks check.yml's PATH line: {line.strip()}"
+
+
+# --- KAN-516: the PR check's rule 8 (diff budget, generated files, changelog fragment) -------------------------------
+
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("pr_shape", ROOT / "actions/work-system-pr/pr_shape.py")
+pr_shape = importlib.util.module_from_spec(_spec)
+sys.modules["pr_shape"] = pr_shape  # dataclasses look the module up
+_spec.loader.exec_module(pr_shape)
+
+SHAPE_BODY = "Jira: KAN-9\nDocs: none needed - test\n"
+
+
+def shape_pr(body=SHAPE_BODY, branch="KAN-9-x", labels=(), head_repo="o/r"):
+    return {"title": "KAN-9: x", "body": body, "labels": [{"name": n} for n in labels],
+            "head": {"ref": branch, "repo": {"full_name": head_repo}}, "base": {"repo": {"full_name": "o/r"}}}
+
+
+def f(name, lines=10, status="modified", **extra):
+    return {"filename": name, "additions": lines, "deletions": 0, "status": status, **extra}
+
+
+FRAGMENT = f("changes/KAN-9.md", 1, "added")
+
+
+def shape(files, pr=None, cfg=None):
+    return pr_shape.check_shape(pr or shape_pr(), files, cfg or pr_shape.Config(), key="KAN-9")
+
+
+def test_small_pr_with_a_fragment_passes():
+    assert shape([f("src/a.py"), FRAGMENT]) == ([], [])
+
+
+def test_over_budget_fails_and_a_budget_line_passes():
+    big = [f("src/a.py", 600), FRAGMENT]
+    errors, _ = shape(big)
+    assert len(errors) == 1 and "600 changed lines (budget 500)" in errors[0] and "Budget: <reason>" in errors[0]
+    errors, warnings = shape(big, shape_pr(body=SHAPE_BODY + "Budget: one renderer moves as a whole\n"))
+    assert errors == [] and "one renderer moves as a whole" in warnings[0]
+    many = [f(f"src/m{i}.py", 1) for i in range(26)] + [FRAGMENT]
+    assert "26 changed files (budget 25)" in shape(many)[0][0]
+    # an empty reason, or one hidden in an HTML comment, does not count
+    assert shape(big, shape_pr(body=SHAPE_BODY + "Budget:\n"))[0]
+    assert shape(big, shape_pr(body=SHAPE_BODY + "<!-- Budget: hidden -->\n"))[0]
+
+
+def test_tests_fragments_and_generated_files_do_not_count_against_the_budget():
+    files = [f("src/a.py", 400), f("tests/test_a.py", 5000), f("pkg/test_b.py", 900), f("web/x.spec.ts", 900),
+             f("changes/KAN-9.fixed.md", 800, "added")]
+    assert shape(files) == ([], [])
+
+
+def test_an_edited_generated_file_fails_and_the_regeneration_pr_passes():
+    for name in ("harnesses/suite-default/skills/github-pr/SKILL.md", "CHANGELOG.md", "x/harness.lock"):
+        errors, _ = shape([f("src/a.py"), f(name), FRAGMENT])
+        assert len(errors) == 1 and name in errors[0] and "generated" in errors[0]
+    regen = [f("harnesses/suite-default/skills/github-pr/SKILL.md", 3000), f("harnesses/suite-default/harness.lock")]
+    assert shape(regen, shape_pr(branch="bot/generated")) == ([], [])
+    assert shape(regen, shape_pr(labels=["generated-files"])) == ([], [])
+    # a fork's bot/generated branch is not the regeneration PR; a rename out of a generated path still counts
+    assert shape(regen, shape_pr(branch="bot/generated", head_repo="fork/r"))[0]
+    moved = f("src/skill.md", previous_filename="harnesses/x/skills/s/SKILL.md", status="renamed")
+    assert shape([moved, FRAGMENT])[0]
+
+
+def test_a_release_fold_may_edit_the_changelog():
+    fold = [f("CHANGELOG.md", 40), f("changes/KAN-1.md", 2, "removed"), f("changes/KAN-2.fixed.md", 2, "removed")]
+    assert shape(fold) == ([], [])
+
+
+def test_a_missing_fragment_fails_when_source_changes():
+    errors, _ = shape([f("src/a.py")])
+    assert len(errors) == 1 and "changes/KAN-9.md" in errors[0]
+    assert shape([f("src/a.py"), f("changes/KAN-1.md", 1, "added")])[0]       # another ticket's fragment
+    assert shape([f("src/a.py"), f("changes/KAN-9.md", 1, "removed")])[0]     # deleted, not added
+    assert shape([f("src/a.py"), f("changes/KAN-90.md", 1, "added")])[0]      # KAN-90 is not KAN-9
+    assert shape([f("tests/test_a.py")]) == ([], [])                          # tests only: no source changed
+    no_key = pr_shape.check_shape(shape_pr(), [f("src/a.py")], pr_shape.Config(), key=None)
+    assert no_key == ([], [])                                                 # a no-ticket PR names no key
+
+
+def test_defaults_hold_without_configuration():
+    for text in ("", "# Guidance\n\nNo settings here.\n"):
+        cfg, warnings = pr_shape.parse_config(text)
+        assert warnings == [] and (cfg.max_lines, cfg.max_files, cfg.changes) == (500, 25, "changes")
+        assert cfg.generated == list(pr_shape.DEFAULT_GENERATED)
+    cfg, warnings = pr_shape.load_config(None, [f("src/a.py")])
+    assert cfg.max_lines == 500 and "defaults hold" in warnings[0]
+
+
+def test_a_missing_agents_md_at_the_base_means_defaults():
+    import urllib.error
+
+    def gone():
+        raise urllib.error.HTTPError("u", 404, "Not Found", None, None)
+    cfg, warnings = pr_shape.load_config(gone, [f("src/a.py")])
+    assert warnings == [] and cfg.max_lines == 500
+
+
+def test_settings_come_from_the_base_not_the_pr():
+    # the base read fails and the PR changes AGENTS.md: its own (looser) settings are not used
+    def broken():
+        raise OSError("down")
+    loose = "```work-system-pr\ndiff-budget: none\n```\n"
+    cfg, warnings = pr_shape.load_config(broken, [f("AGENTS.md")], lambda: loose)
+    assert cfg.max_lines == 500 and "defaults hold" in warnings[0]
+    cfg, _ = pr_shape.load_config(broken, [f("src/a.py")], lambda: loose)
+    assert cfg.max_lines is None
+    cfg, _ = pr_shape.load_config(lambda: loose, [f("AGENTS.md")], lambda: "")
+    assert cfg.max_lines is None
+
+
+def test_settings_parse_and_unknown_ones_warn():
+    text = ("x\n  ```work-system-pr\n  diff-budget: 80 lines\n  generated: a/**, b.txt\n  generated: !a/keep/**\n"
+            "  changes: none\n  budgte: 3\n  ```\n")
+    cfg, warnings = pr_shape.parse_config(text)
+    assert (cfg.max_lines, cfg.max_files, cfg.changes) == (80, 25, None)
+    assert cfg.generated == ["a/**", "b.txt", "!a/keep/**"] and "budgte" in warnings[0]
+    assert pr_shape.matches("a/x/y", cfg.generated) and not pr_shape.matches("a/keep/y", cfg.generated)
+    assert shape([f("src/a.py", 81)], cfg=cfg)[0] and shape([f("src/a.py", 80)], cfg=cfg) == ([], [])
+
+
+def test_this_repository_settings_match_the_build():
+    """AGENTS.md's generated globs name exactly what build_generated.py writes under harnesses/: every generated file
+    matches, and no harness's own file does."""
+    pytest.importorskip("hangar")
+    import build_generated
+
+    cfg, warnings = pr_shape.parse_config((ROOT / "AGENTS.md").read_text(encoding="utf-8"))
+    assert warnings == [] and cfg.source == "AGENTS.md"
+    prefixes = build_generated.generated_prefixes(ROOT)
+    tracked = subprocess.run(["git", "ls-files", "harnesses"], cwd=ROOT, check=True, capture_output=True,
+                             text=True).stdout.splitlines()
+    wrong = [p for p in tracked if "/releases/" not in p
+             and pr_shape.matches(p, cfg.generated) != build_generated.is_generated(prefixes, p)]
+    assert wrong == []
+    assert pr_shape.matches("CHANGELOG.md", cfg.generated)
