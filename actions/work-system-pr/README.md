@@ -40,6 +40,36 @@ in KAN-450. Until then the check runs rules 1-5 without the ticket check, and th
 `unverified` and fail closed (KAN-365), so a person must approve the merge. At work, keep `allow-unverified` false
 (leave it unset) until KAN-450, so the gates stay closed.
 
+## Keep PRs small and source-only
+
+Parallel PRs conflict on generated files, and big PRs conflict more (KAN-481), so the check also holds every PR to
+its repository's shape ([`pr_shape.py`](pr_shape.py), KAN-516):
+
+- **Diff budget.** Changed lines and changed files, not counting tests, changelog fragments or generated files, stay
+  within the budget (default 500 lines and 25 files). Over it, split the PR, or add a `Budget: <reason>` line to the
+  body; the reason shows as a warning.
+- **No hand-edited generated files.** A PR that changes a generated path (default `harnesses/**`, `CHANGELOG.md`,
+  `**/harness.lock`) fails, unless it is the post-merge regeneration PR (branch `bot/generated` in the same
+  repository) or is labelled `generated-files`. A release fold that deletes fragments may edit `CHANGELOG.md`.
+- **A changelog fragment.** A PR whose title names a key and that changes source (anything but tests, fragments and
+  generated files) adds `changes/<KEY>.md` or `changes/<KEY>.<kind>.md`.
+
+A repository sets its own values in a fenced block in `AGENTS.md`, read at the PR's base commit so a PR can't loosen
+its own budget (without the block, or without `AGENTS.md`, the defaults hold):
+
+````markdown
+```work-system-pr
+diff-budget: 400 lines, 20 files
+generated: harnesses/**, CHANGELOG.md, !harnesses/own/**
+tests: tests/**, **/test_*.py
+changes: changes
+```
+````
+
+Globs are comma-separated, may repeat on several lines, and `**/` also matches no directory; a later `!glob` takes
+paths back out, as in `.gitignore`. `none` turns a setting off (`changes: none` drops the fragment rule). PRs by the
+exempt authors skip these rules; a `no-ticket` PR keeps the budget and generated-file rules.
+
 ## Hold merge on the org's approval gates
 
 A company's org overlay (`orgs/<org>/org.yaml`, schema `team-harness.org/v1`) lists merge gates: approval tickets that

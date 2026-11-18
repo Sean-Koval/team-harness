@@ -589,6 +589,7 @@ class FakeApi:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def files(self, names):
+        names = [*names, "changes/KAN-315.md"]  # the changelog fragment rule 8 asks for (tests/test_parallel_prs.py)
         self.routes["/repos/o/r/pulls/7/files?per_page=100&page=1"] = (200, [{"filename": n} for n in names])
 
     def base_org(self, text):
@@ -691,7 +692,7 @@ def test_main_rejects_an_org_file_outside_the_repository(tmp_path, fake_api, org
     r, _ = run_main(tmp_path, BODY, placeholder, org_file=org_file.format(tmp=tmp_path), api=fake_api,
                     extra_env={"INPUT_ALLOW_UNVERIFIED": "true"})
     assert r.returncode == 1 and "must be a path inside the repository" in r.stdout
-    assert "is a placeholder" not in r.stdout and not any("/contents/" in p for p in fake_api.seen)
+    assert "is a placeholder" not in r.stdout and not any("/contents/" in p and "org.yaml" in p for p in fake_api.seen)
 
 
 def test_main_normalises_a_dotted_org_file_path_and_reads_it_at_base(tmp_path, fake_api):
