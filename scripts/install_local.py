@@ -957,6 +957,44 @@ def mcp_commands(h: Harness, scope: str, local_only: bool = False, skipped: list
     return out
 
 
+@dataclass
+class OverlaySteps:
+    """What install_local prints for Work Copilot (KAN-381): two commands, an example, and why it may not work yet."""
+    commands: list[str]
+    example: str = ""
+    note: str = ""  # "(placeholder org: values are examples)" for a placeholder org
+    problem: str = ""
+
+
+def work_copilot_commands(repo: Path, harness: str, commit: str | None = None,
+                          out: Path | None = None) -> OverlaySteps | None:
+    """Commands that render the harness's org overlay for Work Copilot and apply it; None when it names no org.
+    `commit` is the pinned revision being installed: the overlay is read there (`--at`), not from the checkout."""
+    try:
+        import work_copilot_overlay as wco
+    except Exception as e:  # noqa: BLE001  (an optional extra: never let it stop an install)
+        return OverlaySteps([], problem=f"cannot load scripts/work_copilot_overlay.py: {e}")
+    problem, placeholder = "", False
+    try:
+        with wco.tree(repo, commit) as root:
+            if not wco.org_for(root, harness):
+                return None
+            try:
+                placeholder = wco.render(root, harness=harness)["placeholder"]
+            except (ValueError, KeyError) as e:
+                problem = f"the org overlay does not render yet: {str(e).splitlines()[0]}"
+    except (OSError, ValueError, yaml.YAMLError, AttributeError, TypeError) as e:  # a malformed targets.yaml
+        return OverlaySteps([], problem=f"cannot read the org overlay from shared/work-system/targets.yaml: {e}")
+    # Never the current folder by default: install_local may run inside a company repository
+    out = (out or wco.default_out()).expanduser().resolve()
+    script = repo.resolve() / "scripts" / "work_copilot_overlay.py"
+    at = f" --at {commit}" if commit else ""
+    q = lambda w: wco.quote(w, WINDOWS)  # noqa: E731
+    render = f"{wco.python(WINDOWS)} {q(str(script))} --harness {harness}{at} --out {q(str(out))}"
+    apply, example = wco.apply_commands(out, WINDOWS)
+    return OverlaySteps([render, apply], example, wco.PLACEHOLDER_NOTE if placeholder else "", problem)
+
+
 def plugin_commands(h: Harness, scope: str) -> list[str]:
     out, seen = [], set()
     for c in h.lock.get("components") or []:
@@ -1276,6 +1314,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="project scope: the project directory")
     ap.add_argument("--channel", help="the channels.yaml channel to install (default stable; --check: the installed "
                                       "one); 'checkout' installs the checkout as it is")
+    ap.add_argument("--overlay-out", type=Path, metavar="FILE",
+                    help="where the printed Work Copilot overlay command writes its file (default: "
+                         "team-harness/work-copilot-overlay.json in your own config folder, never the current folder)")
     ap.add_argument("--allow-dirty", action="store_true",
                     help="install from a checkout with uncommitted changes in the harness (or not in git)")
     mode = ap.add_mutually_exclusive_group()
@@ -1415,6 +1456,17 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         print("Plugins: run these yourself:")
         for c in plugins:
             print(f"  {c}")
+    overlay = work_copilot_commands(a.harness.resolve().parent.parent, h.name, src.commit, a.overlay_out)
+    if overlay:
+        if overlay.commands:
+            note = f" {overlay.note}" if overlay.note else ""
+            print(f"Work Copilot{note}: give it the company overlay's work site, knowledge space, Jira project and "
+                  "room (one file feeds both; its doctor then names it):")
+            for c in overlay.commands:
+                print(f"  {c}")
+            print(f"  {overlay.example}")
+        if overlay.problem:
+            print(f"  note: Work Copilot overlay: {overlay.problem}")
     m = read_manifest(base)
     changes = (any(x != "keep" for x, _ in p.files) or any(sp.settings is not None for sp in p.sfiles.values())
                or p.guide_import is not None or p.gitignore_add or m is None or m.get("channel") != src.channel)
