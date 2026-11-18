@@ -137,6 +137,10 @@ needs agent-factory's `theme-v2` files; it is unsolvable without that host.
   sandboxes run must have flightdeck's and hangar's locked dependencies and pytest installed. Each
   `environment/Dockerfile` shows how, for the local runner. Without them every grade is 0, and the reference check
   marks every task invalid.
+- **The grader needs DuckDB's icu extension cached.** flightdeck's code at these bases sets DuckDB's time zone when
+  it connects. DuckDB then downloads its icu extension, which fails without network. So flightdeck-53 and -82 fail
+  even with the reference fix. Each flightdeck task's Dockerfile now fetches icu at build time; the arms' grader
+  image must do the same, for the user the grader runs as.
 - `min_tasks: 20` in `decision.yaml` equals the suite's size. One task excluded in either arm makes the verdict
   "No decision: underpowered".
 - With no cost history, `flightdeck experiment run ../../suite.yaml --dry-run` projects $360 at an assumed $3 a
@@ -151,3 +155,8 @@ python -m pytest -q tests/test_regression_v0.py                  # count, limits
 
 Fail-to-pass was checked on 2026-10-29 for every task: `test.sh` on the base fails and on the base plus
 `solution/reference.patch` passes, twice. No trial was run.
+
+Re-checked on 2026-11-18 (KAN-222) without network, with flightdeck's and hangar's current locked dependencies:
+every task fails on its base. With the reference patch, 17 pass. flightdeck-53 and -82 failed on the icu download
+above. hangar-298's run-key test failed because this host ran it as root; it was not re-run under hangar's test user.
+`task check` passes for all 20 on flightdeck main.

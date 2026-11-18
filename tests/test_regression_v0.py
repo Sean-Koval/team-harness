@@ -53,3 +53,11 @@ def test_the_preregistration_names_regression_v0_and_keeps_its_verdict_keys():
     assert suite["tasks"] == ["suites/regression-v0/tasks"] and suite["n"] == 3
     assert {v["model"] for v in suite["variants"].values()} == {"claude-opus-5-5"}
     assert {v["approvals"] for v in suite["variants"].values()} == {"deny-risky"}
+
+
+@pytest.mark.parametrize("task", [t for t in TASKS if t.name.startswith("flightdeck-")], ids=lambda p: p.name)
+def test_flightdeck_task_images_cache_duckdbs_icu_extension_for_the_offline_grader(task):
+    # flightdeck sets DuckDB's time zone on connect, which downloads icu; hangar's grader has no network (KAN-222).
+    dockerfile = (task / "environment" / "Dockerfile").read_text()
+    assert "duckdb.connect(config={'TimeZone': 'UTC'})" in dockerfile
+    assert dockerfile.index("TimeZone") < dockerfile.index("WORKDIR /workspace")
