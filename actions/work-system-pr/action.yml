@@ -61,6 +61,13 @@ inputs:
       credentials, as on fork and Dependabot PRs, or Jira down), and lets the work ticket's rules be skipped when the
       tracker's inputs are set but the tracker can't be read. Default "false": both fail.
     default: "false"
+  artifact-receipt:
+    description: >-
+      Path, inside the checkout, of the artifact check's receipt (artifact-check.json from
+      .github/workflows/artifact-check.yml, KAN-517; optional; rule 9, KAN-558). When set, the PR needs that receipt
+      with passed true; download the artifact-check artifact into the checkout before this step. A missing receipt
+      fails unless allow-unverified is set; a run stopped at or over its budget never passes.
+    default: ""
 runs:
   using: composite
   steps:
@@ -96,3 +103,4 @@ runs:
         INPUT_ORG_FILE: ${{ inputs.org-file }}
         INPUT_REVIEW_TOKEN: ${{ inputs.review-token }}
         INPUT_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}
+        INPUT_ARTIFACT_RECEIPT: ${{ inputs.artifact-receipt }}
