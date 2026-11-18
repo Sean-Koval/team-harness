@@ -386,3 +386,23 @@ def test_jira_cloud_reads_a_gate_tickets_remote_links():
     r, _ = provider({}, {"SRE-7/remotelink": urllib.error.URLError("down")})
     with pytest.raises(tracker.TrackerUnreachable):
         r.gate_links("SRE-7")
+
+
+def test_a_bad_gate_answer_through_a_reader_is_wrapped_once():
+    """R1's nit on #101: a Reader's gate read went through GateReader twice, nesting the message."""
+    class Sloppy:
+        label = "Desk"
+
+        def gate_issue(self, key, fields):
+            return {"key": key, "status": "Done", "project": 7}
+
+        def gate_links(self, key):
+            return 7
+
+    reader = tracker.gate_reader(tracker.Reader("desk", Sloppy()))
+    with pytest.raises(tracker.BadAnswer) as e:
+        reader.gate_issue("X-1")
+    assert "provider failed" not in str(e.value) and "project" in str(e.value)
+    with pytest.raises(tracker.BadAnswer) as e:
+        reader.gate_links("X-1")
+    assert str(e.value) == "the desk provider's remote links for X-1 are not text"

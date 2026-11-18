@@ -335,7 +335,7 @@ class GateReader:
     def gate_issue(self, key: str, fields: Iterable[str] = ()) -> dict[str, Any]:
         try:
             answer = self._provider.gate_issue(key, list(fields))
-        except (TicketMissing, TrackerUnreachable):
+        except (TicketMissing, TrackerUnreachable, BadAnswer):  # its own words, not wrapped again
             raise
         except Exception as e:  # noqa: BLE001
             raise BadAnswer(f"the {self.name} provider failed: {type(e).__name__}: {e}") from None
@@ -344,7 +344,7 @@ class GateReader:
     def gate_links(self, key: str) -> str:
         try:
             answer = self._provider.gate_links(key)
-        except (TicketMissing, TrackerUnreachable):
+        except (TicketMissing, TrackerUnreachable, BadAnswer):  # its own words, not wrapped again
             raise
         except Exception as e:  # noqa: BLE001
             raise BadAnswer(f"the {self.name} provider failed: {type(e).__name__}: {e}") from None
