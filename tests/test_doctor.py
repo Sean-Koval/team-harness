@@ -1,11 +1,8 @@
 """scripts/doctor.py: one readable preflight for a laptop, with fakes for claude, gh, hangar, flightdeck and MCP."""
 
-import http.server
 import json
 import os
 import sys
-import threading
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -15,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import doctor  # noqa: E402
 import install_local as il  # noqa: E402
+from test_doctor_live import mcp_server  # noqa: E402, F401  (the fake MCP server, shared)
 
 WORK = ROOT / "harnesses/work-default"
 SUITE = ROOT / "harnesses/suite-default"
@@ -199,66 +197,7 @@ def test_mcp_failed_names_the_unset_variable_never_its_value(laptop, capsys):
     assert SECRET not in out and "GITHUB_MCP_AUTHORIZATION set" in out
 
 
-class FakeMCP(http.server.BaseHTTPRequestHandler):
-    sse = False
-    status = 200
-    seen: list = []
-
-    def do_POST(self):  # noqa: N802
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        FakeMCP.seen.append((self.headers.get("Authorization"), self.headers.get("Mcp-Session-Id"), body))
-        if FakeMCP.status != 200:
-            self.send_response(FakeMCP.status)
-            self.end_headers()
-            return
-        if "id" not in body:
-            self.send_response(202)
-            self.end_headers()
-            return
-        result = {"tools": [{"name": "a"}, {"name": "b"}]} if body["method"] == "tools/list" else {"capabilities": {}}
-        data = json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": result})
-        self.send_response(200)
-        self.send_header("Mcp-Session-Id", "sess-1")
-        if FakeMCP.sse:
-            self.send_header("Content-Type", "text/event-stream")
-            data = f"event: message\ndata: {data}\n\n"
-        else:
-            self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(data.encode())
-
-    def log_message(self, *a):
-        pass
-
-
-@pytest.fixture
-def mcp_server():
-    FakeMCP.seen, FakeMCP.sse, FakeMCP.status = [], False, 200
-    srv = http.server.HTTPServer(("127.0.0.1", 0), FakeMCP)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_port}/mcp"
-    srv.shutdown()
-
-
-@pytest.mark.parametrize("sse", [False, True])
-def test_tools_list_handshake(mcp_server, sse, monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    FakeMCP.sse = sse
-    n, err = doctor.tools_list(mcp_server, "Authorization", SECRET)
-    assert (n, err) == (2, None)
-    assert [b.get("method") for _, _, b in FakeMCP.seen] == ["initialize", "notifications/initialized", "tools/list"]
-    assert FakeMCP.seen[-1][:2] == (SECRET, "sess-1")
-
-
-def test_tools_list_refused(mcp_server, monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    FakeMCP.status = 401
-    n, err = doctor.tools_list(mcp_server, "Authorization", SECRET)
-    assert n == 0 and "401" in err and SECRET not in err
-
-
 def test_live_tools_list_per_server(laptop, capsys, mcp_server, monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     home, proj = laptop
     lock = dict(LOCK, binding=dict(LOCK["binding"], mcp=[dict(m, endpoint=mcp_server) if m["name"] == "github" else m
                                                          for m in LOCK["binding"]["mcp"]]))
@@ -273,56 +212,6 @@ def test_live_tools_list_per_server(laptop, capsys, mcp_server, monkeypatch):
         c["mcp:atlassian"]["summary"]
 
 
-@pytest.mark.parametrize("endpoint, sends", [
-    ("https://mcp.example.invalid/mcp", True), ("HTTPS://mcp.example.invalid/mcp", True),
-    ("http://localhost:8080/mcp", True), ("http://127.0.0.1:9/mcp", True), ("http://[::1]:9/mcp", True),
-    ("http://mcp.example.invalid/mcp", False), ("http://localhost.example.invalid/mcp", False),
-    ("http://127.0.0.1.example.invalid/mcp", False), ("ftp://mcp.example.invalid/mcp", False),
-    ("mcp.example.invalid/mcp", False), ("", False), ("https:///mcp", False),
-])
-def test_a_credential_goes_only_over_https_or_to_this_machine(endpoint, sends):
-    assert doctor.sends_credential_to(endpoint) is sends
-
-
-def test_tools_list_sends_nothing_to_a_plain_http_endpoint(monkeypatch):
-    def refuse(*a, **k):
-        raise AssertionError("a request was made")
-    monkeypatch.setattr(doctor._OPENER, "open", refuse)
-    monkeypatch.setattr(urllib.request, "urlopen", refuse)
-    n, err = doctor.tools_list("http://mcp.example.invalid/mcp", "Authorization", SECRET)
-    assert n == 0 and "not https" in err and SECRET not in err
-
-
-class Redirect(http.server.BaseHTTPRequestHandler):
-    code, to, seen = 302, "", []
-
-    def do_POST(self):  # noqa: N802
-        self.rfile.read(int(self.headers["Content-Length"]))
-        Redirect.seen.append(self.headers.get("Authorization"))
-        self.send_response(Redirect.code)
-        self.send_header("Location", Redirect.to)
-        self.end_headers()
-
-    def log_message(self, *a):
-        pass
-
-
-@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
-def test_tools_list_follows_no_redirect(mcp_server, monkeypatch, code):
-    """A 30x names its status and is not followed: the server it points at never sees the credential."""
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    Redirect.code, Redirect.to, Redirect.seen = code, mcp_server, []
-    srv = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    try:
-        n, err = doctor.tools_list(f"http://127.0.0.1:{srv.server_port}/mcp", "Authorization", SECRET)
-    finally:
-        srv.shutdown()
-    assert n == 0 and f"HTTP {code}" in err and "redirect" in err and SECRET not in err
-    assert Redirect.seen == [SECRET]  # one request, to the endpoint itself
-    assert FakeMCP.seen == []  # the redirect's target got none, so never the header
-
-
 def test_live_sends_no_credential_to_a_plain_http_server(laptop, capsys, monkeypatch):
     home, proj = laptop
     endpoint = "http://mcp.example.invalid/mcp"
@@ -334,12 +223,13 @@ def test_live_sends_no_credential_to_a_plain_http_server(laptop, capsys, monkeyp
         raise AssertionError("a request was made")
     monkeypatch.setattr(doctor, "tools_list", refuse)
     fake = Fake({("claude", "mcp", "list"): (0, mcp_list_all(lock))})
-    doc(home, proj, "--live", "--skip", "channel", fake=fake, env={"GITHUB_MCP_AUTHORIZATION": SECRET})
-    out = capsys.readouterr().out
-    assert SECRET not in out
-    c = {x["id"]: x for x in json.loads(out)["checks"]}["mcp:github"]
-    assert c["status"] == "fix" and "github" in c["summary"] and \
-        "endpoint is not https; doctor won't send the credential" in c["summary"]
+    for env in ({"GITHUB_MCP_AUTHORIZATION": SECRET}, {}):  # unset here too: the fix comes first, not a skip
+        doc(home, proj, "--live", "--skip", "channel", fake=fake, env=env)
+        out = capsys.readouterr().out
+        assert SECRET not in out
+        c = {x["id"]: x for x in json.loads(out)["checks"]}["mcp:github"]
+        assert c["status"] == "fix" and "github" in c["summary"] and \
+            "endpoint is not https; doctor won't send the credential" in c["summary"]
 
 
 def test_gh_signed_out_and_without_repo_scope(laptop, capsys):

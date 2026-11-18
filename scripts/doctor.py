@@ -13,7 +13,7 @@ channel, the guide imported, the repository's own test and check commands allowe
 Each check prints one line, `ok`, `fix` or `skip`, and every `fix` carries the exact command or edit that fixes it.
 It reads and runs read-only commands only: it installs, adds, signs in and writes nothing. No credential value is
 printed: a credential variable is reported as set or unset, and `--live` sends it only to the server it is for, only
-over https (or plain http to this machine: localhost, 127.0.0.1, ::1), and never along a redirect.
+over https (or plain http to this machine: localhost, 127.0.0.1, ::1, past no proxy), and never along a redirect.
 `--live` is the exception to writing nothing: its one `claude -p` call is a real session, so it writes a transcript
 and runs the harness's session hooks.
 
@@ -389,12 +389,12 @@ def check_mcp(c: Ctx) -> list[Check]:
             out.append(Check(cid, FIX, f"{name} doesn't answer ({why})", hint))
         elif c.live and want_kind == "http" and m.get("header_names"):
             var = il._var(name, m["header_names"][0], binding)
-            if not c.env.get(var):
-                out.append(Check(cid, SKIP, f"{name} connected; tools/list not sent ({var} is unset here, the server "
-                                            "has its own copy)", f"set {var} in this shell to send it"))
-            elif not sends_credential_to(m["endpoint"]):
+            if not sends_credential_to(m["endpoint"]):
                 out.append(Check(cid, FIX, f"{name}: endpoint is not https; doctor won't send the credential",
                                  f"the binding must give {name} an https:// endpoint (plain http only to localhost)"))
+            elif not c.env.get(var):
+                out.append(Check(cid, SKIP, f"{name} connected; tools/list not sent ({var} is unset here, the server "
+                                            "has its own copy)", f"set {var} in this shell to send it"))
             else:
                 n, err = tools_list(m["endpoint"], m["header_names"][0], c.env[var])
                 out.append(Check(cid, OK, f"{name} connected; tools/list returned {n} tools") if err is None else
@@ -407,17 +407,20 @@ def check_mcp(c: Ctx) -> list[Check]:
     return out
 
 
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")  # plain http to these never leaves the machine
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")  # plain http to these stays on the machine (no proxy, see _opener)
 
 
 def sends_credential_to(endpoint: str) -> bool:
-    """Whether --live may send a credential to endpoint: https, or http to this machine (KAN-540)."""
+    """Whether --live may send a credential to endpoint: https, or http to this machine (KAN-540). An endpoint with
+    a user part (`x@host`) is refused: urllib would connect to the whole netloc, not the host checked here."""
     try:
         u = urllib.parse.urlsplit(str(endpoint))
         host = (u.hostname or "").lower()
     except ValueError:
         return False
-    return bool(host) and (u.scheme.lower() == "https" or (u.scheme.lower() == "http" and host in LOCAL_HOSTS))
+    if not host or "@" in u.netloc:
+        return False
+    return u.scheme.lower() == "https" or (u.scheme.lower() == "http" and host in LOCAL_HOSTS)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -427,21 +430,31 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # urllib then raises HTTPError with the 30x code
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+def _opener(endpoint: str) -> urllib.request.OpenerDirector:
+    """An opener that follows no redirect, built per call so it reads the proxy settings of now. Plain http (only
+    ever to this machine) bypasses every proxy, environment or system: a proxy would get the header in clear text.
+    https keeps the proxy, which only tunnels it: the header stays inside TLS (KAN-540)."""
+    if urllib.parse.urlsplit(endpoint).scheme.lower() == "http":
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    return urllib.request.build_opener(_NoRedirect)
 
 
 def tools_list(endpoint: str, header: str, value: str, timeout: float = 30) -> tuple[int, str | None]:
     """One MCP streamable-HTTP handshake and tools/list. (tool count, None) or (0, why); the value is sent only to
-    endpoint, only over https (or http to localhost), never along a redirect, and never shown."""
+    endpoint, only over https (or http to this machine, past no proxy), never along a redirect, and never shown."""
     if not sends_credential_to(endpoint):
         return 0, "endpoint is not https; doctor won't send the credential"
+    if any(ch in f"{header}{value}" for ch in "\r\n\0"):
+        # http.client would refuse it with an error that quotes the value (PowerShell's Get-Content keeps a CRLF)
+        return 0, "the credential has a line break or NUL; doctor won't send it"
+    opener = _opener(endpoint)
     session: dict[str, str] = {"MCP-Protocol-Version": "2025-06-18"}
 
     def post(body: dict[str, Any]) -> Any:
         h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", header: value,
              **session}
         req = urllib.request.Request(endpoint, data=json.dumps(body).encode(), headers=h, method="POST")  # noqa: S310
-        with _OPENER.open(req, timeout=timeout) as r:  # noqa: S310
+        with opener.open(req, timeout=timeout) as r:  # noqa: S310
             if r.headers.get("Mcp-Session-Id"):
                 session["Mcp-Session-Id"] = r.headers["Mcp-Session-Id"]
             text = r.read().decode("utf-8", "replace")
@@ -463,10 +476,15 @@ def tools_list(endpoint: str, header: str, value: str, timeout: float = 30) -> t
         post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         res = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     except urllib.error.HTTPError as e:
+        e.close()
         if 300 <= e.code < 400:
             return 0, f"HTTP {e.code}: a redirect, which doctor doesn't follow with the credential"
         return 0, f"HTTP {e.code}" + (" (the credential was refused)" if e.code in (401, 403) else "")
-    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+    except json.JSONDecodeError:
+        return 0, "the answer is not JSON"
+    except ValueError:
+        return 0, "the request could not be built (its text is not shown: it may quote the credential)"
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         return 0, str(getattr(e, "reason", e))[:120]
     tools = (res.get("result") or {}).get("tools") if isinstance(res, dict) else None
     if not isinstance(tools, list):
