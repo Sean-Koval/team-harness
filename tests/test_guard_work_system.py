@@ -508,7 +508,8 @@ def _servers(h: str) -> list[dict]:
     import yaml
     servers = yaml.safe_load((ROOT / "bindings" / f"{h}.yaml").read_text())["mcp"]
     assert all("transport" in s for s in servers.values()), (h, "bindings declare every server's transport")
-    return [{"name": n, **{k: s[k] for k in ("transport", "endpoint") if k in s}} for n, s in sorted(servers.items())]
+    return [{"name": n, **{k: s[k] for k in ("transport", "endpoint") if k in s}} for n, s in sorted(servers.items())
+            if not s.get("local_only")]  # a laptop's own server (KAN-380) never reaches the lock
 
 
 def test_profiles_bind_roles_to_the_servers_their_locks_pin():
@@ -795,6 +796,16 @@ MERGE_ROUTES = [
     "gh api -X PUT repos/o/r/pulls/5/reviews/9/dismissals -f message=x",
     "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge",
     "bash -c 'gh -R o/r pr merge 5'",
+    # KAN-539: the routes work-never-merges-in-shell-by-api counts, an approving GraphQL review through curl included
+    "gh api -X POST repos/o/r/merges -f base=main -f head=x",
+    "gh api graphql -f query='mutation { approvePullRequest(input: {}) { clientMutationId } }'",
+    "curl -X POST https://api.github.com/repos/o/r/merges -d '{\"base\": \"main\"}'",
+    "curl -X PUT https://api.github.com/repos/o/r/pulls/5/reviews/9/dismissals -d '{\"message\": \"x\"}'",
+    "curl -X POST https://api.github.com/repos/o/r/pulls/5/reviews -d '{\"event\": \"APPROVE\"}'",
+    "wget -qO- --post-data '{\"query\": \"mutation { enablePullRequestAutoMerge(input: {}) { x } }\"}' "
+    "https://api.github.com/graphql",
+    "curl -X POST https://api.github.com/graphql "
+    "-d '{\"query\": \"mutation { addPullRequestReview(input: {event: APPROVE}) { x } }\"}'",
 ]
 
 
@@ -803,6 +814,12 @@ MERGE_ROUTES = [
 def test_every_merge_route_is_refused_at_work(hook, command):
     r = run_hook(hook, {"tool_name": "Bash", "tool_input": {"command": command}})
     assert r.returncode == 2, command
+
+
+def test_a_commenting_graphql_review_through_curl_passes_at_work():
+    command = ("curl -X POST https://api.github.com/graphql "
+               "-d '{\"query\": \"mutation { addPullRequestReview(input: {event: COMMENT, body: \\\"x\\\"}) { x } }\"}'")
+    assert run_hook(WORK_HOOK, {"tool_name": "Bash", "tool_input": {"command": command}}).returncode == 0
 
 
 def test_suite_default_still_merges_with_a_repo_flag():

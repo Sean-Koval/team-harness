@@ -13,7 +13,7 @@ env:
   # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
   HANGAR_REF: ca88be327f7d57283070610cd0ae9e753ad45f1b
   FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
-  AI_DLC_REF: 67323a98e5426b067ca017f1dfcc023bbcf12906   # environments/agent.yaml's pin; the knowledge tests run against it
+  AI_DLC_REF: c217bd0c09918a26db8d5d42e02e00cf9e9d9e81   # environments/agent.yaml's pin; the knowledge tests run against it
 
 jobs:
   check:
@@ -43,6 +43,10 @@ jobs:
       - name: The PR commits no generated files (label generated-files for a lock frozen from a run)
         if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'generated-files')
         run: python scripts/build_generated.py --guard HEAD^1   # the merge ref's first parent is the base
+      # The behavior specs' approval regex is rendered from org.yaml into a source file (KAN-353), which the build
+      # below would rewrite, so it is checked first
+      - name: Behavior specs match the org's approval summaries
+        run: python scripts/sync_shared.py --check --specs
       - name: Build generated files
         run: python scripts/build_generated.py --note "built in CI"
       - name: A generated file the PR commits matches the build (a hand-edited copy fails, labelled or not)
@@ -60,7 +64,7 @@ jobs:
       - name: Task check (regression-v0)
         run: flightdeck task check flightdeck/suites/regression-v0/tasks/*/
       - name: Hook tests
-        run: python -m pytest -q tests
+        run: python -m pytest -q -rs tests
 
   # Coworkers run the hooks natively on Windows (KAN-460). No bash: every step is Python under PowerShell. The checkout
   # keeps Git for Windows' default CRLF conversion, as a coworker's clone would; .gitattributes holds the pinned

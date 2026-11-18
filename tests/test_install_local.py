@@ -529,7 +529,7 @@ def _mcp_add_positionals(line):
 
 
 @pytest.mark.parametrize(("harness", "servers"), [
-    ("work-default", {"ai-dlc", "atlassian", "github"}),
+    ("work-default", {"ai-dlc", "atlassian", "github", "work-copilot"}),  # work-copilot: this machine only (KAN-380)
     ("suite-default", {"ai-dlc", "atlassian", "github"}),
     ("team-default", {"github", "gke", "jira", "splunk"}),
 ])
@@ -547,6 +547,171 @@ def test_mcp_commands_name_the_server_where_claude_code_reads_it(tmp_path, capsy
         if "--transport stdio" in line:
             assert positionals == positionals[:1], line  # the command and its args come only after --
     assert sorted(named) == sorted(servers)
+
+
+def test_a_local_only_server_is_printed_after_the_lock_s_with_a_placeholder(tmp_path, capsys):
+    """KAN-380: Work Copilot is in no lock (no sandbox runs it); its line comes after the lock's servers, under its own
+    heading, with the data directory as a variable for this machine to fill, never a path."""
+    assert user(WORK, tmp_path) == 0
+    out = capsys.readouterr().out
+    head, _, local = out.partition("MCP servers for this machine only")
+    assert "work-copilot" not in head and local
+    var = "$env:WORK_COPILOT_DATA_DIR" if il.WINDOWS else "$WORK_COPILOT_DATA_DIR"
+    assert (f'claude mcp add --scope user --transport stdio work-copilot --env "WORK_COPILOT_DATA_DIR={var}" '
+            "-- work-copilot mcp") in local
+    # project scope: Claude Code's local scope, so the server never lands in the committed .mcp.json
+    assert project(WORK, tmp_path / "p") == 0
+    out = capsys.readouterr().out
+    assert (f'claude mcp add --scope local --transport stdio work-copilot --env "WORK_COPILOT_DATA_DIR={var}" '
+            "-- work-copilot mcp") in out
+    assert "--scope project --transport stdio work-copilot" not in out and "${WORK_COPILOT_DATA_DIR}" not in out
+    assert project(SUITE, tmp_path / "s") == 0
+    assert "this machine only" not in capsys.readouterr().out  # suite-default binds none
+
+
+def test_a_stable_install_prints_the_checkout_s_local_only_servers(tmp_path, capsys):
+    """No lock pins a local_only server, so a channel installed from git history (stable) still prints the
+    checkout's: its lock servers come from that commit's bindings, Work Copilot from the checkout's."""
+    assert user(WORK, tmp_path, "--channel", "stable") == 0
+    out = capsys.readouterr().out
+    assert "--transport stdio work-copilot" in out.partition("MCP servers for this machine only")[2]
+
+
+def _check_report(out: str) -> dict[str, str]:
+    lines = out.splitlines()
+    i = next(n for n, ln in enumerate(lines) if ln.startswith("MCP servers (reported"))
+    return {ln.strip().split(" ", 1)[0]: ln.strip() for ln in lines[i + 1:] if ln.startswith("  ")}
+
+
+def test_check_reports_each_mcp_server_without_counting_it_as_drift(tmp_path, capsys, monkeypatch):
+    """--check names Work Copilot with the lock's servers: added to Claude Code or not, its command on PATH or not.
+    Neither is drift, as the script never adds a server: a laptop without Work Copilot still checks clean."""
+    home = tmp_path / "home"
+    assert user(WORK, home, "--apply") == 0
+    capsys.readouterr()
+    which = shutil.which
+    monkeypatch.setattr(il.shutil, "which", lambda cmd, *a, **k: None if cmd == "work-copilot" else which(cmd, *a, **k))
+    assert user(WORK, home, "--check") == 0
+    out = capsys.readouterr().out
+    report = _check_report(out)
+    assert set(report) == {"ai-dlc", "atlassian", "github", "work-copilot"}
+    assert "this machine only" in report["work-copilot"] and "not added" in report["work-copilot"]
+    assert "work-copilot is not on PATH" in report["work-copilot"]
+    assert out.splitlines()[-1].startswith("clean:")
+
+    # with Work Copilot installed and added in user scope, as `claude mcp add --scope user` writes it
+    monkeypatch.setattr(il.shutil, "which", which)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tool = bin_dir / ("work-copilot.exe" if os.name == "nt" else "work-copilot")
+    tool.write_text("#!/bin/sh\nexit 0\n")
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"work-copilot": {
+        "type": "stdio", "command": "work-copilot", "args": ["mcp"], "env": {"WORK_COPILOT_DATA_DIR": ""}}}}))
+    assert user(WORK, home, "--check") == 0
+    report = _check_report(capsys.readouterr().out)
+    added = f"work-copilot (stdio, this machine only): added in {home / '.claude.json'}; work-copilot at "
+    assert report["work-copilot"].startswith(added)
+    assert "not added" in report["github"]
+
+
+def test_check_reads_project_servers_from_mcp_json_and_local_ones_from_the_project_s_entry(tmp_path, capsys):
+    """Project scope: the lock's servers are in the project's .mcp.json; a laptop-only one, added with --scope local,
+    in the project's entry of ~/.claude.json, never in .mcp.json."""
+    target, home = tmp_path / "svc", tmp_path / "home"
+    home.mkdir()
+    assert project(WORK, target, "--apply", "--home", home) == 0
+    (target / ".mcp.json").write_text(json.dumps({"mcpServers": {"github": {"type": "http"}}}))
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"atlassian": {}}, "projects": {
+        target.resolve().as_posix(): {"mcpServers": {"work-copilot": {"command": "work-copilot"}}}}}))
+    capsys.readouterr()
+    assert project(WORK, target, "--check", "--home", home) == 0
+    report = _check_report(capsys.readouterr().out)
+    assert f"added in {target / '.mcp.json'}" in report["github"]
+    assert "not added" in report["atlassian"]  # user scope doesn't count for a project-scope install
+    assert f"added in {home / '.claude.json'} (project {target.resolve()})" in report["work-copilot"]
+
+
+def test_a_harness_named_as_dot_still_finds_its_binding(tmp_path, capsys, monkeypatch):
+    """Run from inside the harness directory (`install_local.py .`): the binding is found from the resolved path, so
+    Work Copilot's line and its --check report are still there."""
+    home = tmp_path / "home"
+    monkeypatch.chdir(WORK)
+    assert il.read_binding(Path("."), "work-default")["mcp"]["work-copilot"]["local_only"] is True
+    assert user(Path("."), home) == 0
+    assert "--transport stdio work-copilot" in capsys.readouterr().out.partition("this machine only")[2]
+    assert user(Path("."), home, "--apply") == 0
+    capsys.readouterr()
+    assert user(Path("."), home, "--check") == 0
+    assert "work-copilot" in _check_report(capsys.readouterr().out)
+
+
+def test_an_unset_data_directory_is_warned_about_before_it_is_frozen(tmp_path, capsys, monkeypatch):
+    """The shell fills $WORK_COPILOT_DATA_DIR when the printed line runs, and Claude Code keeps what it got: unset,
+    that is an empty value that outlives a later export. So the dry run warns while it is unset, and not once set
+    (empty included: Work Copilot's own default, chosen on purpose)."""
+    monkeypatch.delenv("WORK_COPILOT_DATA_DIR", raising=False)
+    assert user(WORK, tmp_path) == 0
+    err = capsys.readouterr().err
+    assert "warning: WORK_COPILOT_DATA_DIR is not set in this shell" in err
+    assert "claude mcp remove --scope user work-copilot" in err
+    assert project(WORK, tmp_path / "p") == 0
+    assert "claude mcp remove --scope local work-copilot" in capsys.readouterr().err
+    monkeypatch.setenv("WORK_COPILOT_DATA_DIR", "")
+    assert user(WORK, tmp_path) == 0
+    assert "WORK_COPILOT_DATA_DIR" not in capsys.readouterr().err
+
+
+def test_windows_prints_the_local_line_for_powershell(tmp_path, capsys, monkeypatch):
+    """On Windows the line is for PowerShell, which reads a variable as $env:NAME, and the heading says so."""
+    monkeypatch.setattr(il, "WINDOWS", True)
+    assert user(WORK, tmp_path) == 0
+    local = capsys.readouterr().out.partition("MCP servers for this machine only")[2]
+    assert "after setting each $env:NAME" in local and "$VARIABLE" not in local
+    assert ('claude mcp add --scope user --transport stdio work-copilot '
+            '--env "WORK_COPILOT_DATA_DIR=$env:WORK_COPILOT_DATA_DIR" -- work-copilot mcp') in local
+
+
+@pytest.mark.parametrize("change", [
+    {"args": ["mcp;", "touch", "/tmp/pwned"]},
+    {"command": "work-copilot$(id)"},
+    {"env": {"WORK_COPILOT_DATA_DIR": "$(id)"}},
+    {"env": {"WORK_COPILOT_DATA_DIR": "${OTHER_DIR}"}},
+    {"transport": "sse"},
+])
+def test_a_misshapen_local_only_server_in_the_working_tree_is_skipped(tmp_path, capsys, change):
+    """The local line comes from the checkout's working tree, which no relock may have checked: a server relock.py
+    would refuse gets no line to paste into a shell, and a warning says why."""
+    h = copy_harness(tmp_path, WORK)
+    b = h.parent.parent / "bindings" / "work-default.yaml"
+    data = yaml.safe_load(b.read_text())
+    data["mcp"]["work-copilot"].update(change)
+    b.write_text(yaml.safe_dump(data, sort_keys=False))
+    assert user(h, tmp_path / "home") == 0
+    out, err = capsys.readouterr()
+    assert "work-copilot" not in out.partition("MCP servers for this machine only")[2]
+    assert "warning: local_only server skipped: work-copilot:" in err
+
+
+def test_shell_words_are_quoted_for_their_shell(monkeypatch):
+    assert il._shell_word("work-copilot") == "work-copilot"
+    assert il._shell_word("a b;c") == "'a b;c'"
+    monkeypatch.setattr(il, "WINDOWS", True)
+    assert il._shell_word("it's $x") == "'it''s $x'"  # PowerShell: single quotes keep $ literal
+
+
+def test_check_reports_an_unreadable_binding_as_itself(tmp_path, capsys):
+    """A YAML error in the binding is drift that names the file and the error, not a harness silently unchecked."""
+    h = copy_harness(tmp_path, WORK)
+    home = tmp_path / "home"
+    assert user(h, home, "--apply") == 0
+    (h.parent.parent / "bindings" / "work-default.yaml").write_text("mcp: [unclosed\n")
+    capsys.readouterr()
+    assert user(h, home, "--check") == 1
+    out = capsys.readouterr().out
+    assert "cannot read the harness:" in out and "work-default.yaml" in out
+    assert out.splitlines()[-1].startswith("drift:")
 
 
 def test_mcp_and_plugins_are_never_written(tmp_path):
@@ -1337,3 +1502,15 @@ def test_manifest_records_the_pinned_model_and_runtime(tmp_path):
     m = manifest(home / ".claude")
     assert m["model"] == lock["model"]["id"]
     assert m["runtime_version"] == lock["runtime"]["version"]
+
+
+def test_mcp_commands_takes_the_lock_alone_as_doctor_passes_it():
+    """doctor.py (KAN-372) calls mcp_commands with only root, name and lock: it gets the lock's lines, one per server,
+    in the lock's order, and no laptop-only line."""
+    from types import SimpleNamespace
+    h = il.load_harness(WORK, "user")
+    lean = SimpleNamespace(root=h.root, name=h.name, lock=h.lock)
+    lines = il.mcp_commands(lean, "user")
+    assert lines == il.mcp_commands(h, "user")
+    assert len(lines) == len(h.lock["binding"]["mcp"]) and not any("work-copilot" in ln for ln in lines)
+    assert il.mcp_commands(lean, "user", local_only=True) == []
