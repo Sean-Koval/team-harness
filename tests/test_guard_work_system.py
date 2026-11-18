@@ -1260,3 +1260,119 @@ def test_a_call_that_takes_too_long_to_judge_is_blocked(tmp_path, monkeypatch):
     assert "longer than 0.01 s to judge" in mod.why(event)
     monkeypatch.setattr(mod, "DEADLINE", 60.0)
     assert mod.why(event) is None
+
+
+# KAN-546: the read-only stage subagents are held to reading by the hook, not only by their prompts and tool lists.
+def stage(tool: str, tool_input: dict, agent: str | None = "designer") -> subprocess.CompletedProcess:
+    event = {"tool_name": tool, "tool_input": tool_input}
+    if agent:
+        event["agent_type"] = agent
+    return run(event)
+
+
+def test_the_read_only_stages_are_the_shared_stage_agents():
+    import yaml
+    targets = yaml.safe_load((ROOT / "shared/work-system/targets.yaml").read_text(encoding="utf-8"))
+    assert load_hook().READ_ONLY_STAGES == {Path(a).stem for a in targets["agents"]}
+
+
+@pytest.mark.parametrize("command", [
+    'git clone --quiet --depth 1 "$KNOWLEDGE_REPO" "${TMPDIR:-/tmp}/knowledge"',
+    'git clone -q --single-branch --no-tags "$R" /tmp/knowledge-scratch',
+    "ai-dlc knowledge records search --provider git --type decision --status accepted --text retry",
+    "ai-dlc knowledge records get --provider git DEC-0012",
+    "ai-dlc knowledge why KAN-12",
+    "git -C /tmp/knowledge log --oneline -5 2>&1 | head",
+    'cd /tmp/knowledge && grep -rn "retry" records/ 2>/dev/null',
+    "git diff origin/main...HEAD --stat",
+    "git show HEAD:README.md | wc -l",
+    "gh pr view 12 --json body -R o/r",
+    "cat <<'EOF'\nnot run > x\nEOF",
+    "find . -name '*.md' -newer README.md",
+])
+def test_a_stage_may_read(command):
+    assert stage("Bash", {"command": command}).returncode == 0
+
+
+@pytest.mark.parametrize("command,reason", [
+    ("git commit -m x", "`git commit` is not a read"),
+    ("git push", "`git push` is not a read"),
+    ("git checkout -b KAN-1-x", "`git checkout` is not a read"),
+    ("echo draft > notes.md", "writes to a file"),
+    ("cat a >> b", "writes to a file"),
+    ("echo $(touch x)", "command substitution"),
+    ("echo `touch x`", "command substitution"),
+    ('git -c core.pager="sh -c id" log', "sets configuration"),
+    ("git -C . -c core.pager=x log", "sets configuration"),
+    ("git diff --output=/tmp/x", "writes or runs another program"),
+    ("find . -name x -delete", "writes or runs another program"),
+    ("find . -exec rm {} ;", "writes or runs another program"),
+    ("python3 -c 'print(1)'", "not on its list of reading commands"),
+    ("tee x < y", "not on its list of reading commands"),
+    ("sed -i s/a/b/ x", "not on its list of reading commands"),
+    ("git clone https://example.invalid/r.git ./here", "scratch clone"),
+    ('git clone --template=/x "$R" /tmp/k', "scratch clone"),
+    ('git clone "$R" /tmp/../home/k', "scratch clone"),
+    ("ai-dlc knowledge records template source", "knowledge"),
+    ("ai-dlc work finish KAN-1", "ai-dlc work"),
+    ("gh api repos/o/r/issues -f title=x", "`gh api"),
+    ("gh pr comment 1 -b x", "`gh pr comment` is not a read"),
+])
+def test_a_stage_may_not_write_or_run(command, reason):
+    result = stage("Bash", {"command": command})
+    assert result.returncode == 2
+    assert "only reads" in result.stderr and reason in result.stderr
+
+
+@pytest.mark.parametrize("command,code", [
+    ("Get-Content README.md | Select-String retry", 0),
+    ("Get-ChildItem -Recurse -Filter *.md | Select-Object -First 5", 0),
+    ('Get-ChildItem | Select-Object @{n="x";e={Remove-Item x}}', 2),
+    ("Get-Content a | ForEach-Object { $_ }", 2),
+    ("Write-Output $(Remove-Item x)", 2),
+    ("Set-Content x y", 2),
+    ("Get-Content a > b", 2),
+    ("Get-Content a > $null", 0),
+])
+def test_a_stage_in_powershell(command, code):
+    assert stage("PowerShell", {"command": command}).returncode == code
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("mcp__atlassian__searchJiraIssuesUsingJql", {"jql": "project = KAN"}),
+    ("mcp__atlassian__getJiraIssue", {"issueIdOrKey": "KAN-1"}),
+    ("mcp__atlassian__getConfluenceContent", {"id": "1"}),
+    ("mcp__ai-dlc__tracker_search", {"text": "retry"}),
+    ("mcp__atlassian__executeRead", {"name": "getJiraIssue", "cloudId": "x", "inputs": {}}),
+])
+def test_a_stage_may_call_read_tools(tool, args):
+    assert stage(tool, args, "triage").returncode == 0
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("mcp__atlassian__createJiraIssue", {"summary": "x"}),
+    ("mcp__atlassian__addCommentToJiraIssue", {"body": "x"}),
+    ("mcp__atlassian__editJiraIssue", {"fields": {"summary": "x"}}),
+    ("mcp__ai-dlc__tracker_create", {"title": "x"}),
+    ("mcp__ai-dlc__knowledge_note", {"text": "x"}),
+    ("mcp__ai-dlc__frobnicate", {}),
+    ("mcp__atlassian__executeRead", {"name": "createJiraIssue"}),
+    ("mcp__atlassian__executeRead", {"cloudId": "x"}),
+    ("mcp__atlassian__executeWrite", {"name": "getJiraIssue"}),
+])
+def test_a_stage_may_not_call_write_tools(tool, args):
+    result = stage(tool, args, "triage")
+    assert result.returncode == 2 and "triage stage only reads" in result.stderr
+
+
+@pytest.mark.parametrize("agent", [None, "general-purpose", "Explore"])
+def test_other_sessions_are_judged_as_before(agent):
+    assert stage("Bash", {"command": "echo draft > notes.md"}, agent).returncode == 0
+    assert stage("Bash", {"command": "python3 -c 'print(1)'"}, agent).returncode == 0
+    assert stage("mcp__ai-dlc__tracker_create", {"title": "x"}, agent).returncode == 0
+    # the rules above still hold for every session, stage or not
+    assert stage("Bash", {"command": "git push --force"}, agent).returncode == 2
+
+
+def test_a_stage_still_gets_the_rules_every_session_gets():
+    assert stage("mcp__atlassian__transitionJiraIssue", {"issueIdOrKey": "KAN-1"}, "designer").returncode == 2
