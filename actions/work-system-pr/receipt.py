@@ -74,7 +74,8 @@ def problems(r: Any) -> list[str]:
 
 
 def _spent(v: float) -> str:
-    return "$0" if v == 0 else f"${v:.4f}" if v >= 0.01 else f"${v:.2g}"
+    """A cost as people read it: $0.0123, $0.0004, or under $0.0001 (never $7e-06)."""
+    return "$0" if v == 0 else f"${v:.4f}" if v >= 0.0001 else "under $0.0001"
 
 
 _DETAIL = 200  # a case's detail is the run's text, which the PR controls: cap it in the error

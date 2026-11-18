@@ -1489,6 +1489,8 @@ def test_a_cheap_run_and_a_long_detail_read_well(tmp_path):
     assert any("$0.0004 spent" in ln for ln in lines)
     _, _, lines = _check(tmp_path, _receipt(cost_usd=0))
     assert any("$0 spent" in ln for ln in lines)
+    _, _, lines = _check(tmp_path, _receipt(cost_usd=0.000007))  # R2: it printed $7e-06
+    assert any("under $0.0001 spent" in ln for ln in lines), lines
     long = [FAIL[0], {"id": "task-2", "status": "fail", "detail": "x" * 5000}]
     errors, _, _ = _check(tmp_path, _receipt(passed=False, pass_rate=0.5, cases=long))
     assert len(errors[0]) < 400 and errors[0].endswith("…")
