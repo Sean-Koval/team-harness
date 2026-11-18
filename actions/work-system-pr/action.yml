@@ -26,6 +26,11 @@ inputs:
   exempt-authors:
     description: Comma-separated PR authors that are skipped
     default: dependabot[bot],renovate[bot]
+  tracker-provider:
+    description: >-
+      How the ticket is read for rule 6 (tracker.py, KAN-437). Built-in providers only: jira-cloud (default), which
+      uses jira-base-url, jira-user and jira-token. Without its inputs the ticket check is skipped with a warning.
+    default: jira-cloud
   jira-base-url:
     description: Jira site, e.g. https://example.atlassian.net (optional; with user and token enables the ticket check)
     default: ""
@@ -46,8 +51,9 @@ inputs:
     default: ""
   allow-unverified:
     description: >-
-      "true" lets a gate with approved_statuses pass, with a warning, when its ticket can't be read (no Jira
-      credentials, as on fork and Dependabot PRs, or Jira down). Default "false": such a gate fails.
+      "true" lets a gate with approved_statuses or links pass, with a warning, when its ticket can't be read (no Jira
+      credentials, as on fork and Dependabot PRs, or Jira down), and lets the work ticket's rules be skipped when the
+      tracker's inputs are set but the tracker can't be read. Default "false": both fail.
     default: "false"
 runs:
   using: composite
@@ -77,6 +83,7 @@ runs:
         INPUT_ADR_DIR: ${{ inputs.adr-dir }}
         INPUT_EXEMPT_LABEL: ${{ inputs.exempt-label }}
         INPUT_EXEMPT_AUTHORS: ${{ inputs.exempt-authors }}
+        INPUT_TRACKER_PROVIDER: ${{ inputs.tracker-provider }}
         INPUT_JIRA_BASE_URL: ${{ inputs.jira-base-url }}
         INPUT_JIRA_USER: ${{ inputs.jira-user }}
         INPUT_JIRA_TOKEN: ${{ inputs.jira-token }}

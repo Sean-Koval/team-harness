@@ -11,17 +11,21 @@ earlier. Rules:
 3. The body has a non-empty `Docs:` line; `none needed` must give a reason.
 4. If the body says `Decision: <KEY>`, the PR adds or changes a file under the ADR directory that mentions that key.
 5. The branch should contain the key (a warning only: cloud sessions are assigned branch names).
-6. With Jira credentials: the ticket exists, is not Done or Wont Do, carries an execution label (`exec:`, or the older
-   `lane:`), is a work item (not an Epic or a Decision, nor a Task labelled `type:decision`), and no open Decision blocks it.
+6. With tracker credentials: the ticket exists, is not finished (Done, Wont Do), carries an execution label (`exec:`,
+   or the older `lane:`), is a work item (not an Epic or a Decision, nor one labelled `type:decision`), and no open
+   Decision blocks it. The ticket is read through tracker.py's provider (`tracker-provider`, default jira-cloud) as a
+   normalised issue, so this file names no tracker's fields (KAN-437).
 7. With an org file (`org-file`, schema team-harness.org/v1), read from the PR's base commit so a PR can't loosen its
    own gates: every merge gate whose `when` matches the PR (always, its changed paths, or the labels on the PR or its
    work ticket) needs a `<pr_line>: <KEY>` line naming a ticket in the gate ticket type's project (`pending` or a
    missing line fails, so merge waits on the approval tickets). With Jira credentials, each gate ticket must exist, be
    in that project, have the ticket type's issue type, carry the links the gate names (`work`: an issue link to the
-   PR's work ticket; `pr`: a remote link to the PR or its URL in the description) and, when the gate sets
-   `approved_statuses`, be in one of them. The check fails closed: a gate with `approved_statuses` whose ticket can't
-   be read (no credentials, Jira down, an SSO page instead of JSON) fails, unless `allow-unverified` is set. An org
-   file marked `placeholder: true` is not enforced (a warning says so).
+   PR's work ticket; `pr`: a remote link to the PR or its URL in the description; `repo`: the repository's URL, or a
+   link into it, in a remote link or the description) and, when the gate sets `approved_statuses`, be in one of them.
+   The check fails closed: a gate with `approved_statuses` or `links` whose ticket can't be read (no credentials, Jira
+   down, an SSO page instead of JSON) fails, and so does the work ticket when Jira credentials are set but Jira can't
+   be read, unless `allow-unverified` is set. An org file marked `placeholder: true` is not enforced (a warning says
+   so).
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots) skip rules 1-6; the org's gates (rule 7) still hold, since an exemption is about the ticket, not the approvals.
@@ -32,6 +36,7 @@ nothing except the job summary.
 from __future__ import annotations
 
 import base64
+import http.client
 import fnmatch
 import json
 import os
@@ -42,10 +47,15 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from importlib.util import module_from_spec, spec_from_file_location
+
+# the tracker role (KAN-437): loaded by path, next to this file, so the action needs no package or sys.path entry
+_spec = spec_from_file_location("work_system_pr_tracker", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                       "tracker.py"))
+tracker = module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(tracker)  # type: ignore[union-attr]
 
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
-DONE_CATEGORIES = {"done"}
-NOT_WORK_TYPES = {"epic", "decision"}
 EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
 
 
@@ -118,30 +128,26 @@ def check_pr(pr: dict, files: list[dict] | None, *, key_pattern: str = DEFAULT_K
     return r
 
 
-def check_ticket(issue: dict, blockers: list[dict], key: str) -> list[str]:
-    """Rule 6, from Jira's issue JSON and the issues that block it."""
+def _is_decision(item: dict) -> bool:
+    return item.get("kind") == "decision" or "type:decision" in item.get("labels", [])
+
+
+def check_ticket(issue: dict, key: str) -> list[str]:
+    """Rule 6, from the ticket as tracker.py normalises it (key, status, category, kind, labels, blocked_by)."""
     errs = []
-    f = issue.get("fields") or {}
-    cat = ((f.get("status") or {}).get("statusCategory") or {}).get("key")
-    status = (f.get("status") or {}).get("name")
-    if cat in DONE_CATEGORIES:
-        errs.append(f"{key} is {status}: reopen it or file a new ticket")
-    itype = ((f.get("issuetype") or {}).get("name") or "").lower()
-    if itype in NOT_WORK_TYPES:
-        errs.append(f"{key} is a {itype}; a PR implements a story, task or bug (use 'Decision: {key}' for a decision)")
-    labels = [str(lab) for lab in f.get("labels") or []]
-    if itype not in NOT_WORK_TYPES and "type:decision" in labels:
+    if issue["category"] == "done":
+        errs.append(f"{key} is {issue['status']}: reopen it or file a new ticket")
+    if issue["kind"] != "work":
+        errs.append(f"{key} is a {issue['kind']}; a PR implements a story, task or bug "
+                    f"(use 'Decision: {key}' for a decision)")
+    elif _is_decision(issue):
         errs.append(f"{key} is a decision (type:decision); a PR implements a story, task or bug "
                     f"(use 'Decision: {key}' for a decision)")
-    if not any(lab.startswith(EXEC_PREFIXES) for lab in labels):
+    if not any(lab.startswith(EXEC_PREFIXES) for lab in issue["labels"]):
         errs.append(f"{key} has no execution label (exec:agent, exec:pair or exec:human; lane:* is still accepted)")
-    for b in blockers:
-        bf = b.get("fields") or {}
-        is_decision = ((bf.get("issuetype") or {}).get("name") or "").lower() == "decision" or \
-            "type:decision" in [str(lab) for lab in bf.get("labels") or []]
-        if is_decision and \
-                ((bf.get("status") or {}).get("statusCategory") or {}).get("key") not in DONE_CATEGORIES:
-            errs.append(f"{key} is blocked by open Decision {b.get('key')}: answer it before merging")
+    for b in issue["blocked_by"]:
+        if _is_decision(b) and b["category"] != "done":
+            errs.append(f"{key} is blocked by open Decision {b['key']}: answer it before merging")
     return errs
 
 
@@ -297,7 +303,7 @@ class Gate:
     why: str             # why it applies (or not)
     key: str | None = None
     state: str = ""      # not required | missing | pending | invalid | linked | checked | not approved | unverified
-    #                      | not enforced
+    #                      | not enforced | not checked
     errors: list[str] = field(default_factory=list)
 
 
@@ -367,6 +373,21 @@ class GateContext:
     work_key: str | None = None
     pr_url: str = ""
     allow_unverified: bool = False
+    repo_url: str = ""
+
+
+def _repo_url(pr: dict) -> str:
+    """The base repository's web URL: the payload's own, or the PR URL without its `/pull/N`."""
+    url = str(((pr.get("base") or {}).get("repo") or {}).get("html_url") or "")
+    if not url:
+        m = re.match(r"^(https?://[^/]+/[^/]+/[^/]+)/pull/\d+/?$", str(pr.get("html_url") or ""))
+        url = m.group(1) if m else ""
+    return url.rstrip("/")
+
+
+def _needs_jira(g: dict) -> bool:
+    """A gate whose rule only Jira can show (an approved status, a link) fails when its ticket can't be read."""
+    return bool(g.get("approved_statuses") or g.get("links"))
 
 
 def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: str = DEFAULT_KEY,
@@ -377,7 +398,7 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
     verified fails unless `allow_unverified` is set."""
     errors: list[str] = []
     warnings: list[str] = []
-    ctx = GateContext(fetch, remote_links, work_key, str(pr.get("html_url") or ""), allow_unverified)
+    ctx = GateContext(fetch, remote_links, work_key, str(pr.get("html_url") or ""), allow_unverified, _repo_url(pr))
     types = {t["id"]: t for t in org["ticket_types"]}
     labels = {str(lab.get("name") or "") for lab in pr.get("labels") or []}
     body = _no_comments(pr.get("body") or "")
@@ -423,9 +444,9 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
                 gate.errors.append(f"gate {gate.id!r}: {gate.key} is not in {gate.project}, where the "
                                    f"{gate.ticket} ticket is filed")
             elif ctx.fetch is None:
-                if g.get("approved_statuses"):
+                if _needs_jira(g):
                     _unverified(gate, "there are no Jira credentials to read it (fork and bot PRs get no secrets)",
-                                g["approved_statuses"], ctx, errors=gate.errors, warnings=warnings)
+                                g, ctx, errors=gate.errors, warnings=warnings)
             else:
                 _check_gate_ticket(gate, g, t, ctx, warnings)
                 if not gate.errors and gate.state == "linked":
@@ -434,11 +455,22 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
     return gates, errors, warnings
 
 
-def _unverified(gate: Gate, why: str, approved: list[str], ctx: GateContext, *, errors: list[str],
+def _what_jira_shows(g: dict) -> str:
+    parts = []
+    if g.get("approved_statuses"):
+        parts.append(" or ".join(g["approved_statuses"]))
+    if g.get("links"):
+        names = {"pr": "the PR", "work": "the work ticket", "repo": "the repository"}
+        parts.append("linking " + " and ".join(names.get(x, f"the {x}") for x in g["links"]))
+    return ", ".join(parts)
+
+
+def _unverified(gate: Gate, why: str, g: dict, ctx: GateContext, *, errors: list[str],
                 warnings: list[str]) -> None:
-    """A gate that must be approved but whose ticket couldn't be read: fail, unless allow-unverified is set."""
-    msg = (f"gate {gate.id!r}: {gate.key} could not be verified as {' or '.join(approved)} because {why}")
+    """A gate that needs Jira (an approval, a link) whose ticket couldn't be read: fail, unless allow-unverified."""
+    msg = (f"gate {gate.id!r}: {gate.key} could not be verified as {_what_jira_shows(g)} because {why}")
     if ctx.allow_unverified:
+        gate.state = "not checked"  # passes unread; the summary must not say checked
         warnings.append(f"{msg}; passing it unverified because allow-unverified is set")
     else:
         gate.state = "unverified"
@@ -446,10 +478,13 @@ def _unverified(gate: Gate, why: str, approved: list[str], ctx: GateContext, *, 
                       "allow-unverified for repositories that knowingly accept this)")
 
 
-def _mentions(obj: object, url: str) -> bool:
-    """Whether the JSON (a description or remote links) names this URL itself: `/pull/7` is not `/pull/70`."""
+def _mentions(obj: object, url: str, *, ignore_case: bool = False) -> bool:
+    """Whether the JSON (a description or remote links) names this URL itself: `/pull/7` is not `/pull/70`, and
+    `o/r` is not `o/r-fork`, `o/r2`, `o/r.x` or `o/r%2Dfork` (a link into the repository, such as `o/r/pull/7`, names
+    it, and so does a URL that ends a sentence with a full stop)."""
     url = url.rstrip("/")
-    return bool(url) and re.search(re.escape(url) + r"(?![\w-])", json.dumps(obj or "")) is not None
+    flags = re.IGNORECASE if ignore_case else 0
+    return bool(url) and re.search(re.escape(url) + r"(?![\w%-]|\.[\w-])", json.dumps(obj or ""), flags) is not None
 
 
 def _linked_keys(fields: dict) -> set[str]:
@@ -469,9 +504,10 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
     assert ctx.fetch is not None
 
     def unreadable(why: str) -> None:
-        if approved:
-            _unverified(gate, why, approved, ctx, errors=gate.errors, warnings=warnings)
+        if _needs_jira(g):
+            _unverified(gate, why, g, ctx, errors=gate.errors, warnings=warnings)
         else:
+            gate.state = "not checked"  # passes on the key prefix; the summary must not say checked
             warnings.append(f"gate {gate.id!r}: {gate.key} was not checked because {why}")
 
     try:
@@ -481,7 +517,7 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
         gate.errors.append(f"gate {gate.id!r}: {gate.key} could not be read from Jira (HTTP {e.code}): "
                            "does the ticket exist, and can the check's account browse its project?")
         return
-    except (urllib.error.URLError, OSError, ValueError) as e:  # ValueError: not JSON, such as an SSO login page
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:  # ValueError: not JSON
         unreadable(f"Jira did not answer with the ticket ({e})")
         return
     if not isinstance(issue, dict) or not isinstance(issue.get("fields"), dict):
@@ -509,18 +545,32 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
             gate.state = "invalid"
             errs.append(f"gate {gate.id!r}: {gate.key} has no issue link to the work ticket {ctx.work_key}; link it "
                         f"('relates to') so the approval is for this work")
-    if "pr" in links and not _mentions(f.get("description"), ctx.pr_url):
-        found = False
-        if ctx.pr_url and ctx.remote_links is not None:
+    remote: list[object] = []  # read once, for pr and repo; [None] once reading them failed
+
+    def links_to(url: str, ignore_case: bool = False) -> bool | None:
+        """Whether the description or a remote link names the URL; None when the remote links can't be read."""
+        if _mentions(f.get("description"), url, ignore_case=ignore_case):
+            return True
+        if not url or ctx.remote_links is None:
+            return False
+        if not remote:
             try:
-                found = _mentions(ctx.remote_links(gate.key or ""), ctx.pr_url)
-            except (urllib.error.URLError, OSError, ValueError) as e:
+                remote.append(ctx.remote_links(gate.key or ""))
+            except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+                remote.append(None)
                 unreadable(f"its remote links could not be read ({e})")
-                found = True  # reported above
-        if not found:
-            gate.state = "invalid"
-            errs.append(f"gate {gate.id!r}: {gate.key} does not link this PR; add {ctx.pr_url or 'the PR URL'} as a "
-                        "remote link or in its description")
+        if remote[0] is None:
+            return None
+        return _mentions(remote[0], url, ignore_case=ignore_case)
+
+    if "pr" in links and links_to(ctx.pr_url, ignore_case=True) is False:
+        gate.state = "invalid"
+        errs.append(f"gate {gate.id!r}: {gate.key} does not link this PR; add {ctx.pr_url or 'the PR URL'} as a "
+                    "remote link or in its description")
+    if "repo" in links and links_to(ctx.repo_url, ignore_case=True) is False:
+        gate.state = "invalid"
+        errs.append(f"gate {gate.id!r}: {gate.key} does not name this repository; add "
+                    f"{ctx.repo_url or 'the repository URL'} as a remote link or in its description")
     status = (f.get("status") or {}).get("name") or ""
     if approved and status.lower() not in {s.lower() for s in approved}:
         if gate.state == "linked":
@@ -561,24 +611,6 @@ def _pr_files(repo: str, number: int, token: str, api: str) -> list[dict] | None
     except (urllib.error.URLError, OSError, ValueError):
         return None
     return out
-
-
-def _jira(base: str, user: str, token: str, key: str) -> tuple[dict, list[dict]]:
-    auth = {"Authorization": "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()}
-    q = urllib.parse.quote(key)
-    issue = _get(f"{base.rstrip('/')}/rest/api/3/issue/{q}?fields=status,labels,issuetype,issuelinks", auth)
-    blockers = []
-    for link in (issue.get("fields") or {}).get("issuelinks") or []:  # type: ignore[union-attr]
-        if (link.get("type") or {}).get("name") == "Blocks" and link.get("inwardIssue"):
-            blockers.append(link["inwardIssue"])  # "is blocked by": the inward issue blocks this one
-    for i, b in enumerate(blockers):
-        # link summaries carry no labels; a Decision filed as a Task (`type:decision`) needs one more GET
-        if ((b.get("fields") or {}).get("issuetype") or {}).get("name", "").lower() != "decision" and b.get("key"):
-            full = _get(f"{base.rstrip('/')}/rest/api/3/issue/{urllib.parse.quote(b['key'])}"
-                        "?fields=status,labels,issuetype", auth)
-            if isinstance(full, dict):
-                blockers[i] = {**full, "key": b["key"]}
-    return issue, blockers  # type: ignore[return-value]
 
 
 def _jira_fetcher(base: str, user: str, token: str) -> tuple[Callable[[str], object], Callable[[str], object]]:
@@ -667,22 +699,38 @@ def main() -> int:
     # the work ticket: the title's key, also on an exempt PR (its labels can apply a gate)
     work_key = res.key or _title_key(pr, _out("KEY_PATTERN") or DEFAULT_KEY)
     work_labels: list[str] | None = None if work_key else []  # None: unknown, so label gates apply
-    if work_key and creds:
+    reader, skipped = None, ""
+    if work_key:
         try:
-            issue, blockers = _jira(base, user, token, work_key)
-            if not isinstance(issue, dict):
-                raise TypeError("Jira's answer was not an issue")
-            work_labels = [str(lab) for lab in (issue.get("fields") or {}).get("labels") or []]
+            reader, skipped = tracker.from_inputs(_out)
+        except ValueError as e:  # an unknown provider: fail rather than skip, so a typo can't turn rule 6 off
+            res.errors.append(f"{e}; the ticket was not checked")
+    if work_key and reader:
+        try:
+            issue = reader.read(work_key)
+            work_labels = issue["labels"]
             if res.key and not res.errors:
-                res.errors += check_ticket(issue, blockers, res.key)
-        except urllib.error.HTTPError as e:
+                res.errors += check_ticket(issue, res.key)
+        except tracker.TicketMissing as e:
             if res.key and not res.errors:
-                res.errors.append(f"{res.key} could not be read from Jira (HTTP {e.code}): does the ticket exist?")
-        except (urllib.error.URLError, OSError, ValueError, TypeError) as e:
-            res.warnings.append(f"Jira was not reachable ({e}); the ticket {work_key} itself was not checked")
-    elif res.key:
-        res.warnings.append("no Jira credentials given; the ticket's status, execution label and blocking decisions were not checked")
-    if not creds and allow_unverified:
+                res.errors.append(f"{res.key} could not be read from {reader.label} ({e}): does the ticket exist?")
+        except tracker.BlockerUnreadable as e:
+            if res.key and not res.errors:
+                res.errors.append(f"{res.key}: {e}; whether an open Decision blocks it is unknown")
+        except tracker.BadAnswer as e:
+            res.errors.append(f"{work_key}: {e}; the ticket was not checked")
+        except tracker.TrackerUnreachable as e:
+            # a tracker is configured, so the repository asked for the ticket check: fail closed, as the gates do
+            msg = f"{reader.label} was not reachable ({e}); the ticket {work_key} itself was not checked"
+            if allow_unverified or not res.key:
+                res.warnings.append(msg + (" (allow-unverified is set)" if res.key else ""))
+            else:
+                res.errors.append(msg + f"; re-run the check once {reader.label} answers (or set allow-unverified "
+                                  "for a repository that knowingly accepts this)")
+    elif res.key and skipped:
+        res.warnings.append(f"{skipped}; rule 6 skipped: the ticket's status, execution label and blocking decisions "
+                            "were not checked")
+    if reader is None and allow_unverified:
         work_labels = []
 
     gates: list[Gate] | None = None

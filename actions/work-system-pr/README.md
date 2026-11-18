@@ -40,6 +40,15 @@ in KAN-450. Until then the check runs rules 1-5 without the ticket check, and th
 `unverified` and fail closed (KAN-365), so a person must approve the merge. At work, keep `allow-unverified` false
 (leave it unset) until KAN-450, so the gates stay closed.
 
+## How the ticket is read
+
+Rule 6 reads the ticket through [`tracker.py`](tracker.py), the check's side of the tracker role (KAN-437). A
+provider answers with a normalised issue: its key, status, category (`todo`, `in_progress` or `done`), kind (`work`,
+`epic` or `decision`), labels, and the issues that block it. `check.py` judges only that shape, so another tracker is
+a new provider in `tracker.py`, chosen with `tracker-provider`, and no change to `check.py`. Providers are built in by
+name and never loaded from the repository, so a PR can't bring its own. Today there is one, `jira-cloud`, with the
+`jira-*` inputs above. The org's approval gates (below) still read Jira directly until they move behind the same seam.
+
 ## Hold merge on the org's approval gates
 
 A company's org overlay (`orgs/<org>/org.yaml`, schema `team-harness.org/v1`) lists merge gates: approval tickets that
@@ -90,14 +99,19 @@ With Jira credentials, each gate ticket must:
 - exist and be in the gate ticket type's project, with its `issue_type` (an Epic or an old Story doesn't count);
 - for `links: [work]`, have an issue link to the PR's work ticket (the title's key);
 - for `links: [pr]`, have the PR's URL as a remote link or in its description;
+- for `links: [repo]`, name the repository: its URL, or a link into it such as the PR, as a remote link or in its
+  description (another repository, or a fork, doesn't count);
 - if the gate lists `approved_statuses`, be in one of them, so merge waits on the approval itself.
 
-**It fails closed.** A gate with `approved_statuses` fails (state `unverified`) when its ticket can't be read: no Jira
-credentials (fork and Dependabot PRs get no secrets), Jira errors or times out, or answers with something other than
-JSON, such as an SSO login page. Set `allow-unverified: "true"` only for a repository that knowingly accepts approvals
-it can't verify; such gates then pass with a warning. Never set it at work before KAN-450. When the work ticket's labels can't be read, gates with
-`when: labels` apply, as gates with `when: paths` do when the PR's files can't be listed. Gates without
-`approved_statuses` only warn when Jira can't be read.
+**It fails closed.** A gate with `approved_statuses` or `links` fails (state `unverified`) when its ticket can't be
+read: no Jira credentials (fork and Dependabot PRs get no secrets), Jira errors or times out, or answers with something
+other than JSON, such as an SSO login page. With the tracker's inputs set (`tracker-provider`, Jira by default), a
+work ticket that can't be read fails too.
+
+Set `allow-unverified: "true"` only for a repository that knowingly accepts approvals it can't verify; such gates then
+pass with a warning (state `not checked`). Never set it at work before KAN-450. When the work ticket's labels can't be
+read, gates with `when: labels` apply, as gates with `when: paths` do when the PR's files can't be listed. Gates
+without `approved_statuses` or `links` only warn when Jira can't be read (state `not checked`).
 
 An org file marked `placeholder: true`, like the shipped example, is not enforced: the check warns instead. An org file
 that can't be read or doesn't fit the schema fails the check with the reason. The job summary lists each gate and its

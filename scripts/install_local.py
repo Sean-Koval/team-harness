@@ -810,7 +810,7 @@ def _var(name: str, header: str, binding: dict[str, Any]) -> str:
 
 def mcp_commands(h: Harness, scope: str) -> list[str]:
     bfile = h.root.parent.parent / "bindings" / f"{h.name}.yaml"
-    binding = (yaml.safe_load(bfile.read_text()) or {}) if bfile.is_file() else {}
+    binding = (yaml.safe_load(bfile.read_text(encoding="utf-8")) or {}) if bfile.is_file() else {}
     # user scope: your shell fills $VAR when you run the command, so the value lands only in your own ~/.claude.json;
     # project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never commit a token)
     # on Windows the user-scope line is for PowerShell, which reads an environment variable as $env:NAME
@@ -821,15 +821,13 @@ def mcp_commands(h: Harness, scope: str) -> list[str]:
 
     out = []
     for m in (h.lock.get("binding") or {}).get("mcp") or []:
-        words = ["claude", "mcp", "add", "--scope", scope, "--transport", m.get("transport") or "stdio"]
+        # --env and --header take several values, so the name goes before them or claude reads it as one more
+        words = ["claude", "mcp", "add", "--scope", scope, "--transport", m.get("transport") or "stdio", m["name"]]
         if m.get("transport") == "http":
-            words += [m["name"], m["endpoint"]]
+            words.append(m["endpoint"])
             for k in m.get("header_names") or []:
                 words += ["--header", quoted(f"{k}: ", _var(m["name"], k, binding))]
         else:
-            # The name goes before --env: Claude Code's --env takes every word after it up to the next option, so a
-            # name after it is read as one more variable and the add fails ("Invalid environment variable format").
-            words.append(m["name"])
             for k in m.get("env_names") or []:
                 words += ["--env", quoted(f"{k}=", k)]
             words += ["--", m.get("command") or "", *map(str, m.get("args") or [])]
