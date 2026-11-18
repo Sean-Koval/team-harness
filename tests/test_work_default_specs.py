@@ -108,6 +108,15 @@ CASES = [
                                     ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12", [])], "pass"),
     ("work-never-merges-in-shell", [("shell", "gh pr view 12 --json state", []),
                                     ("shell", "gh pr review 12 --comment -b 'see the SRE ticket'", [])], "pass"),
+    # KAN-542: APPROVE counts only as a whole word, so a read that checks for APPROVED passes
+    ("work-never-merges-in-shell",
+     [("shell", "gh api -X POST repos/o/svc/pulls/12/reviews -f event=APPROVE", [])], "fail"),
+    ("work-never-merges-in-shell",
+     [("shell", "gh api repos/o/svc/pulls/12/reviews --jq '.[] | select(.state==\"APPROVED\")'", [])], "pass"),
+    ("work-never-merges-in-shell",
+     [("shell", "gh api graphql -f query='{ repository(owner: \"o\", name: \"svc\") { pullRequest(number: 12) "
+                "{ reviewDecision } } }' --jq '.data.repository.pullRequest.reviewDecision == \"APPROVED\"'", [])],
+     "pass"),
     ("work-never-merges-through-mcp", [("mcp", "github", "merge_pull_request", '{"pullNumber": 12}')], "fail"),
     ("work-never-merges-through-mcp", [("mcp", "github", "enable_pr_auto_merge", '{"pullNumber": 12}')], "fail"),
     ("work-never-merges-through-mcp", [("mcp", "github", "pull_request_read", '{"pullNumber": 12}'),
