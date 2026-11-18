@@ -132,6 +132,7 @@ def test_an_org_without_kb_values_gets_the_profiles(tmp_path):
 def test_an_org_with_no_work_ticket_type_leaves_out_the_jira_project(tmp_path):
     org = fictional()
     org["ticket_types"] = [t for t in org["ticket_types"] if t.get("role") != "work"]
+    org["gates"] = [g for g in org["gates"] if g.get("approved_on") != "work"]
     out = wco.render(fork(tmp_path, org), harness="work-default")
     assert "jira_project" not in out and out["work_site"] == "fictional.example.invalid"
 
