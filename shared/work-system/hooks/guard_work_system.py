@@ -42,11 +42,13 @@ calls must hold a read word (`get`, `search`, `list` and the like) and no other 
 operations; a generic router is refused. Its shell calls may only run reading commands (`cat`, `grep`, `rg`, `find`
 without `-exec` or `-delete`, `Get-Content` and the like), git reads (`log`, `show`, `diff`, `status` and the like; no
 `-c`, `--git-dir`, `-O` or `--ext-diff`), `gh` views and lists, the `ai-dlc knowledge` reads, and the knowledge skills'
-scratch clone of `$KNOWLEDGE_REPO` into `$TMPDIR` or `/tmp`. A stage's shell call sets no variable (`X=y cmd`,
+scratch clone of `$KNOWLEDGE_REPO` into `$TMPDIR` or `/tmp`, each by name (by path only from `/bin`, `/usr/bin`
+or `System32`: `script/test` is not `test`). A stage's shell call sets no variable (`X=y cmd`,
 `$x = ...`), redirects to no file (`>`, `>>`, PowerShell's `*>`), runs no command substitution or PowerShell script
 block, and names no network path (`/dev/tcp`, a UNC path). The stage drafts; the session that called it files,
 edits and runs. Calls outside those stages are judged as before. Not covered: the stage's built-in tools (Write,
-WebFetch), which settings.json does not route to this hook; its `tools:` allowlist and `disallowedTools` hold those.
+WebFetch), which settings.json does not route to this hook, and a subagent the stage starts, whose calls carry its own
+`agent_type`; the stage's `tools:` allowlist, which leaves out Agent and Task, and `disallowedTools` hold those.
 
 Labels and other MCP input are compared after NFKC normalisation with format characters (zero-width and the like)
 removed, as ai-dlc does, so `exec:agent` with a zero-width space or a fullwidth colon in it still reads as `exec:agent`.
@@ -641,6 +643,8 @@ STAGE_CLONE_FLAGS = re.compile(r"^(?:-q|--quiet|--single-branch|--no-tags|--dept
                                r"(?:=\S+)?)$")
 STAGE_SCRATCH = re.compile(r"^(?:\$\{TMPDIR(?::-/tmp)?\}|\$TMPDIR|/tmp)/[^/]")  # the knowledge skills' scratch clone
 STAGE_CLONE_SOURCE = re.compile(r"^\$(?:KNOWLEDGE_REPO|\{KNOWLEDGE_REPO\})$")  # only the team's knowledge repository
+STAGE_SYSTEM_PROGRAM = re.compile(r"^(?:/usr)?/bin/[A-Za-z0-9._-]+$|^[A-Za-z]:\\Windows\\System32\\[A-Za-z0-9._-]+$",
+                                  re.I)  # a reader by full path only from the system's own directories
 STAGE_ASSIGN = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=|\$)")  # bash `X=y`, PowerShell `$x = ...`
 STAGE_NETWORK = re.compile(r"/dev/(?:tcp|udp)/|(?:^|[\s'\"=])(?:\\\\|//)[^\\/\s]")  # bash's network files, a UNC path
 STAGE_NULL = re.compile(r"^(?:/dev/null|nul|\$null|&?[0-9]-?)$", re.I)
@@ -731,6 +735,9 @@ def _stage_shell(stage: str, command: str, powershell: bool = False) -> str | No
 
 
 def _stage_command(stage: str, words: list[str]) -> str | None:
+    if re.search(r"[/\\]", words[0]) and not STAGE_SYSTEM_PROGRAM.match(words[0]):
+        # `script/test` or `./cat` is whatever file the checkout holds under that name, not the reader
+        return _stage_refuse(stage, f"`{words[0]}` is a program by path, not one of its reading commands")
     prog = _prog(words[0])
     if any(STAGE_NEVER_FLAGS.match(w) for w in words[1:]):
         return _stage_refuse(stage, f"`{prog}` is given an option that writes or runs another program")

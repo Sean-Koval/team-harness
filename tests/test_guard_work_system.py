@@ -1289,6 +1289,8 @@ def test_the_read_only_stages_are_the_shared_stage_agents():
     "gh pr view 12 --json body -R o/r",
     "cat <<'EOF'\nnot run > x\nEOF",
     "find . -name '*.md' -newer README.md",
+    "/usr/bin/git log -1",
+    "/bin/cat README.md",
 ])
 def test_a_stage_may_read(command):
     assert stage("Bash", {"command": command}).returncode == 0
@@ -1333,6 +1335,12 @@ def test_a_stage_may_read(command):
     ("GIT_ALLOW_PROTOCOL=ext git clone 'ext::sh -c x' /tmp/k", "sets a variable"),
     ("git clone -q 'ext::sh -c x' /tmp/k", "scratch clone"),
     ("cat </dev/tcp/example.invalid/80", "network"),
+    # R2's review: a program by path is whatever file the checkout holds under a reader's name
+    ("script/test", "a program by path"),
+    ("./test", "a program by path"),
+    ("bin/find .", "a program by path"),
+    ("./cat x", "a program by path"),
+    ("/tmp/knowledge/cat x", "a program by path"),
     ("ai-dlc work finish KAN-1", "ai-dlc work"),
     ("gh api repos/o/r/issues -f title=x", "`gh api"),
     ("gh pr comment 1 -b x", "`gh pr comment` is not a read"),
@@ -1357,6 +1365,8 @@ def test_a_stage_may_not_write_or_run(command, reason):
     ("Get-Content a *> $null", 0),
     ("Get-ChildItem \\\\host\\share", 2),
     ("$env:PATH = 'C:\\k'", 2),
+    ("C:\\repo\\cat.exe x", 2),
+    (".\\Get-Content.ps1 x", 2),
 ])
 def test_a_stage_in_powershell(command, code):
     assert stage("PowerShell", {"command": command}).returncode == code
