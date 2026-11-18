@@ -230,7 +230,13 @@ cd ~/src/svc
 python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project            # the plan
 python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --apply    # into .claude/
 python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --check    # drift, or stable moved
+python ~/src/team-harness/scripts/doctor.py ~/src/team-harness/harnesses/work-default                                     # is the laptop ready?
 ```
+
+`--check` compares the installed files with the manifest. `scripts/doctor.py` checks the rest: Claude Code against the
+lock, the hook interpreter, the lock's MCP servers, `gh`, the org overlay, the channel, the guide, the repository's
+test commands in the allowlist and trace capture. Each line is `ok`, `fix` (with the command) or `skip`; `--json`
+serves hangar's preflight.
 
 It installs `stable` by default (`--channel candidate` to try the next revision). When the checkout's lock isn't that
 channel's, it installs the channel's revision from git history. It refuses a checkout with uncommitted changes in the
@@ -389,6 +395,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `scripts/promote.py` | Promote: write `releases/rN/` and point `stable` at it |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
+| `scripts/doctor.py` | One preflight for a laptop: each check `ok`, `fix` (with the command) or `skip`; `--json` for hangar and flightdeck |
 | `environments/` | Role environments for the four-repo convention, `work-multirepo` for change sets, and `agent.yaml` with its variable contract `agent.env.example` |
 | `Makefile` | Start the agent environment locally (`make agent-env`), with hangar's `hangar env local` |
 | `changesets/` | An example change-set profile |
