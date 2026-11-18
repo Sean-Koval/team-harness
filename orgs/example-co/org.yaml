@@ -6,7 +6,8 @@
 schema: team-harness.org/v2
 name: example-co
 placeholder: true            # the public example: agents file nothing and say the overlay is not applied
-params:                      # only tracker and kb_* may be set here (the org wins for those)
+params:                      # only tracker, artifact_check_repo and kb_* may be set here (the org wins for those)
+  artifact_check_repo: "COMPANY-ORG/team-harness"   # the company's copy of this repository
   tracker: "the WORKPROJ project on COMPANY-SITE.atlassian.net"
   kb_site: "COMPANY-SITE.atlassian.net"
   kb_space: "COMPANY-SPACE"

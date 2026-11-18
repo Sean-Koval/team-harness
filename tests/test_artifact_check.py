@@ -277,13 +277,21 @@ def test_the_summary_goes_to_the_job_summary(mcp_repo, tmp_path):
     assert summary.read_text(encoding="utf-8").startswith("### Artifact check (mcp-server): passed")
 
 
+def steps_of(wf: dict) -> list[dict]:
+    return wf["jobs"]["artifact-check"]["steps"]
+
+
 def test_the_workflow_is_reusable_read_only_and_pinned():
     wf = yaml.safe_load((ROOT / ".github/workflows/artifact-check.yml").read_text(encoding="utf-8"))
     call = wf[True]["workflow_call"]  # YAML 1.1 reads the key `on` as True
     assert {"kind", "harness-ref", "command", "budget-usd", "model", "min-pass-rate", "setup", "timeout",
             "time-limit", "artifact-name"} <= set(call["inputs"])
     assert call["inputs"]["model"]["default"] == "claude-haiku-5-5" and call["inputs"]["budget-usd"]["default"] == 1
-    assert wf["permissions"] == {"contents": "read"} and set(call["secrets"]) == {"model-api-key"}
+    assert wf["permissions"] == {"contents": "read"} and set(call["secrets"]) == {"model-api-key", "harness-token"}
+    # the check's code comes from the copy the caller names (a company's own, KAN-559), at the pinned commit
+    harness = next(s for s in steps_of(wf) if s.get("with", {}).get("path") == ".artifact-check/team-harness")
+    assert harness["with"]["repository"] == "${{ inputs.harness-repo }}"
+    assert harness["with"]["ref"] == "${{ inputs.harness-ref }}"
     steps = wf["jobs"]["artifact-check"]["steps"]
     assert "[0-9a-f]{40}" in steps[0]["run"]
     for step in steps:  # inputs reach scripts through env, never pasted into the script
