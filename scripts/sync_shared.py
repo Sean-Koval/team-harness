@@ -14,8 +14,9 @@ file and each harness gets concrete text. For each target harness this:
   write appends the block when the markers are missing); the rest of the guide is the harness's own;
 - renders `env_example:` into `harnesses/<h>/.env.example`, the session's environment contract (names only);
 - renders each `agents:` file (a Claude Code subagent, `<stage>.md`) into `harnesses/<h>/native/claude-code/agents/`,
-  its `model:` filled from the profile's `model_*` tiers, so the lock pins them with the other native files, and
-  deletes any other `.md` there that the harness does not declare as its own (`own_agents:`);
+  its `model:` filled from the profile's `model_*` tiers and its `tools:` allowlist's MCP servers from the profile's
+  `mcp_bindings` (`{{stage_mcp_tools}}`), so the lock pins them with the other native files, and deletes any other
+  `.md` there that the harness does not declare as its own (`own_agents:`);
 - deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
   own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
@@ -168,6 +169,25 @@ def _json_params(h: str, params: dict) -> list[str]:
         if not good:
             out.append(f"{h}: params.{name} is not valid JSON of the shape the work-system hook reads")
     return out
+
+
+STAGE_READ_ROLES = ("tracker", "wiki", "ai-dlc")
+
+
+def stage_mcp_tools(params: dict) -> str:
+    """The generated `{{stage_mcp_tools}}` (KAN-544): the MCP part of the stage subagents' `tools:` allowlist, one
+    `mcp__<server>__*` for each server the profile binds as tracker, wiki or ai-dlc (`mcp_bindings`), spelled as
+    Claude Code spells a server in a tool name. A stage reaches no other server's tools (the GitHub server's, say).
+    Empty when the bindings name none, or can't be read (`_json_params` reports that)."""
+    try:
+        bindings = json.loads(str(params.get("mcp_bindings") or "{}"))
+    except ValueError:
+        return ""
+    if not isinstance(bindings, dict):
+        return ""
+    servers = {re.sub(r"[^A-Za-z0-9_-]", "_", s) for role in STAGE_READ_ROLES
+               for s in (bindings.get(role) or []) if isinstance(s, str) and s}
+    return ", ".join(f"mcp__{s}__*" for s in sorted(servers))
 
 
 def _fields(template: str) -> set[str]:
@@ -721,10 +741,14 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
                 elif want_guide != current:
                     stale.append((src, guide, {"": want_guide.encode("utf-8")}))
         agents_dir = hd / "native" / "claude-code" / "agents"
+        agent_params = {**params, "stage_mcp_tools": stage_mcp_tools(params)}
+        if t.get("agents") and not agent_params["stage_mcp_tools"]:
+            problems.append(f"{h}: mcp_bindings binds no tracker, wiki or ai-dlc server, so the stage subagents "
+                            "could read no ticket")
         for rel in t.get("agents") or []:
             src = shared / rel
             dst = agents_dir / src.name
-            want_agent = render(src.read_bytes(), params, f"{h}: {rel}", problems)
+            want_agent = render(src.read_bytes(), agent_params, f"{h}: {rel}", problems)
             if not dst.is_file() or dst.read_bytes() != want_agent:
                 stale.append((src, dst, {"": want_agent}))
         made = {Path(rel).name for rel in t.get("agents") or []} | set(entry.get("own_agents") or [])

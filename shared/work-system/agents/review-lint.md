@@ -2,6 +2,7 @@
 name: review-lint
 description: Cheap-tier stage for lint-style review. Use on a branch's diff before opening or updating a pull request, to check the PR contract and mechanical mistakes. Reports findings; does not edit, commit or push.
 model: "{{model_cheap}}"
+tools: Read, Grep, Glob, Skill, Bash
 disallowedTools: Write, Edit, NotebookEdit
 ---
 
