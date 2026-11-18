@@ -6,9 +6,10 @@ run every golden call in `evals/golden/*.json` (`tool`, `arguments`, and `struct
 The client speaks the protocol itself, so a server in any language can be checked.
 
 agent or bot: run `evals/tasks/*.yaml` (`id`, `input`, `expect.contains`) through the repository's own command, one
-task at a time, under a hard budget priced from the usage hook's price table. The command reads the task as JSON on
-stdin and prints `{"output": ..., "usage": {...} or [{...}, ...]}`. No task starts once the budget is spent; the rest are
-reported `not_run`. A model the table doesn't price is refused, since its budget couldn't be held.
+task at a time, under a budget priced from the usage hook's price table and checked between tasks. The command reads
+the task as JSON on stdin and prints `{"output": ..., "usage": {...} or [{...}, ...]}`. No task starts once the budget
+is spent; the rest are reported `not_run`. One task can overrun the budget, and a run that did fails. A model the table
+doesn't price is refused, since its budget couldn't be held.
 
 Either way it writes a receipt (receipt.schema.json beside this file) and, on Actions, a job summary. It exits 1 when
 the check fails and 2 when it can't run. Needs only the repository's own model key, in the agent command's environment.
@@ -228,7 +229,10 @@ def check_mcp(repo: Path, command: str | list[str], timeout: float, end: float) 
             if not isinstance(spec, dict):
                 cases.append(case(cid, "fail", f"{path.name} is not a JSON object"))
                 continue
-            covered.add(spec.get("tool"))
+            if not isinstance(spec.get("tool"), str) or not isinstance(spec.get("arguments", {}), dict):
+                cases.append(case(cid, "fail", f"{path.name} needs a tool name and an arguments object"))
+                continue
+            covered.add(spec["tool"])
             if not dead and time.monotonic() >= end:
                 dead = "not run: the run's time limit was reached"
             if dead:
@@ -313,6 +317,11 @@ def check_agent(repo: Path, command: str | list[str], model: str, budget: float,
             cases.append(case(path.stem, "fail", f"{path.name} is not a mapping"))
             continue
         cid = str(task.get("id") or path.stem)
+        expect = task.get("expect")
+        wanted = expect.get("contains") if isinstance(expect, dict) else None
+        if not isinstance(wanted, list) or not wanted or not all(isinstance(w, str) and w for w in wanted):
+            cases.append(case(cid, "fail", f"{path.name} needs expect.contains, a non-empty list of strings"))
+            continue
         if not halt and spent >= budget:
             halt, stopped = f"not run: the budget of ${budget:.2f} was spent", True
         if not halt and time.monotonic() >= end:
@@ -336,9 +345,11 @@ def check_agent(repo: Path, command: str | list[str], model: str, budget: float,
         if what:
             cases.append(case(cid, "fail", f"the agent command {what}", tokens=used, cost_usd=round(cost, 6)))
             continue
-        missing = [s for s in (task.get("expect") or {}).get("contains", []) if str(s) not in str(out.get("output"))]
+        missing = [w for w in wanted if w not in str(out.get("output"))]
         detail = f"the output lacks {missing[0]!r}" if missing else ""
         cases.append(case(cid, "fail" if missing else "pass", detail, tokens=used, cost_usd=round(cost, 6)))
+    if spent > budget:  # checked between tasks, so one task can overrun it: that never passes
+        cases.append(case("budget", "fail", f"the run spent ${spent:.4f}, over its ${budget:.2f} budget"))
     return cases, {"cost_usd": round(spent, 6), "tokens": tokens, "stopped_at_budget": stopped}
 
 

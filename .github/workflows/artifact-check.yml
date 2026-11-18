@@ -1,7 +1,7 @@
 # The artifact check (KAN-517): one eval gate a scaffolded repository calls on every PR. For an MCP server it starts
 # the server over stdio, checks every tool's input schema and runs the golden calls; for an agent or bot it runs
-# evals/tasks/*.yaml under a hard budget. It writes artifact-check.json (actions/artifact-check/receipt.schema.json) as
-# a run artifact and a job summary. Read-only: the job token reads the repository and nothing else; an agent's model
+# evals/tasks/*.yaml under a budget checked between tasks. It writes artifact-check.json
+# (actions/artifact-check/receipt.schema.json) as a run artifact and a job summary. Read-only: the job token reads the repository and nothing else; an agent's model
 # key comes from the caller's own secret. How to call it: actions/artifact-check/README.md.
 name: artifact-check
 on:
@@ -20,7 +20,7 @@ on:
         type: string
         required: true
       budget-usd:
-        description: Hard spending cap for an agent or bot run
+        description: An agent or bot run's budget in USD, checked between tasks; one task can overrun it, which fails
         type: number
         default: 1
       model:

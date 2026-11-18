@@ -84,7 +84,8 @@ def test_a_broken_schema_fails_with_the_tool_named(mcp_repo):
 
 def test_a_tool_listed_twice_fails(mcp_repo):
     code, receipt, _ = run(mcp_repo, "--kind", "mcp-server", "--command", server("duplicate"))
-    assert code == 1 and [c["detail"] for c in receipt["cases"] if c["id"] == "tool:echo"] == ["", "the server lists it twice"]
+    details = [c["detail"] for c in receipt["cases"] if c["id"] == "tool:echo"]
+    assert code == 1 and details == ["", "the server lists it twice"]
 
 
 def test_a_tool_without_a_description_or_a_golden_case_fails(mcp_repo):
@@ -118,6 +119,13 @@ def test_a_golden_file_that_isnt_json_fails_its_case(mcp_repo):
     code, receipt, _ = run(mcp_repo, "--kind", "mcp-server", "--command", server("ok"))
     assert code == 1 and "can't be read as JSON" in detail(receipt, "golden:bad")
     assert statuses(receipt)["golden:echo"] == "pass"
+
+
+@pytest.mark.parametrize("spec", [{"tool": ["echo"]}, {"tool": "echo", "arguments": ["hi"]}, {}])
+def test_a_golden_file_without_a_tool_name_or_arguments_object_fails_its_case(mcp_repo, spec):
+    (mcp_repo / "evals" / "golden" / "bad.json").write_text(json.dumps(spec), encoding="utf-8")
+    code, receipt, _ = run(mcp_repo, "--kind", "mcp-server", "--command", server("ok"))
+    assert code == 1 and "needs a tool name and an arguments object" in detail(receipt, "golden:bad")
 
 
 @pytest.mark.parametrize("mode", ["crash-on-call", "hang-on-call"])
@@ -167,7 +175,8 @@ def agent_repo(tmp_path: Path) -> Path:
     usage = {"input_tokens": 20000, "output_tokens": 10000}  # $0.007 on claude-haiku-5-5
     for i in range(1, 5):
         (tasks / f"t{i}.yaml").write_text(yaml.safe_dump(
-            {"id": f"task-{i}", "input": "say hi", "reply": "hi there", "usage": usage, "expect": {"contains": ["hi"]}}),
+            {"id": f"task-{i}", "input": "say hi", "reply": "hi there", "usage": usage,
+             "expect": {"contains": ["hi"]}}),
             encoding="utf-8")
     return tmp_path
 
@@ -186,8 +195,9 @@ def test_an_agent_eval_passes_and_prices_its_tokens(agent_repo):
 def test_an_agent_eval_stops_at_the_budget_and_reports_partial_results(agent_repo):
     code, receipt, out = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "0.012")
     assert code == 1, out
-    assert statuses(receipt) == {"task-1": "pass", "task-2": "pass", "task-3": "not_run", "task-4": "not_run"}
-    assert receipt["stopped_at_budget"] and receipt["pass_rate"] == 0.5
+    assert statuses(receipt) == {"task-1": "pass", "task-2": "pass", "task-3": "not_run", "task-4": "not_run",
+                                 "budget": "fail"}  # task-2 took it to $0.014, over $0.012
+    assert receipt["stopped_at_budget"] and receipt["pass_rate"] == 0.4
     assert receipt["cost_usd"] == pytest.approx(0.014)  # the task that crossed the cap finished; none started after
     assert "Stopped at the budget" in out
 
@@ -213,7 +223,25 @@ def test_a_failing_agent_command_fails_its_task_and_its_spend_still_counts(agent
     code, receipt, _ = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "0.012")
     assert code == 1 and "exited 4" in detail(receipt, "task-1")
     assert receipt["cost_usd"] == pytest.approx(0.015) and receipt["stopped_at_budget"]
-    assert statuses(receipt) == {"task-1": "fail", "task-2": "not_run", "task-3": "not_run", "task-4": "not_run"}
+    assert statuses(receipt) == {"task-1": "fail", "task-2": "not_run", "task-3": "not_run", "task-4": "not_run",
+                                 "budget": "fail"}
+
+
+def test_one_task_that_overruns_the_budget_fails_the_run(agent_repo):
+    for i in (2, 3, 4):
+        (agent_repo / "evals" / "tasks" / f"t{i}.yaml").unlink()
+    edit_task(agent_repo, "t1.yaml", usage={"input_tokens": 20_000_000, "output_tokens": 1_000_000})
+    code, receipt, _ = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "1")
+    assert code == 1 and not receipt["passed"] and receipt["cost_usd"] > 1
+    assert statuses(receipt) == {"task-1": "pass", "budget": "fail"}
+    assert "over its $1.00 budget" in detail(receipt, "budget")
+
+
+@pytest.mark.parametrize("expect", [None, ["hi"], {"contains": "hi"}, {"contains": []}, {"contains": [""]}])
+def test_a_task_that_checks_nothing_fails(agent_repo, expect):
+    edit_task(agent_repo, "t1.yaml", expect=expect)
+    code, receipt, _ = run(agent_repo, "--kind", "agent", "--command", agent(), "--min-pass-rate", "0.75")
+    assert code == 0 and "needs expect.contains" in detail(receipt, "task-1")
 
 
 @pytest.mark.parametrize("change", [{"garbage": True}, {"usage": None}, {"usage": {"output_tokens": 5}}])
