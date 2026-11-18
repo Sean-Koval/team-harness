@@ -65,7 +65,7 @@ def test_one_line_matches_the_hand_count(tmp_path):
     assert line["cost_usd"] == pytest.approx((opus + haiku) / 1e6)
     assert line["models"] == ["claude-haiku-5-5", "claude-opus-5-5"]
     assert (line["ticket"], line["branch"], line["session_id"]) == ("KAN-514", "KAN-514-usage-hook", SESSION)
-    assert (line["started_at"], line["ended_at"]) == ("2026-11-18T14:00:05Z", "2026-11-18T14:20:00Z")
+    assert (line["started_at"], line["ended_at"]) == ("2026-11-18T14:00:05.000Z", "2026-11-18T14:20:00.000Z")
     assert line["schema_version"] == 1 and line["repo"] is None  # the fixture's cwd does not exist
 
 
@@ -76,6 +76,9 @@ def test_the_line_has_the_capture_run_logs_usage_fields(tmp_path):
     [line] = lines(log)
     assert {"input_tokens", "output_tokens", "cost_usd", "started_at", "ended_at", "schema_version"} <= set(line)
     assert all(isinstance(line[k], int) for k in hook.TOKENS)
+    # every prompt token, as capture_batch.py counts it; not the API's uncached remainder
+    assert line["input_tokens"] == (line["cache_read_input_tokens"] + line["cache_creation_input_tokens"]
+                                    + 100 + 10 + 2000)
 
 
 def test_no_transcript_text_file_contents_or_credentials(tmp_path):
@@ -100,6 +103,9 @@ def test_repo_comes_from_origin_without_its_credentials(tmp_path):
     assert hook.repo_name(str(work)) == "acme/gadgets"
     subprocess.run([*git, "remote", "remove", "origin"], check=True)
     assert hook.repo_name(str(work)) == "work"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert hook.repo_name(str(outside)) is None  # not a work tree: no folder name, which may be the user's
 
 
 @pytest.mark.parametrize("branch, key", [("KAN-514-usage-hook", "KAN-514"), ("feature/KAN-7-x", "KAN-7"),
@@ -116,8 +122,13 @@ def test_an_unknown_model_or_rate_costs_null_never_a_guess():
     assert hook.request_cost("claude-opus-5-5", {**u, "speed": "fast"}, prices) is None
     big = {"input_tokens": 150_000, "output_tokens": 10}
     assert hook.request_cost("claude-haiku-5-5", big, prices) == pytest.approx((150_000 * 0.5 + 10 * 2.5) / 1e6)
-    # above 100K the table has no cache rate for Haiku, so a request with cache reads there is unknown
-    assert hook.request_cost("claude-haiku-5-5", {**big, "cache_read_input_tokens": 5}, prices) is None
+    read = {**big, "cache_read_input_tokens": 5000}
+    assert hook.request_cost("claude-haiku-5-5", read, prices) == pytest.approx(
+        (150_000 * 0.5 + 5000 * 0.05 + 10 * 2.5) / 1e6)
+    no_cache = {**prices, "models": {"claude-haiku-5-5": {**prices["models"]["claude-haiku-5-5"],
+                                                         "above": {"prompt_tokens": 100000, "input": 0.5,
+                                                                   "output": 2.5}}}}
+    assert hook.request_cost("claude-haiku-5-5", read, no_cache) is None  # a rate the row leaves out: unknown
     found = {"a": {"model": "claude-unknown-9", "usage": u, "time": None},
              "b": {"model": "claude-opus-5-5", "usage": u, "time": None}}
     s = hook.summarize(found, prices)
@@ -133,6 +144,10 @@ def test_every_price_row_is_complete():
                    ("input", "output", "cache_read", "cache_write_5m", "cache_write_1h")), model
         assert row["cache_write_5m"] == pytest.approx(row["input"] * 1.25), model
         assert row["cache_write_1h"] == pytest.approx(row["input"] * 2), model
+        above = row.get("above")
+        if above:
+            assert above["cache_write_5m"] == pytest.approx(above["input"] * 1.25), model
+            assert above["cache_write_1h"] == pytest.approx(above["input"] * 2), model
 
 
 def test_a_resumed_session_adds_only_what_it_spent_since(tmp_path):
@@ -148,7 +163,45 @@ def test_a_resumed_session_adds_only_what_it_spent_since(tmp_path):
     run(t, log)
     first, second = lines(log)
     assert (second["requests"], second["input_tokens"], second["output_tokens"]) == (1, 7, 3)
-    assert second["started_at"] == "2026-11-18T15:00:00Z" and first["requests"] == 3
+    assert second["started_at"] == "2026-11-18T15:00:00.000Z" and first["requests"] == 3
+
+
+def _append(t: Path, rid: str, when: str, session_id: str | None = SESSION, n: int = 7) -> None:
+    entry = {"type": "assistant", "gitBranch": "KAN-514-usage-hook", "timestamp": when,
+             "message": {"id": rid, "model": "claude-opus-5-5", "usage": {"input_tokens": n, "output_tokens": 3}}}
+    if session_id:
+        entry["sessionId"] = session_id
+    with t.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def test_a_response_late_in_its_second_is_not_counted_twice(tmp_path):
+    log = tmp_path / "usage.jsonl"
+    t = session(tmp_path)
+    _append(t, "msg_9", "2026-11-18T15:00:00.750Z")
+    run(t, log)
+    run(t, log)  # rounding ended_at down to 15:00:00 would count msg_9 again
+    [line] = lines(log)
+    assert line["requests"] == 4 and line["ended_at"] == "2026-11-18T15:00:00.750Z"
+    _append(t, "msg_10", "2026-11-18T15:00:00.751Z", n=1)
+    run(t, log)
+    assert lines(log)[1]["requests"] == 1 and lines(log)[1]["input_tokens"] == 1
+
+
+def test_a_forked_sessions_copied_history_is_not_counted_again(tmp_path):
+    log = tmp_path / "usage.jsonl"
+    t = session(tmp_path)
+    _append(t, "msg_old", "2026-11-18T13:00:00.000Z", session_id="s-0", n=999)  # copied from the parent session
+    run(t, log)
+    [line] = lines(log)
+    assert line["requests"] == 3 and line["input_tokens"] == 4810
+
+
+def test_a_relative_log_path_is_ignored(monkeypatch, tmp_path):
+    monkeypatch.setenv(hook.LOG_ENV, "usage.jsonl")  # would land in the work tree, where it could get committed
+    assert hook.log_path().is_absolute()
+    monkeypatch.setenv(hook.LOG_ENV, str(tmp_path / "u.jsonl"))
+    assert hook.log_path() == tmp_path / "u.jsonl"
 
 
 @pytest.mark.parametrize("stdin", [b"", b"not json", b"[]", json.dumps({"transcript_path": "/nope.jsonl"}).encode()])

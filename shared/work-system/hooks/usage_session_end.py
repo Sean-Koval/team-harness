@@ -11,16 +11,25 @@ any) and appends one JSON line to the usage log:
      "by_model": {"claude-opus-5-5": {"requests": 12, "input_tokens": ..., "cost_usd": 0.0731}},
      "started_at": "2026-11-18T14:00:00Z", "ended_at": "2026-11-18T14:20:00Z"}
 
-`input_tokens`, `output_tokens` and `cost_usd` have the capture run log's meaning (ai-dlc `knowledge stats`):
-`input_tokens` counts every prompt token, cache reads and writes included, and the two cache fields break it down.
+`input_tokens`, `output_tokens` and `cost_usd` have the capture run log's meaning (ai-dlc `knowledge stats`, and
+`scripts/capture_batch.py`, which writes it): `input_tokens` counts every prompt token, cache reads and writes included,
+and the two cache fields break it down. That is not the API's meaning, where `input_tokens` is the uncached remainder:
+never add the cache fields to it again.
 `cost_usd` is estimated from `prices.json` beside this file; a model it does not list, or a rate it does not have,
 makes the cost null, never a guess. The ticket key comes from the branch (`PROJ-123-slug`, or `feature/PROJ-123-slug`);
-no key, `null`. The line holds counts, names and times only: no prompt, reply, file content or credential.
+no key, `null`. `repo` is `owner/name` from the origin remote, or the work tree's folder name; outside a git work
+tree, `null`. `started_at` and `ended_at` are the times of the first and last response counted, not of the session's
+start and end. The line holds counts, names and times only: no prompt, reply, file content or credential.
 
-The log is `SESSION_USAGE_LOG` when set, else `usage.jsonl` under the user's data directory (`%LOCALAPPDATA%` on
+The counts are a lower bound: Claude Code's own compaction calls never reach the transcript, and only the `usage` on
+each response is read (server-side iterations it does not fold in are missed).
+
+The log is `SESSION_USAGE_LOG` when it is set to an absolute path (`~` expanded), else `usage.jsonl` under the user's data directory (`%LOCALAPPDATA%` on
 Windows, `~/Library/Application Support` on macOS, `$XDG_DATA_HOME` or `~/.local/share` elsewhere), in a
 `work-system` folder. A resumed session appends a line for what it spent since its last line, so the lines of one
-session add up. It never blocks and prints nothing: any failure exits 0. Standard library only, so it runs natively on
+session add up: a response counts when it is later than the `ended_at` of the session's last line (both carry the
+transcript's own precision). A response that another session wrote (`sessionId` on its line, as in a forked session's
+copied history) is that session's to count, not this one's. It never blocks and prints nothing: any failure exits 0. Standard library only, so it runs natively on
 Windows too.
 """
 
@@ -31,6 +40,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,13 +48,14 @@ SCHEMA_VERSION = 1
 LOG_ENV = "SESSION_USAGE_LOG"
 PRICES = Path(__file__).resolve().with_name("prices.json")
 KEY = re.compile(r"(?:^|/)([A-Z][A-Z0-9]{1,9}-[0-9]+)(?=$|[-_/.])")
-LOG_TAIL_BYTES = 2_000_000  # how far back the log is read for this session's earlier lines
+GIT_BUDGET = 3.0  # seconds for all git calls together, well inside SessionEnd's short budget
 TOKENS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 
 
 def log_path() -> Path:
-    if os.environ.get(LOG_ENV):
-        return Path(os.environ[LOG_ENV])
+    # a relative path would resolve against the session's work tree, where the log could get committed
+    if os.environ.get(LOG_ENV) and Path(os.environ[LOG_ENV]).expanduser().is_absolute():
+        return Path(os.environ[LOG_ENV]).expanduser()
     if os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     elif sys.platform == "darwin":
@@ -69,12 +80,19 @@ def _time(v: object) -> datetime | None:
 
 
 def _iso(t: datetime | None) -> str | None:
-    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if t else None
+    """UTC, at the transcript's own precision (milliseconds, or microseconds when they're there): a resumed session
+    counts what is later than its last line's ended_at, so rounding it down would count the last response again."""
+    if t is None:
+        return None
+    t = t.astimezone(timezone.utc)
+    return t.isoformat(timespec="milliseconds" if t.microsecond % 1000 == 0 else "microseconds").replace("+00:00", "Z")
 
 
-def responses(lines, since: datetime | None = None) -> tuple[dict[str, dict], dict]:
+def responses(lines, since: datetime | None = None, session_id: str | None = None,
+              tag: str = "") -> tuple[dict[str, dict], dict]:
     """({response id: {model, usage, time}}, {branch, cwd, started, ended}). A response is written as one transcript
-    line per content block, each with the same usage, so it is counted once (the last line wins)."""
+    line per content block, each with the same usage, so it is counted once (the last line wins). A line whose
+    `sessionId` is another session's is skipped: that session counts it."""
     out: dict[str, dict] = {}
     meta: dict = {"branch": None, "cwd": None, "started": None, "ended": None}
     for line in lines:
@@ -92,13 +110,15 @@ def responses(lines, since: datetime | None = None) -> tuple[dict[str, dict], di
         message = entry.get("message")
         if entry.get("type") != "assistant" or not isinstance(message, dict):
             continue
+        if session_id and isinstance(entry.get("sessionId"), str) and entry["sessionId"] != session_id:
+            continue  # copied from another session (a fork); its own end counts it
         usage, model = message.get("usage"), message.get("model")
         if not isinstance(usage, dict) or not isinstance(model, str) or model.startswith("<"):
             continue  # "<synthetic>": a message the client wrote, not a model call
         when = _time(entry.get("timestamp"))
         if since is not None and (when is None or when <= since):
             continue
-        rid = str(message.get("id") or entry.get("requestId") or entry.get("uuid") or len(out))
+        rid = str(message.get("id") or entry.get("requestId") or entry.get("uuid") or f"{tag}#{len(out)}")
         out[rid] = {"model": model, "usage": usage, "time": when}
         if when is not None:
             meta["started"] = min(meta["started"] or when, when)
@@ -163,17 +183,26 @@ def ticket(branch: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+_git_left = [GIT_BUDGET]
+
+
 def _git(cwd: str, *args: str) -> str | None:
+    if _git_left[0] <= 0.1:
+        return None
+    start = time.monotonic()
     try:
-        r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=3,
-                           stdin=subprocess.DEVNULL)
+        r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=_git_left[0],
+                           stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         return None
+    finally:
+        _git_left[0] -= time.monotonic() - start
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
 def repo_name(cwd: str | None) -> str | None:
-    """`owner/name` from the origin remote (never its credentials), else the work tree's folder name."""
+    """`owner/name` from the origin remote (never its credentials), else the work tree's folder name, else None (not
+    the folder's own name: outside a work tree that may be the user's home, named for them)."""
     if not cwd or not Path(cwd).is_dir():
         return None
     url = _git(cwd, "remote", "get-url", "origin")
@@ -181,27 +210,52 @@ def repo_name(cwd: str | None) -> str | None:
     if m:
         return m.group(1)
     top = _git(cwd, "rev-parse", "--show-toplevel")
-    return Path(top).name if top else Path(cwd).name
+    return Path(top).name if top else None
 
 
 def _session_lines(session_id: str) -> list[dict]:
+    """This session's earlier lines, from the whole log (a line a year back still counts: it is small, one line per
+    session, and only lines that name the session are parsed)."""
     path = log_path()
     if not path.is_file():
         return []
-    with path.open("rb") as f:
-        f.seek(0, 2)
-        size = f.tell()
-        f.seek(max(0, size - LOG_TAIL_BYTES))
-        lines = f.read().decode("utf-8", errors="replace").splitlines()
+    needle = json.dumps(session_id)
     out = []
-    for line in lines[1:] if size > LOG_TAIL_BYTES else lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(entry, dict) and entry.get("session_id") == session_id:
-            out.append(entry)
+    with path.open(encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if needle not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict) and entry.get("session_id") == session_id:
+                out.append(entry)
     return out
+
+
+def append(path: Path, text: str) -> None:
+    """One line, whole, even when two sessions end at once. POSIX O_APPEND writes are atomic; Windows' C runtime seeks
+    then writes, so there the write holds a lock on the file's first byte."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = text.encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for about 10 s, then raises: the line is dropped
+            try:
+                os.lseek(fd, 0, os.SEEK_END)
+                os.write(fd, data)
+            finally:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            os.write(fd, data)
+    finally:
+        os.close(fd)
 
 
 def transcripts(path: Path, session_id: str) -> list[Path]:
@@ -219,9 +273,9 @@ def build_line(event: dict, prices: dict) -> dict | None:
     since = max((t for t in ends if t is not None), default=None)
     found: dict[str, dict] = {}
     meta: dict = {}
-    for p in transcripts(path, session_id):
+    for i, p in enumerate(transcripts(path, session_id)):
         with p.open(encoding="utf-8", errors="replace") as f:
-            got, m = responses(f, since)
+            got, m = responses(f, since, session_id, tag=str(i))
         found.update(got)
         if p == path:
             meta = m
@@ -251,10 +305,7 @@ def main() -> int:
         line = build_line(event if isinstance(event, dict) else {}, prices if isinstance(prices, dict) else {})
         if line is None:
             return 0
-        out = log_path()
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(line, sort_keys=True) + "\n")
+        append(log_path(), json.dumps(line, sort_keys=True) + "\n")
     except Exception:  # usage is never worth failing the session's end
         return 0
     return 0
