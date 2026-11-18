@@ -1,35 +1,79 @@
-# The example org overlay (team-harness.org/v1). Placeholders only: no real company, project, room or rule.
+# The example org overlay (team-harness.org/v2). Placeholders only: no real company, project, room or rule.
 # A company copies this directory to orgs/<its-name>/, fills in its own projects, gates and room, drops its own flow
 # skill into skills/org-process/, sets placeholder: false and points its harness at it in
 # shared/work-system/targets.yaml (orgs/README.md). scripts/sync_shared.py validates this file and renders it into
-# the harness's release-approvals skill.
-schema: team-harness.org/v1
+# the harness's release-approvals skill; the work-system PR check reads its gates.
+schema: team-harness.org/v2
 name: example-co
 placeholder: true            # the public example: agents file nothing and say the overlay is not applied
 params:                      # only tracker and kb_* may be set here (the org wins for those)
   tracker: "the WORKPROJ project on COMPANY-SITE.atlassian.net"
   kb_site: "COMPANY-SITE.atlassian.net"
   kb_space: "COMPANY-SPACE"
+reviewers:                   # the review teams, any number: a gate names one as its approvers
+  sre: {name: SRE, github_team: COMPANY-ORG/sre}   # github_team: for gates with github_review
+  infosec: {name: Infosec}
+  ess: {name: ESS}
+  architecture-board: {name: Architecture board}
+stages:                      # in order; a stage with branches is checked when a PR merges into one of them
+  - {name: dev, branches: [main]}
+  - {name: prod}             # no branches: a later step (the release); agents list its gates, the PR check skips them
 ticket_types:                # every ticket kind the flow uses
   - {id: work, project: WORKPROJ, issue_type: Story, role: work}
-  - {id: sre-approval, project: SREPROJ, issue_type: Task, role: approval,
-     summary: "SRE approval: {pr_title}"}   # the PR title starts with the work key
   - {id: infosec-review, project: SECPROJ, issue_type: Task, role: approval,
-     summary: "Infosec review: {repo} {work_key}"}
-gates:                       # what must exist before a PR merges, in order
+     summary: "Infosec review: {repo}"}      # one per repository, reused by its PRs
+  - {id: ess-request, project: ESSPROJ, issue_type: Task, role: approval,
+     summary: "ESS request: {pr_title}"}     # the PR title starts with the work key
+  - {id: arch-review, project: ARCHPROJ, issue_type: Task, role: approval,
+     summary: "Architecture review: {pr_title}"}
+  - {id: change-request, project: CHGPROJ, issue_type: Change, role: approval,
+     summary: "Release: {pr_title}"}
+gates:                       # what must hold before a PR merges, in order
   - id: sre
-    ticket: sre-approval     # a ticket_types id with role: approval
-    when: always             # always | {paths: [globs]} | {labels: [names]}  (any match applies the gate)
-    pr_line: SRE             # the PR body carries `SRE: <KEY>` once the ticket is filed
-    links: [pr, work]        # what the gate ticket links: pr, work, repo
-    filed_by: agent          # agent | person (person: the agent asks in the PR and files nothing)
-    approved_statuses: [Approved, Done]   # optional; with Jira read access the PR check requires one of these
+    approved_on: work        # ticket (default): a separate approval ticket | work: the work ticket
+    approvers: sre           # a reviewers id
+    stage: dev               # a stages name (default: every stage)
+    when: always             # always | {paths | labels | issue_types | projects: [...]}  (any match applies it)
+    links: [pr]              # the work ticket links the PR
+    approved_statuses: [SRE Approved, Done]   # the work ticket's status once an SRE approved it
+    github_review: true      # and a member of the sre github_team approves the PR on GitHub
   - id: infosec
-    ticket: infosec-review
+    ticket: infosec-review   # a ticket_types id with role: approval
+    scope: repo              # pr (default) | repo: one open ticket per repository, reused across its PRs
+    approvers: infosec
+    stage: dev
     when: always
-    pr_line: Infosec
-    links: [repo, work]
+    pr_line: Infosec         # the PR body carries `Infosec: <KEY>` once the ticket is filed or found
+    links: [repo]            # what the gate ticket links: pr, work, repo (a repo-scoped ticket links repo only)
+    filed_by: agent          # agent | person (person: the agent asks in the PR and files nothing)
+    approved_statuses: [Approved]   # with Jira read access the PR check requires one of these
+  - id: ess
+    ticket: ess-request
+    approvers: ess
+    stage: dev
+    when: {issue_types: [Change Request]}    # the work ticket's issue type
+    pr_line: ESS
+    links: [pr, work]
+    filed_by: person
+    approved_field: {field: customfield_10050, values: [Approved]}   # a Jira field instead of a status
+  - id: architecture
+    ticket: arch-review
+    approvers: architecture-board
+    stage: dev
+    when: {labels: [architecture]}
+    pr_line: Architecture
+    links: [pr, work]
     filed_by: agent
+    needs_approval: false    # filed for the board's record; nothing waits on its approval
+  - id: release
+    ticket: change-request
+    approvers: sre
+    stage: prod
+    when: always
+    pr_line: Release
+    links: [work]
+    filed_by: person
+    approved_statuses: [Approved]
 review_request:
   room: "the team's review room"   # drafted only; a person posts it
   template: |

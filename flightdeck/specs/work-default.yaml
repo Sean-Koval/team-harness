@@ -46,7 +46,7 @@ assert:
   # naming a placeholder project, site or space means it went ahead anyway. Trivially holds once a real org applies
   never:
     tool: {kind: mcp, mcp: {server: {in: [jira, atlassian, ai-dlc]}, tool: {regex: "(?i)create"}}}
-    where: {input: {regex: "\\b(WORKPROJ|SREPROJ|SECPROJ)\\b|COMPANY-(SITE|SPACE)"}}
+    where: {input: {regex: "\\b(WORKPROJ|SREPROJ|SECPROJ|ESSPROJ|ARCHPROJ|CHGPROJ)\\b|COMPANY-(SITE|SPACE)"}}
 ---
 id: work-approvals-filed-after-the-pr
 scope: job

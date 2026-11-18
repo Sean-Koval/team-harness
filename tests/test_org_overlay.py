@@ -59,19 +59,19 @@ def _broken(change):
 
 @pytest.mark.parametrize("change, message", [
     (lambda o: o.update(extra=1), "unknown key 'extra'"),
-    (lambda o: o.update(schema="team-harness.org/v2"), "schema must be"),
+    (lambda o: o.update(schema="team-harness.org/v3"), "schema must be"),
     (lambda o: o["gates"][0].update(colour="red"), "unknown key 'colour'"),
     (lambda o: o["ticket_types"][0].update(owner="x"), "unknown key 'owner'"),
     (lambda o: o["review_request"].update(post=True), "unknown key 'post'"),
     (lambda o: o["gates"][1].update(id="sre"), "gate id 'sre' is not unique"),
-    (lambda o: o["gates"][1].update(pr_line="sre"), "pr_line 'sre' is not unique"),
-    (lambda o: o["gates"][0].update(pr_line="Jira"), "one of the PR check's own lines"),
-    (lambda o: o["gates"][0].update(ticket="nope"), "not a ticket_types id"),
-    (lambda o: o["gates"][0].update(ticket="work"), "must have role approval"),
+    (lambda o: o["gates"][2].update(pr_line="infosec"), "pr_line 'infosec' is not unique"),
+    (lambda o: o["gates"][1].update(pr_line="Jira"), "one of the PR check's own lines"),
+    (lambda o: o["gates"][1].update(ticket="nope"), "not a ticket_types id"),
+    (lambda o: o["gates"][1].update(ticket="work"), "must have role approval"),
     (lambda o: o["gates"][0].update(when="sometimes"), "when must be always"),
     (lambda o: o["gates"][0].update(when={"branches": ["main"]}), "when must be always"),
     (lambda o: o["gates"][0].update(when={"paths": []}), "when.paths must be a non-empty list"),
-    (lambda o: o["gates"][0].update(filed_by="bot"), "filed_by must be agent or person"),
+    (lambda o: o["gates"][1].update(filed_by="bot"), "filed_by must be agent or person"),
     (lambda o: o["gates"][0].update(links=["pr", "wiki"]), "links must be a list of"),
     (lambda o: o["ticket_types"][1].update(role="gate"), "role must be one of"),
     (lambda o: o["ticket_types"][1].update(summary="{nobody}"), "summary field {nobody}"),
@@ -119,7 +119,7 @@ def test_org_cannot_turn_on_merging_or_drop_the_wall(tmp_path):
 
 def test_invalid_org_fails_the_check(tmp_path):
     root = copy_repo(tmp_path)
-    edit_yaml(root / "orgs/example-co/org.yaml", lambda o: o["gates"][0].update(filed_by="bot"))
+    edit_yaml(root / "orgs/example-co/org.yaml", lambda o: o["gates"][1].update(filed_by="bot"))
     _, problems = sync_shared.plan(root)
     assert any("filed_by must be agent or person" in p for p in problems)
 
@@ -258,8 +258,12 @@ def test_placeholder_example_renders_and_files_nothing(tmp_path):
     root = copy_repo(tmp_path)
     text = (root / WD / "skills/release-approvals/SKILL.md").read_text()
     assert "**The org overlay is not applied.**" in text and "File no ticket" in text
-    assert "| `sre` | `sre-approval` in `SREPROJ` | always |" in text
-    assert "`SRE approval: {pr_title}`" in text and "{work_key} {pr_title}" not in text
+    assert "| `sre` | dev | the work ticket | SRE | always | pr | - | - |" in text
+    assert "| `infosec` | dev | `infosec-review` in `SECPROJ`, one per repository" in text
+    assert "`Infosec review: {repo}`" in text and "{work_key} {pr_title}" not in text
+    assert "Review teams: SRE (`sre`, GitHub team `@COMPANY-ORG/sre`)" in text
+    assert "prod (a later step: the PR check does not hold the merge for it)" in text
+    assert "field `customfield_10050` is Approved" in text and "nothing waits on it" in text
     assert "`Infosec: <KEY>`" in text and "Review please: {pr_url}" in text
     assert "drafted, never posted" in text and "read `org-process`" in text
     assert len(text.splitlines()) <= 90

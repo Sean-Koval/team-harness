@@ -13,6 +13,8 @@ A normalised issue is a dict:
     kind       "work", "epic" or "decision"
     labels     list of str
     blocked_by list of {key, category, kind, labels}: the issues that block this one
+    issue_type optional: the ticket's issue type as the tracker names it, e.g. "Story" (for the org's
+               `when: issue_types` gates); None when the provider doesn't give it, and those gates then apply
 
 `read(key)` raises `TicketMissing` when the tracker answered that it has no such ticket (or refused to show it),
 `BlockerUnreadable` when an issue that blocks it can't be read, and `TrackerUnreachable` when the tracker could not
@@ -90,6 +92,10 @@ def normalised(issue: object, key: str) -> dict[str, Any]:
     if not isinstance(blocked, list):
         raise BadAnswer(f"the tracker's answer for {key}: blocked_by must be a list")
     out["blocked_by"] = [_ref(b, f"an issue blocking {key}") for b in blocked]
+    itype = issue.get("issue_type")  # type: ignore[union-attr]
+    if itype is not None and not isinstance(itype, str):
+        raise BadAnswer(f"the tracker's answer for {key}: issue_type must be a string")
+    out["issue_type"] = itype or None
     return out
 
 
@@ -163,7 +169,8 @@ class JiraCloud:
         # the key asked for: Jira answers a moved ticket's old key with its new one, and the PR names the old one
         return {"key": key, "status": str(_dict(f.get("status")).get("name") or ""),
                 "category": _jira_category(f), "kind": _jira_kind(f),
-                "labels": _jira_labels(f), "blocked_by": blocked}
+                "labels": _jira_labels(f), "blocked_by": blocked,
+                "issue_type": str(_dict(f.get("issuetype")).get("name") or "") or None}
 
 
 def _get(url: str, headers: dict[str, str]) -> object:

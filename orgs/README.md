@@ -6,13 +6,34 @@ into a work harness, and `release-approvals` runs the gates it declares.
 
 ```text
 orgs/<org>/
-  org.yaml                      schema team-harness.org/v1: params, ticket types, gates, review request
+  org.yaml                      schema team-harness.org/v2 (v1 still loads): params, reviewers, stages,
+                                ticket types, gates, review request
   skills/org-process/SKILL.md   the company's own flow skill, copied verbatim (name: org-process)
   skills/org-process/...        any reference files it needs
 ```
 
-`orgs/example-co/` is the public example. Every value in it is a placeholder (`COMPANY-SITE`, `WORKPROJ`,
-`SREPROJ`, `SECPROJ`) and it says `placeholder: true`, so agents on it file no approval ticket.
+`orgs/example-co/` is the public example. Every value in it is a placeholder (`COMPANY-SITE`, `COMPANY-ORG`,
+`WORKPROJ`, `SECPROJ`, `ESSPROJ`, `ARCHPROJ`, `CHGPROJ`) and it says `placeholder: true`, so agents on it file no
+approval ticket.
+
+## What v2 adds (KAN-373)
+
+Set `schema: team-harness.org/v2` to use these. A v1 overlay keeps working, and refuses the v2 keys with a hint.
+
+- `reviewers`: review teams by id, each with a `name` and an optional `github_team` (`org/slug`).
+- `stages`: named steps in order. A stage with `branches` is a merge into one of them; a stage without is a later
+  step, such as a release, that the PR check doesn't hold the merge for.
+- On a gate, `approved_on: work` means the approvers approve the work ticket itself, so nothing is filed. Write
+  `approved_on`, never `on`: YAML reads a bare `on` as true. The default is `ticket`.
+- `approvers` names a reviewer; `github_review: true` also needs an approving review of the PR's latest commit
+  from a member of that reviewer's GitHub team.
+- `scope: repo` makes a gate one ticket per repository, reused across PRs. `stage` ties a gate to a stage.
+- `approved_field: {field, values}` passes on a Jira field's value instead of, or as well as, a status.
+- `needs_approval: false` records a ticket for the audit trail; nothing waits on its approval.
+- `when` also takes `issue_types` and `projects`, matched against the work ticket.
+
+The PR check (`actions/work-system-pr`) reads the same file. When it can't read the data a gate needs, the gate
+applies, and its approval counts as unverified, which fails the check.
 
 ## Add your company's org
 

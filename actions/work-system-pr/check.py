@@ -15,7 +15,7 @@ earlier. Rules:
    or the older `lane:`), is a work item (not an Epic or a Decision, nor one labelled `type:decision`), and no open
    Decision blocks it. The ticket is read through tracker.py's provider (`tracker-provider`, default jira-cloud) as a
    normalised issue, so this file names no tracker's fields (KAN-437).
-7. With an org file (`org-file`, schema team-harness.org/v1), read from the PR's base commit so a PR can't loosen its
+7. With an org file (`org-file`, schema team-harness.org/v1 or v2), read from the PR's base commit so a PR can't loosen its
    own gates: every merge gate whose `when` matches the PR (always, its changed paths, or the labels on the PR or its
    work ticket) needs a `<pr_line>: <KEY>` line naming a ticket in the gate ticket type's project (`pending` or a
    missing line fails, so merge waits on the approval tickets). With Jira credentials, each gate ticket must exist, be
@@ -25,7 +25,11 @@ earlier. Rules:
    The check fails closed: a gate with `approved_statuses` or `links` whose ticket can't be read (no credentials, Jira
    down, an SSO page instead of JSON) fails, and so does the work ticket when Jira credentials are set but Jira can't
    be read, unless `allow-unverified` is set. An org file marked `placeholder: true` is not enforced (a warning says
-   so).
+   so). A v2 org (KAN-373) adds: gates held only at a `stage` whose `branches` match the PR's base branch (a stage
+   without branches is a later step, never held at merge); `when` on the work ticket's `issue_types` and `projects`;
+   gates `approved_on: work`, checked on the work ticket itself and needing no line; `approved_field` values; and
+   `github_review`, an approving review of the head commit from an active member of the approvers' GitHub team
+   (`review-token`). Data a v2 rule needs that can't be read applies the gate, or leaves it unverified.
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots) skip rules 1-6; the org's gates (rule 7) still hold, since an exemption is about the ticket, not the approvals.
@@ -153,11 +157,20 @@ def check_ticket(issue: dict, key: str) -> list[str]:
 
 # --- rule 7: the org's merge gates -----------------------------------------------------------------------------------
 
-ORG_SCHEMA = "team-harness.org/v1"
-ORG_KEYS = {"schema", "name", "placeholder", "params", "ticket_types", "gates", "review_request"}
+ORG_SCHEMA_V1 = "team-harness.org/v1"
+ORG_SCHEMA = "team-harness.org/v2"
+ORG_KEYS_V1 = {"schema", "name", "placeholder", "params", "ticket_types", "gates", "review_request"}
+ORG_KEYS = ORG_KEYS_V1 | {"reviewers", "stages"}
 TICKET_TYPE_KEYS = {"id", "project", "issue_type", "role", "summary"}
-GATE_KEYS = {"id", "ticket", "when", "pr_line", "links", "filed_by", "approved_statuses"}
-WHEN_KEYS = {"paths", "labels"}
+GATE_KEYS_V1 = {"id", "ticket", "when", "pr_line", "links", "filed_by", "approved_statuses"}
+GATE_KEYS = GATE_KEYS_V1 | {"approved_on", "approvers", "needs_approval", "github_review", "scope", "stage",
+                            "approved_field"}
+WHEN_KEYS_V1 = {"paths", "labels"}
+WHEN_KEYS = WHEN_KEYS_V1 | {"issue_types", "projects"}
+REVIEWER_KEYS = {"name", "github_team"}
+STAGE_KEYS = {"name", "branches"}
+GITHUB_TEAM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+JIRA_FIELD = re.compile(r"^(customfield_[0-9]+|[a-z][A-Za-z0-9]*)$")
 LINK_KINDS = {"pr", "work", "repo"}
 ROLES = {"work", "approval"}
 FILED_BY = {"agent", "person"}
@@ -175,6 +188,8 @@ def _str_list(v: object, where: str) -> list[str]:
 
 
 def _unknown(d: dict, allowed: set[str], where: str) -> None:
+    if True in d:
+        raise OrgError(f"{where} has a key that reads as true: YAML reads `on:` as a boolean (write approved_on:)")
     extra = sorted(str(k) for k in d if k not in allowed)
     if extra:
         raise OrgError(f"{where} has unknown key(s) {', '.join(extra)} (allowed: {', '.join(sorted(allowed))})")
@@ -187,9 +202,10 @@ def validate_org(data: object, *, tracker_line: str = "Jira") -> dict:
     reserved = RESERVED_PR_LINES | {tracker_line.lower()}
     if not isinstance(data, dict):
         raise OrgError("the org file must be a mapping at the top level")
-    _unknown(data, ORG_KEYS, "the org file")
-    if data.get("schema") != ORG_SCHEMA:
-        raise OrgError(f"schema must be {ORG_SCHEMA!r} (got {data.get('schema')!r})")
+    if data.get("schema") not in (ORG_SCHEMA, ORG_SCHEMA_V1):
+        raise OrgError(f"schema must be {ORG_SCHEMA!r} or {ORG_SCHEMA_V1!r} (got {data.get('schema')!r})")
+    v2 = data["schema"] == ORG_SCHEMA
+    _unknown(data, ORG_KEYS if v2 else ORG_KEYS_V1, "the org file")
     if not isinstance(data.get("name"), str) or not data["name"].strip():
         raise OrgError("name must be a non-empty string")
     if not isinstance(data.get("placeholder", False), bool):
@@ -214,6 +230,8 @@ def validate_org(data: object, *, tracker_line: str = "Jira") -> dict:
         if t["id"] in by_id:
             raise OrgError(f"ticket type id {t['id']!r} is used twice")
         by_id[t["id"]] = t
+    reviewers = _reviewers(data) if v2 else {}
+    stages = _stages(data) if v2 else set()
     gates = data.get("gates")
     if not isinstance(gates, list) or not gates:
         raise OrgError("gates must list at least one gate")
@@ -223,44 +241,131 @@ def validate_org(data: object, *, tracker_line: str = "Jira") -> dict:
         where = f"gates[{i}]"
         if not isinstance(g, dict):
             raise OrgError(f"{where} must be a mapping")
-        _unknown(g, GATE_KEYS, where)
-        for k in ("id", "ticket", "pr_line", "filed_by"):
+        _unknown(g, GATE_KEYS if v2 else GATE_KEYS_V1, where)
+        if v2 and g.get("approved_on", "ticket") not in ("ticket", "work"):
+            raise OrgError(f"{where} approved_on must be ticket or work")
+        on_work = v2 and g.get("approved_on") == "work"
+        for k in ("id",) if on_work else ("id", "ticket", "pr_line", "filed_by"):
             if not isinstance(g.get(k), str) or not g[k].strip():
                 raise OrgError(f"{where} needs a non-empty {k!r}")
         where = f"gate {g['id']!r}"
         if g["id"] in seen_ids:
             raise OrgError(f"gate id {g['id']!r} is used twice")
-        if g["pr_line"].lower() in seen_lines:
-            raise OrgError(f"pr_line {g['pr_line']!r} is used by two gates")
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]*", g["pr_line"]):
-            raise OrgError(f"{where} pr_line {g['pr_line']!r} must be a plain name, like 'SRE'")
-        if g["pr_line"].lower() in reserved:
-            raise OrgError(f"{where} pr_line {g['pr_line']!r} is one of the PR check's own lines")
         seen_ids.add(g["id"])
-        seen_lines.add(g["pr_line"].lower())
-        t = by_id.get(g["ticket"])
-        if t is None:
-            raise OrgError(f"{where} names unknown ticket type {g['ticket']!r}")
-        if t["role"] != "approval":
-            raise OrgError(f"{where} uses ticket type {g['ticket']!r}, which is role {t['role']!r}, not 'approval'")
-        if "when" not in g:
-            raise OrgError(f"{where} needs a 'when' (always, {{paths: [...]}} or {{labels: [...]}})")
-        when = g["when"]
-        if when != "always":
-            if not isinstance(when, dict) or not when:
-                raise OrgError(f"{where} when must be 'always', {{paths: [...]}} or {{labels: [...]}}")
-            _unknown(when, WHEN_KEYS, f"{where} when")
-            for k in when:
-                _str_list(when[k], f"{where} when.{k}")
+        if not on_work:
+            if g["pr_line"].lower() in seen_lines:
+                raise OrgError(f"pr_line {g['pr_line']!r} is used by two gates")
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 _-]*", g["pr_line"]):
+                raise OrgError(f"{where} pr_line {g['pr_line']!r} must be a plain name, like 'SRE'")
+            if g["pr_line"].lower() in reserved:
+                raise OrgError(f"{where} pr_line {g['pr_line']!r} is one of the PR check's own lines")
+            seen_lines.add(g["pr_line"].lower())
+            t = by_id.get(g["ticket"])
+            if t is None:
+                raise OrgError(f"{where} names unknown ticket type {g['ticket']!r}")
+            if t["role"] != "approval":
+                raise OrgError(f"{where} uses ticket type {g['ticket']!r}, which is role {t['role']!r}, not "
+                               "'approval'")
+            if g["filed_by"] not in FILED_BY:
+                raise OrgError(f"{where} filed_by must be agent or person (got {g.get('filed_by')!r})")
+        _when(g, where, v2)
         if "links" in g:
             bad = [x for x in _str_list(g["links"], f"{where} links") if x not in LINK_KINDS]
             if bad:
                 raise OrgError(f"{where} links has {', '.join(bad)} (allowed: {', '.join(sorted(LINK_KINDS))})")
-        if g["filed_by"] not in FILED_BY:
-            raise OrgError(f"{where} filed_by must be agent or person (got {g.get('filed_by')!r})")
         if "approved_statuses" in g:
             _str_list(g["approved_statuses"], f"{where} approved_statuses")
+        if v2:
+            _gate_v2(g, where, by_id, reviewers, stages)
     return data
+
+
+def _when(g: dict, where: str, v2: bool) -> None:
+    shapes = "always, {paths: [...]}, {labels: [...]}" + (", {issue_types: [...]}, {projects: [...]}" if v2 else "")
+    if "when" not in g:
+        raise OrgError(f"{where} needs a 'when' ({shapes})")
+    when = g["when"]
+    if when != "always":
+        if not isinstance(when, dict) or not when:
+            raise OrgError(f"{where} when must be one of {shapes}")
+        _unknown(when, WHEN_KEYS if v2 else WHEN_KEYS_V1, f"{where} when")
+        for k in when:
+            _str_list(when[k], f"{where} when.{k}")
+
+
+def _reviewers(data: dict) -> dict[str, dict]:
+    reviewers = data.get("reviewers", {})
+    if not isinstance(reviewers, dict):
+        raise OrgError("reviewers must be a mapping of review team ids")
+    for rid, r in reviewers.items():
+        if not isinstance(rid, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", rid):
+            raise OrgError(f"reviewers id {rid!r} must be lower case letters, digits and -")
+        if not isinstance(r, dict):
+            raise OrgError(f"reviewers.{rid} must be a mapping with name")
+        _unknown(r, REVIEWER_KEYS, f"reviewers.{rid}")
+        if not isinstance(r.get("name"), str) or not r["name"].strip():
+            raise OrgError(f"reviewers.{rid} needs a non-empty 'name'")
+        if "github_team" in r and (not isinstance(r["github_team"], str) or not GITHUB_TEAM.match(r["github_team"])):
+            raise OrgError(f"reviewers.{rid} github_team must be <org>/<team-slug>")
+    return reviewers
+
+
+def _stages(data: dict) -> set[str]:
+    stages = data.get("stages", [])
+    if not isinstance(stages, list):
+        raise OrgError("stages must be a list of {name, branches}")
+    names: set[str] = set()
+    for i, st in enumerate(stages):
+        if not isinstance(st, dict):
+            raise OrgError(f"stages[{i}] must be a mapping")
+        _unknown(st, STAGE_KEYS, f"stages[{i}]")
+        if not isinstance(st.get("name"), str) or not st["name"].strip() or st["name"] in names:
+            raise OrgError(f"stages[{i}] needs a unique non-empty 'name'")
+        names.add(st["name"])
+        if "branches" in st:
+            _str_list(st["branches"], f"stages[{i}] branches")
+    return names
+
+
+def _gate_v2(g: dict, where: str, types: dict[str, dict], reviewers: dict[str, dict], stages: set[str]) -> None:
+    """The v2 keys of one gate; kept in step with scripts/sync_shared.py's _validate_gate_v2."""
+    on = g.get("approved_on", "ticket")
+    if on not in ("ticket", "work"):
+        raise OrgError(f"{where} approved_on must be ticket or work")
+    for k in ("needs_approval", "github_review"):
+        if k in g and not isinstance(g[k], bool):
+            raise OrgError(f"{where} {k} must be true or false")
+    needs, review, scope = g.get("needs_approval", True), g.get("github_review", False), g.get("scope", "pr")
+    if scope not in ("pr", "repo"):
+        raise OrgError(f"{where} scope must be pr or repo")
+    if "approvers" in g and g["approvers"] not in reviewers:
+        raise OrgError(f"{where} approvers {g['approvers']!r} is not a reviewers id")
+    if review and not (reviewers.get(g.get("approvers", "")) or {}).get("github_team"):
+        raise OrgError(f"{where} github_review needs approvers with a github_team")
+    if "stage" in g and g["stage"] not in stages:
+        raise OrgError(f"{where} stage {g['stage']!r} is not one of the stages")
+    field = g.get("approved_field")
+    if field is not None and (not isinstance(field, dict) or set(field) != {"field", "values"}
+                              or not isinstance(field.get("field"), str) or not JIRA_FIELD.match(field["field"])):
+        raise OrgError(f"{where} approved_field must be {{field: customfield_NNNNN, values: [names]}}")
+    if field is not None:
+        _str_list(field["values"], f"{where} approved_field.values")
+    approved = "approved_statuses" in g or field is not None
+    if not needs and (approved or review):
+        raise OrgError(f"{where} needs_approval: false takes no approved_statuses, approved_field or github_review")
+    links = g.get("links", [])
+    if on == "work":
+        extra = [k for k in ("ticket", "pr_line", "filed_by") if k in g]
+        if extra:
+            raise OrgError(f"{where} is approved on the work ticket, so it has no {', '.join(extra)}")
+        if not any(t.get("role") == "work" for t in types.values()):
+            raise OrgError(f"{where} approved_on: work needs a ticket type with role work")
+        if scope != "pr" or (isinstance(links, list) and set(links) - {"pr"}) or not needs \
+                or not (approved or review):
+            raise OrgError(f"{where} approved_on: work is per PR, links only pr, and needs approved_statuses, "
+                           "approved_field or github_review")
+    elif scope == "repo" and isinstance(links, list) and (set(links) & {"pr", "work"} or "repo" not in links):
+        raise OrgError(f"{where} scope: repo shares one ticket across the repository's PRs, so it links repo only")
 
 
 def load_org(path: str, *, tracker_line: str = "Jira") -> dict:
@@ -305,6 +410,9 @@ class Gate:
     state: str = ""      # not required | missing | pending | invalid | linked | checked | not approved | unverified
     #                      | not enforced | not checked
     errors: list[str] = field(default_factory=list)
+    on: str = "ticket"   # ticket: a separate approval ticket | work: approved on the work ticket (v2)
+    approvers: str = ""  # the review team's name (v2)
+    record_only: bool = False  # needs_approval: false (v2): filed for the record, nothing waits on its approval
 
 
 def _changed_paths(files: list[dict]) -> list[str]:
@@ -336,27 +444,61 @@ def path_matches(path: str, pattern: str) -> bool:
 
 
 def _applies(when: object, labels: set[str], files: list[dict] | None,
-             work_labels: Iterable[str] | None = ()) -> tuple[bool, str]:
-    """Labels compare case-insensitively and come from the PR and its work ticket. `files` or `work_labels` None means
-    they could not be read, and the gate then applies (fail closed)."""
+             work_labels: Iterable[str] | None = (), work_issue_type: str | None = "",
+             work_project: str | None = "") -> tuple[bool, str]:
+    """Any match applies the gate. Labels compare case-insensitively and come from the PR and its work ticket; issue
+    types (case-insensitive) and projects come from the work ticket. `files`, `work_labels`, `work_issue_type` or
+    `work_project` None means it could not be read, and then the gate applies (fail closed)."""
     if when == "always" or when is None:
         return True, "always"
     assert isinstance(when, dict)
-    hits = []
+    hits: list[str] = []
+    unknown: list[str] = []
     if "labels" in when:
         want = {lab.lower() for lab in when["labels"]}
         hits += [f"label {lab}" for lab in sorted(labels) if lab and lab.lower() in want]
         if work_labels is None:
-            if not hits:
-                return True, "labels (the work ticket's labels could not be read, so the gate applies)"
+            unknown.append("labels (the work ticket's labels could not be read, so the gate applies)")
         else:
             hits += [f"work ticket label {lab}" for lab in sorted(set(work_labels)) if lab.lower() in want]
+    if "issue_types" in when:
+        if work_issue_type is None:
+            unknown.append("issue types (the work ticket's issue type could not be read, so the gate applies)")
+        elif work_issue_type.lower() in {t.lower() for t in when["issue_types"]}:
+            hits.append(f"work ticket type {work_issue_type}")
+    if "projects" in when:
+        if work_project is None:
+            unknown.append("projects (the work ticket's project is unknown, so the gate applies)")
+        elif work_project.upper() in {p.upper() for p in when["projects"]}:
+            hits.append(f"work ticket project {work_project}")
     if "paths" in when:
         if files is None:
-            return True, "paths (the PR's files could not be listed, so the gate applies)"
-        paths = _changed_paths(files)
-        hits += [f"path {p}" for p in paths if any(path_matches(p, g) for g in when["paths"])][:3]
-    return (True, ", ".join(hits)) if hits else (False, "no matching " + " or ".join(sorted(when)))
+            unknown.append("paths (the PR's files could not be listed, so the gate applies)")
+        else:
+            paths = _changed_paths(files)
+            hits += [f"path {p}" for p in paths if any(path_matches(p, g) for g in when["paths"])][:3]
+    if hits:
+        return True, ", ".join(hits)
+    if unknown:
+        return True, unknown[0]
+    return False, "no matching " + " or ".join(sorted(when))
+
+
+def _stage(g: dict, stages: dict[str, dict], base_ref: str | None) -> tuple[bool, str]:
+    """Whether the gate's stage is this PR's: a stage with branches is checked when the PR merges into one of them; a
+    stage without branches is a later step (a release) the PR check doesn't hold the merge for. No stage: every
+    stage. An unknown base branch applies the gate (fail closed)."""
+    name = g.get("stage")
+    if not name:
+        return True, ""
+    branches = (stages.get(name) or {}).get("branches") or []
+    if not branches:
+        return False, f"stage {name} is a later step (a release), not held at merge"
+    if not base_ref:
+        return True, f"stage {name} (the PR's base branch is unknown, so the gate applies)"
+    if any(fnmatch.fnmatchcase(base_ref, b) for b in branches):
+        return True, f"stage {name}"
+    return False, f"stage {name} merges into {', '.join(branches)}, not {base_ref}"
 
 
 def _no_comments(body: str) -> str:
@@ -374,6 +516,12 @@ class GateContext:
     pr_url: str = ""
     allow_unverified: bool = False
     repo_url: str = ""
+    # github_review (v2): `reviews()` lists the PR's reviews in the order they were submitted; `team_member(team,
+    # login)` says whether the login is an active member of `org/team-slug`. Both GETs; None when not given.
+    reviews: Callable[[], object] | None = None
+    team_member: Callable[[str, str], bool] | None = None
+    head_sha: str = ""
+    author: str = ""
 
 
 def _repo_url(pr: dict) -> str:
@@ -386,20 +534,31 @@ def _repo_url(pr: dict) -> str:
 
 
 def _needs_jira(g: dict) -> bool:
-    """A gate whose rule only Jira can show (an approved status, a link) fails when its ticket can't be read."""
-    return bool(g.get("approved_statuses") or g.get("links"))
+    """A gate whose rule only Jira can show (an approved status or field, a link) fails when its ticket can't be
+    read."""
+    return bool(g.get("approved_statuses") or g.get("links") or g.get("approved_field"))
 
 
 def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: str = DEFAULT_KEY,
                 fetch: Callable[[str], object] | None = None, remote_links: Callable[[str], object] | None = None,
                 work_key: str | None = None, work_labels: Iterable[str] | None = (),
-                allow_unverified: bool = False) -> tuple[list[Gate], list[str], list[str]]:
+                work_issue_type: str | None = "", allow_unverified: bool = False,
+                reviews: Callable[[], object] | None = None,
+                team_member: Callable[[str, str], bool] | None = None) -> tuple[list[Gate], list[str], list[str]]:
     """Rule 7. Returns the gates with their state, errors and warnings. Fails closed: a gate whose approval can't be
-    verified fails unless `allow_unverified` is set."""
+    verified fails unless `allow_unverified` is set. `work_issue_type` None means the work ticket's issue type could
+    not be read (gates with `when: issue_types` then apply)."""
     errors: list[str] = []
     warnings: list[str] = []
-    ctx = GateContext(fetch, remote_links, work_key, str(pr.get("html_url") or ""), allow_unverified, _repo_url(pr))
+    ctx = GateContext(fetch, remote_links, work_key, str(pr.get("html_url") or ""), allow_unverified, _repo_url(pr),
+                      reviews, team_member, str((pr.get("head") or {}).get("sha") or ""),
+                      str((pr.get("user") or {}).get("login") or ""))
     types = {t["id"]: t for t in org["ticket_types"]}
+    work_types = [t for t in org["ticket_types"] if t["role"] == "work"]
+    reviewers = org.get("reviewers") or {}
+    stages = {st["name"]: st for st in org.get("stages") or []}
+    base_ref = (pr.get("base") or {}).get("ref") or None
+    work_project = work_key.rsplit("-", 1)[0] if work_key else ""
     labels = {str(lab.get("name") or "") for lab in pr.get("labels") or []}
     body = _no_comments(pr.get("body") or "")
     placeholder = bool(org.get("placeholder"))
@@ -410,16 +569,31 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
         warnings.append("could not list the PR's files, so every gate with `when: paths` applies")
     gates: list[Gate] = []
     for g in org.get("gates") or []:
-        t = types[g["ticket"]]
-        applies, why = _applies(g.get("when", "always"), labels, files, work_labels)
-        gate = Gate(g["id"], g["pr_line"], t["id"], t["project"], t["issue_type"], g.get("filed_by", "agent"),
-                    applies, why)
+        on_work = g.get("approved_on") == "work"
+        applies, why = _stage(g, stages, base_ref)
+        if applies:
+            when_applies, when_why = _applies(g.get("when", "always"), labels, files, work_labels, work_issue_type,
+                                              work_project)
+            applies, why = when_applies, f"{why}; {when_why}" if why else when_why
+        if on_work:
+            t = work_types[0]
+            gate = Gate(g["id"], "", t["id"], t["project"], t["issue_type"], "-", applies, why, on="work")
+        else:
+            t = types[g["ticket"]]
+            gate = Gate(g["id"], g["pr_line"], t["id"], t["project"], t["issue_type"], g.get("filed_by", "agent"),
+                        applies, why)
+        gate.approvers = (reviewers.get(g.get("approvers") or "") or {}).get("name", "")
+        gate.record_only = g.get("needs_approval") is False
         gates.append(gate)
         if not applies:
             gate.state = "not required"
             continue
         if placeholder:
             gate.state = "not enforced"
+            continue
+        if on_work:
+            _check_work_gate(gate, g, work_types, reviewers, ctx, warnings)
+            errors += gate.errors
             continue
         what = (f"gate {gate.id!r} needs a '{gate.pr_line}: <KEY>' line naming its {t['issue_type']} "
                 f"({gate.ticket}) in {gate.project}")
@@ -451,14 +625,96 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
                 _check_gate_ticket(gate, g, t, ctx, warnings)
                 if not gate.errors and gate.state == "linked":
                     gate.state = "checked"
+            if g.get("github_review") and gate.state != "invalid":
+                _check_review(gate, reviewers[g["approvers"]]["github_team"], ctx, warnings)
         errors += gate.errors
     return gates, errors, warnings
+
+
+def _check_work_gate(gate: Gate, g: dict, work_types: list[dict], reviewers: dict[str, dict], ctx: GateContext,
+                     warnings: list[str]) -> None:
+    """An `approved_on: work` gate: the approval is recorded on the work ticket itself (its status or a field), the
+    work ticket links the PR, and, with github_review, a member of the approvers' GitHub team approved the PR."""
+    if not ctx.work_key:
+        gate.state = "invalid"
+        gate.errors.append(f"gate {gate.id!r} is approved on the work ticket, but the PR names no work ticket; put "
+                           "its key in the title")
+        return
+    gate.key = ctx.work_key
+    gate.state = "linked"
+    projects = sorted({t["project"] for t in work_types})
+    if ctx.work_key.rsplit("-", 1)[0] not in projects:
+        gate.state = "invalid"
+        gate.errors.append(f"gate {gate.id!r} is approved on the work ticket, but {ctx.work_key} is not in "
+                           f"{' or '.join(projects)}, where work tickets are filed")
+        return
+    if _needs_jira(g):
+        if ctx.fetch is None:
+            _unverified(gate, "there are no Jira credentials to read it (fork and bot PRs get no secrets)", g, ctx,
+                        errors=gate.errors, warnings=warnings)
+        else:
+            _check_gate_ticket(gate, g, None, ctx, warnings)
+            if not gate.errors and gate.state == "linked":
+                gate.state = "checked"
+    if g.get("github_review") and gate.state != "invalid":
+        _check_review(gate, reviewers[g["approvers"]]["github_team"], ctx, warnings)
+
+
+_DECISIVE = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}  # a COMMENTED review leaves a reviewer's verdict as it was
+
+
+def _check_review(gate: Gate, team: str, ctx: GateContext, warnings: list[str]) -> None:
+    """github_review: a member of `team` (org/team-slug) approved the PR, and that approval is their latest verdict
+    and is on the PR's head commit (a push after it needs a new approval). The PR's author never counts. Reviews or
+    membership that can't be read fail the gate unless allow-unverified is set."""
+    what = f"approved on GitHub by a member of @{team}"
+    if ctx.reviews is None or ctx.team_member is None:
+        _unverified(gate, "the check was given no way to read the PR's reviews", {}, ctx, errors=gate.errors,
+                    warnings=warnings, what=what)
+        return
+    try:
+        answer = ctx.reviews()
+        if not isinstance(answer, list):
+            raise ValueError("the reviews API did not return a list")
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+        _unverified(gate, f"the PR's reviews could not be read ({e})", {}, ctx, errors=gate.errors,
+                    warnings=warnings, what=what)
+        return
+    latest: dict[str, dict] = {}
+    for r in answer:
+        login = str(((r or {}).get("user") or {}).get("login") or "") if isinstance(r, dict) else ""
+        if login and r.get("state") in _DECISIVE:
+            latest[login] = r
+    approved = [login for login, r in latest.items() if r.get("state") == "APPROVED" and login != ctx.author]
+    current = [login for login in approved if ctx.head_sha and latest[login].get("commit_id") == ctx.head_sha]
+    outsiders = []
+    for login in current:
+        try:
+            if ctx.team_member(team, login):
+                return
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+            _unverified(gate, f"whether {login} is on @{team} could not be read ({e}); the review token needs to "
+                        "read the organisation's teams", {}, ctx, errors=gate.errors, warnings=warnings, what=what)
+            return
+        outsiders.append(login)
+    if gate.state in ("linked", "checked"):
+        gate.state = "not approved"
+    why = []
+    if outsiders:
+        why.append(f"{', '.join(outsiders)} approved but {'is' if len(outsiders) == 1 else 'are'} not on @{team}")
+    stale = [login for login in approved if login not in current]
+    if stale:
+        why.append(f"{', '.join(stale)} approved an earlier commit")
+    gate.errors.append(f"gate {gate.id!r} needs an approving review on the PR's latest commit from a member of "
+                       f"@{team}" + (f" ({'; '.join(why)})" if why else "") + "; request one, then re-run the check")
 
 
 def _what_jira_shows(g: dict) -> str:
     parts = []
     if g.get("approved_statuses"):
         parts.append(" or ".join(g["approved_statuses"]))
+    if g.get("approved_field"):
+        parts.append(f"{g['approved_field']['field']} {' or '.join(g['approved_field']['values'])}")
     if g.get("links"):
         names = {"pr": "the PR", "work": "the work ticket", "repo": "the repository"}
         parts.append("linking " + " and ".join(names.get(x, f"the {x}") for x in g["links"]))
@@ -466,9 +722,10 @@ def _what_jira_shows(g: dict) -> str:
 
 
 def _unverified(gate: Gate, why: str, g: dict, ctx: GateContext, *, errors: list[str],
-                warnings: list[str]) -> None:
-    """A gate that needs Jira (an approval, a link) whose ticket couldn't be read: fail, unless allow-unverified."""
-    msg = (f"gate {gate.id!r}: {gate.key} could not be verified as {_what_jira_shows(g)} because {why}")
+                warnings: list[str], what: str = "") -> None:
+    """A gate that needs Jira (an approval, a link) whose ticket couldn't be read, or a GitHub review that couldn't
+    be read: fail, unless allow-unverified."""
+    msg = (f"gate {gate.id!r}: {gate.key} could not be verified as {what or _what_jira_shows(g)} because {why}")
     if ctx.allow_unverified:
         gate.state = "not checked"  # passes unread; the summary must not say checked
         warnings.append(f"{msg}; passing it unverified because allow-unverified is set")
@@ -499,7 +756,24 @@ def _linked_keys(fields: dict) -> set[str]:
     return out
 
 
-def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings: list[str]) -> None:
+def _field_values(v: object) -> list[str]:
+    """A Jira field's value as names: a select option's value, a user's or version's name, a string or a number; a
+    list gives each of its values."""
+    if isinstance(v, list):
+        return [x for item in v for x in _field_values(item)]
+    if isinstance(v, dict):
+        for k in ("value", "name", "displayName"):
+            if isinstance(v.get(k), str):
+                return [v[k]]
+        return []
+    if isinstance(v, (str, int, float)) and not isinstance(v, bool):
+        return [str(v)]
+    return []
+
+
+def _check_gate_ticket(gate: Gate, g: dict, t: dict | None, ctx: GateContext, warnings: list[str]) -> None:
+    """The gate ticket in Jira: project, issue type, links, approved status and field. `t` None: the gate is approved
+    on the work ticket itself, whose project the caller checked and whose type and work link don't apply."""
     approved: list[str] | None = g.get("approved_statuses")
     assert ctx.fetch is not None
 
@@ -525,18 +799,19 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
         return
     f = issue["fields"]
     errs = []
-    project = (f.get("project") or {}).get("key") or str(issue.get("key") or "").rsplit("-", 1)[0]
-    if project != gate.project:
-        gate.state = "invalid"
-        errs.append(f"gate {gate.id!r}: {gate.key} is in {project or 'an unknown project'}, not {gate.project}, "
-                    f"where the {gate.ticket} ticket is filed")
-    itype = (f.get("issuetype") or {}).get("name") or ""
-    if itype.lower() != t["issue_type"].lower():
-        gate.state = "invalid"
-        errs.append(f"gate {gate.id!r}: {gate.key} is a {itype or 'ticket without an issue type'}, not a "
-                    f"{t['issue_type']}; file a {t['issue_type']} ({gate.ticket}) for this PR")
+    if t is not None:
+        project = (f.get("project") or {}).get("key") or str(issue.get("key") or "").rsplit("-", 1)[0]
+        if project != gate.project:
+            gate.state = "invalid"
+            errs.append(f"gate {gate.id!r}: {gate.key} is in {project or 'an unknown project'}, not {gate.project}, "
+                        f"where the {gate.ticket} ticket is filed")
+        itype = (f.get("issuetype") or {}).get("name") or ""
+        if itype.lower() != t["issue_type"].lower():
+            gate.state = "invalid"
+            errs.append(f"gate {gate.id!r}: {gate.key} is a {itype or 'ticket without an issue type'}, not a "
+                        f"{t['issue_type']}; file a {t['issue_type']} ({gate.ticket}) for this PR")
     links = g.get("links") or []
-    if "work" in links:
+    if "work" in links and t is not None:
         if not ctx.work_key:
             gate.state = "invalid"
             errs.append(f"gate {gate.id!r}: the PR names no work ticket, so {gate.key}'s link to it can't be "
@@ -577,6 +852,21 @@ def _check_gate_ticket(gate: Gate, g: dict, t: dict, ctx: GateContext, warnings:
             gate.state = "not approved"
         errs.append(f"gate {gate.id!r}: {gate.key} is {status or 'without a status'}; it must be "
                     f"{' or '.join(approved)} before the PR merges")
+    field_rule = g.get("approved_field")
+    if field_rule:
+        name, want = field_rule["field"], field_rule["values"]
+        if name not in f:
+            if gate.state == "linked":
+                gate.state = "not approved"
+            errs.append(f"gate {gate.id!r}: Jira returned no {name} field for {gate.key}; check the field id, and "
+                        f"that the field is on the issue's screen (it must be {' or '.join(want)})")
+        else:
+            have = _field_values(f.get(name))
+            if not {v.lower() for v in have} & {v.lower() for v in want}:
+                if gate.state == "linked":
+                    gate.state = "not approved"
+                errs.append(f"gate {gate.id!r}: {gate.key}'s {name} is {', '.join(have) or 'empty'}; it must be "
+                            f"{' or '.join(want)} before the PR merges")
     gate.errors += errs
 
 
@@ -585,11 +875,17 @@ def gate_summary(gates: list[Gate]) -> list[str]:
         return ["The org file declares no merge gates."]
     rows = ["| Gate | Line | Ticket | Applies | State |", "| --- | --- | --- | --- | --- |"]
     for g in gates:
-        line = f"`{g.pr_line}: {g.key}`" if g.key else f"`{g.pr_line}:`"
-        who = " (a person files it)" if g.filed_by == "person" else ""
+        if g.on == "work":
+            line, ticket = "-", "the work ticket" + (f" {g.key}" if g.key else "")
+        else:
+            line = f"`{g.pr_line}: {g.key}`" if g.key else f"`{g.pr_line}:`"
+            ticket = f"{g.issue_type} in {g.project}" + (" (a person files it)" if g.filed_by == "person" else "")
+        if g.approvers:
+            ticket += f"; approvers {g.approvers}"
+        if g.record_only:
+            ticket += "; for the record, nothing waits on its approval"
         applies = ("yes: " if g.applies else "no: ") + g.why
-        rows.append(f"| {g.id} | {line} | {g.issue_type} in {g.project}{who} | {applies.replace('|', '/')} "
-                    f"| {g.state} |")
+        rows.append(f"| {g.id} | {line} | {ticket.replace('|', '/')} | {applies.replace('|', '/')} | {g.state} |")
     return rows
 
 
@@ -613,13 +909,53 @@ def _pr_files(repo: str, number: int, token: str, api: str) -> list[dict] | None
     return out
 
 
-def _jira_fetcher(base: str, user: str, token: str) -> tuple[Callable[[str], object], Callable[[str], object]]:
-    """(fetch the issue, fetch its remote links) for the gate tickets; GET only."""
+def _jira_fetcher(base: str, user: str, token: str, extra_fields: Iterable[str] = ()
+                  ) -> tuple[Callable[[str], object], Callable[[str], object]]:
+    """(fetch the issue, fetch its remote links) for the gate tickets, and for the work ticket of a gate approved on
+    it; GET only. `extra_fields` are the org's approved_field ids."""
     auth = {"Authorization": "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()}
     root = f"{base.rstrip('/')}/rest/api/3/issue/"
-    return (lambda key: _get(f"{root}{urllib.parse.quote(key)}?fields=status,project,issuetype,issuelinks,description",
-                             auth),
+    fields = ",".join(["status", "project", "issuetype", "issuelinks", "description", *sorted(set(extra_fields))])
+    return (lambda key: _get(f"{root}{urllib.parse.quote(key)}?fields={fields}", auth),
             lambda key: _get(f"{root}{urllib.parse.quote(key)}/remotelink", auth))
+
+
+def _github_reviews(repo: str, number: int, token: str, api: str
+                    ) -> tuple[Callable[[], object], Callable[[str, str], bool]]:
+    """(list the PR's reviews, is this login an active member of org/team) for github_review gates; GET only. A
+    membership 404 is "not a member"; the team itself is read first, so a token that can't see the team fails as
+    unreadable instead of reading as nobody being on it."""
+    auth = {"Authorization": f"Bearer {token}"} if token else {}
+    seen_teams: set[str] = set()
+
+    def reviews() -> object:
+        out: list[object] = []
+        for page in range(1, 31):
+            batch = _get(f"{api}/repos/{repo}/pulls/{number}/reviews?per_page=100&page={page}", auth)
+            if not isinstance(batch, list):
+                raise ValueError("the reviews API did not return a list")
+            out += batch
+            if len(batch) < 100:
+                return out
+        raise ValueError("the PR has more than 3000 reviews")
+
+    def member(team: str, login: str) -> bool:
+        org, slug = (urllib.parse.quote(p, safe="") for p in team.split("/", 1))
+        if team not in seen_teams:
+            try:
+                _get(f"{api}/orgs/{org}/teams/{slug}", auth)
+            except urllib.error.HTTPError as e:
+                raise OSError(f"the team could not be read (HTTP {e.code})") from None
+            seen_teams.add(team)
+        try:
+            data = _get(f"{api}/orgs/{org}/teams/{slug}/memberships/{urllib.parse.quote(login, safe='')}", auth)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return False
+            raise OSError(f"HTTP {e.code}") from None
+        return isinstance(data, dict) and data.get("state") == "active"
+
+    return reviews, member
 
 
 def _org_at_base(repo: str, path: str, ref: str, token: str, api: str) -> str:
@@ -699,6 +1035,7 @@ def main() -> int:
     # the work ticket: the title's key, also on an exempt PR (its labels can apply a gate)
     work_key = res.key or _title_key(pr, _out("KEY_PATTERN") or DEFAULT_KEY)
     work_labels: list[str] | None = None if work_key else []  # None: unknown, so label gates apply
+    work_issue_type: str | None = None if work_key else ""   # None: unknown, so issue-type gates apply
     reader, skipped = None, ""
     if work_key:
         try:
@@ -709,6 +1046,7 @@ def main() -> int:
         try:
             issue = reader.read(work_key)
             work_labels = issue["labels"]
+            work_issue_type = issue.get("issue_type")  # None from a provider that doesn't give it
             if res.key and not res.errors:
                 res.errors += check_ticket(issue, res.key)
         except tracker.TicketMissing as e:
@@ -731,7 +1069,7 @@ def main() -> int:
         res.warnings.append(f"{skipped}; rule 6 skipped: the ticket's status, execution label and blocking decisions "
                             "were not checked")
     if reader is None and allow_unverified:
-        work_labels = []
+        work_labels, work_issue_type = [], ""
 
     gates: list[Gate] | None = None
     org_file = _out("ORG_FILE")
@@ -743,11 +1081,14 @@ def main() -> int:
             res.errors.append(f"org-file {org_file}: {e}; the merge gates were not checked")
         else:
             res.warnings += owarns
-            fetch, remote = _jira_fetcher(base, user, token) if creds else (None, None)
+            extra = [g["approved_field"]["field"] for g in org["gates"] if g.get("approved_field")]
+            fetch, remote = _jira_fetcher(base, user, token, extra) if creds else (None, None)
+            reviews, member = _github_reviews(repo, pr["number"], _out("REVIEW_TOKEN") or _out("GITHUB_TOKEN"), api)
             gates, gerrs, gwarns = check_gates(pr, files, org, key_pattern=_out("KEY_PATTERN") or DEFAULT_KEY,
                                                fetch=fetch, remote_links=remote,
-                                               work_key=work_key,
-                                               work_labels=work_labels, allow_unverified=allow_unverified)
+                                               work_key=work_key, work_labels=work_labels,
+                                               work_issue_type=work_issue_type, allow_unverified=allow_unverified,
+                                               reviews=reviews, team_member=member)
             res.errors += gerrs
             res.warnings += gwarns
             if fetch is None and any(g.key for g in gates):
