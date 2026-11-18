@@ -27,12 +27,21 @@ those, say there is no template yet and stop.
    It copies `templates/mcp-server/`, fills `@@project@@` (the name), `@@package@@` (the name as a Python package,
    `weather_tools`), `@@ticket@@` and `@@description@@` (at most 70 characters) in file names and contents, and fails
    if any token is left. It refuses a name that is a Python keyword or would shadow a module the server uses.
-4. **Run the template's verify command** in the destination, in a virtual environment of its own
-   (`python -m venv .venv`, then activate it), before the first commit:
+4. **Run the template's verify command** in the destination, in a virtual environment of its own, before the first
+   commit. Create it with `python -m venv .venv`, then activate it: `. .venv/bin/activate` on macOS or Linux,
+   `. .venv/Scripts/activate` in Git Bash, `.venv\Scripts\Activate.ps1` in PowerShell (if it refuses the script, first run
+   `Set-ExecutionPolicy -Scope Process RemoteSigned`). Then:
 
    ```sh
    python -m pip install -e ".[dev]"
    python -m ruff check . && python -m ruff format --check . && python -m pyright && python -m pytest -q
+   ```
+
+   In Windows PowerShell, which has no `&&`:
+
+   ```powershell
+   python -m pip install -e ".[dev]"
+   python -m ruff check .; if ($?) { python -m ruff format --check . }; if ($?) { python -m pyright }; if ($?) { python -m pytest -q }
    ```
 
    All four must pass. If one fails, fix the scaffold, not the check, and report it: the template is meant to pass
