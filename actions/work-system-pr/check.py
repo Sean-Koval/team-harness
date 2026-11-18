@@ -523,7 +523,7 @@ class GateContext:
     credentials. `fields` are the org's approved_field ids, asked for on every read."""
     tickets: object | None = None
     fields: tuple[str, ...] = ()
-    label: str = "Jira"
+    label: str = ""
     work_key: str | None = None
     pr_url: str = ""
     allow_unverified: bool = False
@@ -568,7 +568,7 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
     warnings: list[str] = []
     if tickets is None and fetch is not None:
         tickets = tracker.JiraAnswers(fetch, remote_links)
-    label = tracker_label or getattr(tickets, "label", None) or "Jira"
+    label = tracker_label or getattr(tickets, "label", None) or tracker.PROVIDERS[tracker.DEFAULT_PROVIDER].label
     reader = tracker.gate_reader(tickets) if tickets is not None else None
     ids = tuple(sorted({g["approved_field"]["field"] for g in org.get("gates") or [] if g.get("approved_field")}))
     ctx = GateContext(reader, ids, label, work_key, str(pr.get("html_url") or ""), allow_unverified, _repo_url(pr),
@@ -1091,6 +1091,8 @@ def main() -> int:
             res.errors.append(f"org-file {org_file}: {e}; the merge gates were not checked")
         else:
             res.warnings += owarns
+            if provider_error and not work_key:  # a typo can't turn the gates off either: fail, as rule 6 does
+                res.errors.append(f"{provider_error}; the merge gates' tickets were not read")
             reviews, member = _github_reviews(repo, pr["number"], _out("REVIEW_TOKEN") or _out("GITHUB_TOKEN"), api)
             gates, gerrs, gwarns = check_gates(pr, files, org, key_pattern=_out("KEY_PATTERN") or DEFAULT_KEY,
                                                tickets=reader, tracker_label=tracker.label_for(_out),

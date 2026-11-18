@@ -504,6 +504,26 @@ def test_a_tracker_that_is_not_jira_reads_the_approved_field(org2):
     assert any("Desk returned no customfield_10050 field for ESSPROJ-2" in e for e in errs), errs
 
 
+def test_a_mistyped_provider_fails_the_gates_of_a_pr_without_a_ticket(tmp_path, fake_api):
+    """An exempt PR names no work ticket, so rule 6 never asks for the reader; the gates still need it (KAN-538)."""
+    fake_api.files(["README.md"])
+    fake_api.base_org(ORG_YAML)
+    r, _ = run_main(tmp_path, "Docs: none needed - typo\nSRE: SREPROJ-7\n", api=fake_api, jira=True,
+                    labels=["no-ticket"], title="Fix a typo",
+                    extra_env={"INPUT_TRACKER_PROVIDER": "jira-clod", "INPUT_ALLOW_UNVERIFIED": "true"})
+    assert r.returncode == 1, r.stdout
+    assert "::error::tracker-provider 'jira-clod' is not one of: jira-cloud; the merge gates' tickets were not read" \
+        in r.stdout
+
+
+def test_a_gate_ticket_with_no_project_or_key_is_in_no_project(org):
+    issue = jira_issue("SREPROJ-7", "SREPROJ", "Approved")
+    issue.pop("key")
+    issue["fields"].pop("project")
+    _, errs, _ = jira_gates(gated(), org, {"SREPROJ-7": issue})
+    assert any("is in an unknown project, not SREPROJ" in e for e in errs), errs
+
+
 def test_check_py_reads_no_tracker_for_rule_7():
     """The approval gates name no tracker's fields and make no tracker call: tracker.py's provider does (KAN-538)."""
     src = (Path(wsp.__file__)).read_text()
@@ -816,11 +836,11 @@ def fake_api():
 
 
 def run_main(tmp_path, body, org_text=ORG_YAML, org_file=ORG_PATH, api=None, jira=False, extra_env=None,
-             labels=()):
+             labels=(), title="KAN-315: add the PR gate"):
     (tmp_path / "orgs/test-co").mkdir(parents=True, exist_ok=True)
     (tmp_path / "orgs/test-co/org.yaml").write_text(org_text)
     ev = tmp_path / "event.json"
-    ev.write_text(json.dumps({"pull_request": pr(body=body, labels=labels)}))
+    ev.write_text(json.dumps({"pull_request": pr(title=title, body=body, labels=labels)}))
     summary = tmp_path / "summary.md"
     summary.write_text("")
     url = api.url if api else "http://127.0.0.1:9"

@@ -196,7 +196,7 @@ def jira_gate_issue(issue: object, key: str, fields: Iterable[str]) -> dict[str,
             if k:
                 links.append(str(k))
     return {"key": key, "links": links, "text": _jira_text(f.get("description")),
-            "project": str(_dict(f.get("project")).get("key") or str(issue.get("key") or key).rsplit("-", 1)[0]),
+            "project": str(_dict(f.get("project")).get("key") or str(issue.get("key") or "").rsplit("-", 1)[0]),
             "issue_type": str(_dict(f.get("issuetype")).get("name") or ""),
             "status": str(_dict(f.get("status")).get("name") or ""),
             "field_values": {name: _jira_values(f[name]) for name in fields if name in f}}
@@ -212,6 +212,7 @@ class JiraAnswers:
         self._fetch, self._remote = fetch, remote_links
 
     def gate_issue(self, key: str, fields: Iterable[str] = ()) -> dict[str, Any]:
+        fields = list(fields)
         try:
             return jira_gate_issue(self._fetch(key), key, fields)
         except urllib.error.HTTPError as e:
@@ -260,6 +261,7 @@ class JiraCloud:
 
     def gate_issue(self, key: str, fields: Iterable[str] = ()) -> dict[str, Any]:
         """A gate ticket: project, issue type, status, links, description and the org's approved_field ids."""
+        fields = list(fields)
         return self._gate_answers(fields).gate_issue(key, fields)
 
     def gate_links(self, key: str) -> str:
