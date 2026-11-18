@@ -370,6 +370,9 @@ def _gate_v2(g: dict, where: str, types: dict[str, dict], reviewers: dict[str, d
                 or not (approved or review):
             raise OrgError(f"{where} approved_on: work is per PR, links only pr, and needs approved_statuses, "
                            "approved_field or github_review")
+        if approved and not (isinstance(links, list) and "pr" in links):
+            raise OrgError(f"{where} approved_on: work gate approved in Jira needs links: [pr], so the approval is for "
+                           "this PR's work ticket")
     elif scope == "repo" and isinstance(links, list) and (set(links) & {"pr", "work"} or "repo" not in links):
         raise OrgError(f"{where} scope: repo shares one ticket across the repository's PRs, so it links repo only")
 
@@ -469,12 +472,12 @@ def _applies(when: object, labels: set[str], files: list[dict] | None,
             hits += [f"work ticket label {lab}" for lab in sorted(set(work_labels)) if lab.lower() in want]
     if "issue_types" in when:
         if work_issue_type is None:
-            unknown.append("issue types (the work ticket's issue type could not be read, so the gate applies)")
+            unknown.append("issue types (the work ticket's issue type is unknown: unread, or no work ticket; so the gate applies)")
         elif work_issue_type.lower() in {t.lower() for t in when["issue_types"]}:
             hits.append(f"work ticket type {work_issue_type}")
     if "projects" in when:
         if work_project is None:
-            unknown.append("projects (the work ticket's project is unknown, so the gate applies)")
+            unknown.append("projects (the work ticket's project is unknown: the PR names no work ticket; so the gate applies)")
         elif work_project.upper() in {p.upper() for p in when["projects"]}:
             hits.append(f"work ticket project {work_project}")
     if "paths" in when:
@@ -564,7 +567,7 @@ def check_gates(pr: dict, files: list[dict] | None, org: dict, *, key_pattern: s
     reviewers = org.get("reviewers") or {}
     stages = {st["name"]: st for st in org.get("stages") or []}
     base_ref = (pr.get("base") or {}).get("ref") or None
-    work_project = work_key.rsplit("-", 1)[0] if work_key else ""
+    work_project = work_key.rsplit("-", 1)[0] if work_key else None  # no work ticket: project gates apply
     labels = {str(lab.get("name") or "") for lab in pr.get("labels") or []}
     body = _no_comments(pr.get("body") or "")
     placeholder = bool(org.get("placeholder"))
@@ -693,16 +696,25 @@ def _check_review(gate: Gate, team: str, ctx: GateContext, warnings: list[str]) 
             latest[login] = r
     approved = [login for login, r in latest.items() if r.get("state") == "APPROVED" and login != ctx.author]
     current = [login for login in approved if ctx.head_sha and latest[login].get("commit_id") == ctx.head_sha]
-    outsiders = []
-    for login in current:
+    objecting = [login for login, r in latest.items() if r.get("state") == "CHANGES_REQUESTED" and login != ctx.author]
+    members: dict[str, bool] = {}
+    for login in current + objecting:
         try:
-            if ctx.team_member(team, login):
-                return
+            members[login] = bool(ctx.team_member(team, login))
         except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
             _unverified(gate, f"whether {login} is on @{team} could not be read ({e}); the review token needs to "
                         "read the organisation's teams", {}, ctx, errors=gate.errors, warnings=warnings, what=what)
             return
-        outsiders.append(login)
+    blocking = [login for login in objecting if members[login]]
+    if blocking:  # as on GitHub: a member's request for changes holds until they approve or it is dismissed
+        if gate.state in ("linked", "checked"):
+            gate.state = "not approved"
+        gate.errors.append(f"gate {gate.id!r}: {', '.join(blocking)} of @{team} requested changes; the PR needs "
+                           "their approval (or the review dismissed), then re-run the check")
+        return
+    if any(members[login] for login in current):
+        return
+    outsiders = [login for login in current if not members[login]]
     if gate.state in ("linked", "checked"):
         gate.state = "not approved"
     why = []
@@ -1046,7 +1058,7 @@ def main() -> int:
     # the work ticket: the title's key, also on an exempt PR (its labels can apply a gate)
     work_key = res.key or _title_key(pr, _out("KEY_PATTERN") or DEFAULT_KEY)
     work_labels: list[str] | None = None if work_key else []  # None: unknown, so label gates apply
-    work_issue_type: str | None = None if work_key else ""   # None: unknown, so issue-type gates apply
+    work_issue_type: str | None = None  # None: unknown (or no work ticket), so issue-type gates apply
     reader, skipped = None, ""
     if work_key:
         try:
@@ -1080,7 +1092,7 @@ def main() -> int:
         res.warnings.append(f"{skipped}; rule 6 skipped: the ticket's status, execution label and blocking decisions "
                             "were not checked")
     if reader is None and allow_unverified:
-        work_labels, work_issue_type = [], ""
+        work_labels = []  # issue-type gates still apply: an unread type is unknown, not "no match"
 
     if not (res.exempt or "").startswith("author"):
         base_sha = (pr.get("base") or {}).get("sha") or ""

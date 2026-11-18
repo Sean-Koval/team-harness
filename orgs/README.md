@@ -24,7 +24,8 @@ Set `schema: team-harness.org/v2` to use these. A v1 overlay keeps working, and 
 - `stages`: named steps in order. A stage with `branches` is a merge into one of them; a stage without is a later
   step, such as a release, that the PR check doesn't hold the merge for.
 - On a gate, `approved_on: work` means the approvers approve the work ticket itself, so nothing is filed. Write
-  `approved_on`, never `on`: YAML reads a bare `on` as true. The default is `ticket`.
+  `approved_on`, never `on`: YAML reads a bare `on` as true. The default is `ticket`. Approved by a Jira status or
+  field, it needs `links: [pr]`, so the approval is for this PR's work ticket.
 - `approvers` names a reviewer; `github_review: true` also needs an approving review of the PR's latest commit
   from a member of that reviewer's GitHub team.
 - `scope: repo` makes a gate one ticket per repository, reused across PRs. `stage` ties a gate to a stage.

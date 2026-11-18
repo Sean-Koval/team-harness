@@ -181,7 +181,7 @@ def _unknown(where: str, d: dict, allowed: set[str], problems: list[str], v2_onl
 
 
 def _str_list(v: object) -> bool:
-    return isinstance(v, list) and bool(v) and all(isinstance(x, str) and x for x in v)
+    return isinstance(v, list) and bool(v) and all(isinstance(x, str) and x.strip() for x in v)
 
 
 def _validate_reviewers(org: dict, where: str, problems: list[str]) -> dict[str, dict]:
@@ -279,6 +279,9 @@ def _validate_gate_v2(g: dict, w: str, types: dict[str, dict], reviewers: dict[s
             problems.append(f"{w}: an approved_on: work gate is an approval; needs_approval: false has nothing to record")
         elif not approved and review is not True:
             problems.append(f"{w}: an approved_on: work gate needs approved_statuses, approved_field or github_review")
+        elif approved and not (isinstance(links, list) and "pr" in links):
+            problems.append(f"{w}: an approved_on: work gate approved in Jira needs links: [pr], so the approval is "
+                            "for this PR's work ticket")
     elif scope == "repo" and isinstance(links, list):
         if set(links) & {"pr", "work"}:
             problems.append(f"{w}: a scope: repo ticket is shared by the repository's PRs, so it links repo, not "

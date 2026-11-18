@@ -35,7 +35,7 @@ gates:                       # what must hold before a PR merges, in order
     stage: dev               # a stages name (default: every stage)
     when: always             # always | {paths | labels | issue_types | projects: [...]}  (any match applies it)
     links: [pr]              # the work ticket links the PR
-    approved_statuses: [SRE Approved, Done]   # the work ticket's status once an SRE approved it
+    approved_statuses: [SRE Approved]   # the work ticket's status once an SRE approved it
     github_review: true      # and a member of the sre github_team approves the PR on GitHub
   - id: infosec
     ticket: infosec-review   # a ticket_types id with role: approval

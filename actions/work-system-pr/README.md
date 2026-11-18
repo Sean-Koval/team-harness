@@ -147,13 +147,15 @@ without `approved_statuses` or `links` only warn when Jira can't be read (state 
 
 - A gate with a `stage` applies when the PR's base branch matches one of the stage's `branches`. A stage without
   branches is a later step, so the check doesn't hold the merge for it. An unknown base branch applies the gate.
-- `when: issue_types` and `when: projects` match the work ticket. When its issue type can't be read, the gate applies.
+- `when: issue_types` and `when: projects` match the work ticket. When its type can't be read, or the PR names no
+  work ticket (an exempt PR), the gate applies.
 - A gate with `approved_on: work` checks the work ticket itself, with the gate's statuses, field and `pr` link. It
   needs no body line, and the work ticket must be in a work ticket type's project.
 - `approved_field` passes only when the Jira field holds one of its values. A missing field fails and names it.
 - `needs_approval: false` gates still need their line; the summary says nothing waits on them.
 - `github_review: true` needs an approving review of the PR's head commit from an active member of the approvers'
-  GitHub team. The reviewer's latest approve, request-changes or dismissal counts, and the PR's author never does.
+  GitHub team. Each reviewer's latest approve, request-changes or dismissal counts, and the PR's author never does.
+  A team member's request for changes holds the gate until they approve or the review is dismissed.
   It is unverified, and fails, when the reviews or the team can't be read.
 
 For `github_review`, pass `review-token`: a token that can read the org's team membership. Also run the check on
