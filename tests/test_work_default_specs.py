@@ -27,7 +27,8 @@ def _attrs(d):
 
 
 def trace(steps, job="job-1", harness="work-default"):
-    """steps: ("turn",) | ("shell", input, ops) | ("edit", path) | ("mcp", server, tool, input) | ("pr.open",), one
+    """steps: ("turn",) | ("shell", input, ops) | ("edit", path[, repo path]) | ("mcp", server, tool, input) |
+    ("pr.open",), one
     second apart.
     Without a job, an export of session ses-1 (source session)."""
     tid = "ab" * 16
@@ -51,7 +52,8 @@ def trace(steps, job="job-1", harness="work-default"):
         else:
             seq += 1
             a = ({"hangar.tool.kind": "shell", "hangar.tool.input": rest[0], "hangar.shell.ops": rest[1] or None}
-                 if kind == "shell" else {"hangar.tool.kind": "edit", "hangar.tool.input": rest[0]}
+                 if kind == "shell" else {"hangar.tool.kind": "edit", "hangar.tool.input": rest[0],
+                                          "hangar.file.repo_path": rest[1] if len(rest) > 1 else None}
                  if kind == "edit" else {"hangar.tool.kind": "mcp", "hangar.mcp.server": rest[0],
                                          "hangar.mcp.tool": rest[1], "hangar.tool.input": rest[2]})
             spans.append({"traceId": tid, "spanId": f"tool{n:04d}", "parentSpanId": turns[-1]["spanId"],
@@ -158,3 +160,18 @@ def test_a_local_session_files_the_approvals_after_its_own_pr():
 def test_other_harnesses_are_not_judged():
     assert results("work-never-merges-in-shell", trace([("shell", "gh pr merge 12", [])], harness="suite-default")) \
         == {"not_applicable"}
+
+
+READ = ("mcp", "atlassian", "getJiraIssue", '{"issueIdOrKey": "SVC-1"}')
+IN_REPO = ("edit", "/home/me/svc/src/app.py", "src/app.py")
+OUTSIDE = ("edit", "/tmp/pr.md")  # no repo path: outside the checkout
+
+
+def test_a_laptop_session_reads_the_ticket_before_editing():
+    """KAN-353: a session `hangar trace import` read, judged across its turns, not per turn."""
+    spec = "work-reads-the-ticket-before-editing-in-a-session"
+    assert results(spec, trace([READ, ("turn",), IN_REPO], job=None)) == {"pass"}
+    assert results(spec, trace([IN_REPO, READ], job=None)) == {"fail"}
+    assert results(spec, trace([OUTSIDE, ("turn",), ("shell", "pytest -q", ["test"])], job=None)) == {"not_applicable"}
+    assert results(spec, trace([READ, IN_REPO])) == {"not_applicable"}  # a job's turns are judged per turn
+    assert results(spec, trace([IN_REPO], job=None, harness="claude-code")) == {"not_applicable"}
