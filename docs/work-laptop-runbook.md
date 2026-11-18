@@ -103,6 +103,18 @@ the Jira work. It does not stand in for a lifecycle credential, and a lifecycle 
 Then add the repo's own test and check commands to the allowlist in `.claude/settings.json`. The test run lost a whole
 pass without it.
 
+Then run the doctor from the repository you work in. It checks the rest of the laptop and prints one line per check,
+`ok`, `fix` or `skip`, with the command that fixes each one (KAN-372):
+
+```sh
+python3 ~/src/team-harness/scripts/doctor.py ~/src/team-harness/harnesses/work-default --github-host <company host>
+python3 ~/src/team-harness/scripts/doctor.py ~/src/team-harness/harnesses/work-default --live   # + one model call, tools/list
+```
+
+It reads the test and check commands from the repository's `ai-dlc.toml`, or from `--test-cmd`. It writes nothing,
+and it prints no credential. `org` stays `fix` until your company's overlay is applied. `--json` is for hangar and
+flightdeck.
+
 **Step 3. Capture tools (hangar import and flightdeck).**
 
 ```sh
@@ -189,7 +201,8 @@ Never send work content to a personal tracker or knowledge base.
 ## Doctor and onboarding
 
 These exist today: `bootstrap.sh --plan`, `ai-dlc doctor`, `ai-dlc next`, `install_local.py --check`,
-`work-copilot doctor`, and `hangar doctor` (server only). None checks the whole laptop. The plan is one laptop doctor,
+team-harness `scripts/doctor.py` (the harness side, KAN-372), `work-copilot doctor`, and `hangar doctor` (server
+only). None checks the whole laptop. The plan is one laptop doctor,
 in ai-dlc, that calls each tool's own check and prints one table of ok, warning and fix command.
 
 | Check | Ticket |
