@@ -126,3 +126,90 @@ def test_needs_owner_review_prs_stay_drafts_and_unmerged():
 def test_ticket_template_is_the_one_the_skill_ships():
     assert (ROOT / "templates/ticket.md").read_bytes() == \
         (ROOT / "shared/work-system/skills/jira-ticket/ticket-template.md").read_bytes()
+
+
+# --- KAN-353: the behavior specs' approval regex is the org's approval summaries
+
+
+def _org(*summaries, role="approval"):
+    return {"ticket_types": [{"id": f"t{i}", "role": role, "summary": s} for i, s in enumerate(summaries)]}
+
+
+def test_approval_regex_is_each_summarys_fixed_text():
+    import re
+    rx = sync_shared.approval_regex(_org("SRE approval: {pr_title}", "Infosec review: {repo} {work_key}"))
+    assert rx == r"(?i)(\bSRE approval:|\bInfosec review:)"
+    assert re.search(rx, '{"summary": "sre APPROVAL: SVC-1 add the queue"}')
+    assert not re.search(rx, '{"summary": "Infosec reviewer onboarding"}')
+
+
+def test_approval_regex_escapes_and_skips_what_has_no_fixed_text():
+    import re
+    rx = sync_shared.approval_regex(_org("[CAB] change (P1) {pr_title}", "{work_key} review", "CAB: {x}",
+                                         "CAB: {y}"))
+    assert rx == r"(?i)(\[CAB\] change \(P1\)|\bCAB:)"
+    assert re.search(rx, "[cab] change (p1) ship it") and not re.search(rx, "CAB change P1")
+    assert sync_shared.approval_regex(_org("{work_key} review")) == sync_shared.NEVER
+    assert sync_shared.approval_regex(_org("SRE approval: {x}", role="routine")) == sync_shared.NEVER
+    assert not re.search(sync_shared.NEVER, "a") and not re.search(sync_shared.NEVER, "")
+
+
+def test_render_spec_sets_only_the_marked_lines():
+    mark = sync_shared.SPEC_MARK
+    text = (f'a:\n    where: {{input: {{regex: "old \\" quoted"}}}}  {mark}\n'
+            f'    where: {{input: {{regex: "kept"}}}}\nb:\n  where: {{input: {{regex: "x"}}}}  {mark}\n')
+    out, n = sync_shared.render_spec(text, r"(?i)(\bSRE approval:)")
+    assert n == 2
+    assert out.splitlines() == [
+        "a:", f'    where: {{input: {{regex: "(?i)(\\\\bSRE approval:)"}}}}  {mark}',
+        '    where: {input: {regex: "kept"}}', "b:", f'  where: {{input: {{regex: "(?i)(\\\\bSRE approval:)"}}}}  {mark}']
+    import yaml
+    assert yaml.safe_load(out.splitlines()[1].split("  #")[0].strip())["where"]["input"]["regex"] == \
+        r"(?i)(\bSRE approval:)"
+
+
+def test_a_changed_org_restales_the_work_spec(tmp_path):
+    root = copy_repo(tmp_path)
+    shutil.copytree(ROOT / "flightdeck" / "specs", root / "flightdeck" / "specs")
+    assert sync_shared.plan(root) == ([], [])
+    org = root / "orgs/example-co/org.yaml"
+    org.write_text(org.read_text(encoding="utf-8").replace("SRE approval: {pr_title}", "Change request: {pr_title}"),
+                   encoding="utf-8", newline="\n")
+    stale, problems = sync_shared.plan(root)
+    assert problems == []
+    spec = root / "flightdeck/specs/work-default.yaml"
+    entry = next(s for s in stale if s[1] == spec)
+    rendered = entry[2][""].decode("utf-8")
+    assert rendered.count(r'"(?i)(\\bChange request:|\\bInfosec review:)"') == 2 and "SRE approval:" not in rendered
+    sync_shared.write([entry], root)
+    assert spec.read_text(encoding="utf-8") == rendered and not [s for s in sync_shared.plan(root)[0] if s[1] == spec]
+
+
+def test_a_spec_without_the_mark_is_a_warning(tmp_path):
+    root = copy_repo(tmp_path)
+    (root / "flightdeck/specs").mkdir(parents=True)
+    (root / "flightdeck/specs/work-default.yaml").write_text("id: x\n", encoding="utf-8")
+    warnings: list[str] = []
+    stale, problems = sync_shared.plan(root, warnings)
+    assert stale == [] and problems == [] and any("has no line marked" in w for w in warnings)
+
+
+def test_no_word_boundary_before_a_non_ascii_letter():
+    assert sync_shared.approval_regex(_org("Überprüfung: {x}", "SRE approval: {y}")) == \
+        r"(?i)(Überprüfung:|\bSRE approval:)"
+
+
+def test_check_specs_ignores_the_generated_copies(monkeypatch, capsys):
+    """CI checks the specs before it builds the copies a PR doesn't commit."""
+    spec = sync_shared.ROOT / "flightdeck/specs/work-default.yaml"
+    copy = sync_shared.ROOT / "harnesses/work-default/skills/decision-ticket"
+    org = sync_shared.ROOT / "orgs/example-co/org.yaml"
+    shared = sync_shared.ROOT / "shared/work-system/skills/decision-ticket"
+
+    def plan(warnings=None):
+        return [(shared, copy, {"": b""})], []
+    monkeypatch.setattr(sync_shared, "plan", plan)
+    assert sync_shared.main(["--check", "--specs"]) == 0 and sync_shared.main(["--check"]) == 1
+    monkeypatch.setattr(sync_shared, "plan", lambda warnings=None: ([(org, spec, {"": b""})], []))
+    assert sync_shared.main(["--check", "--specs"]) == 1
+    assert "(edit orgs/example-co/org.yaml, then python scripts/sync_shared.py)" in capsys.readouterr().err

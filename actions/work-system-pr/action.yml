@@ -51,8 +51,9 @@ inputs:
     default: ""
   allow-unverified:
     description: >-
-      "true" lets a gate with approved_statuses pass, with a warning, when its ticket can't be read (no Jira
-      credentials, as on fork and Dependabot PRs, or Jira down). Default "false": such a gate fails.
+      "true" lets a gate with approved_statuses or links pass, with a warning, when its ticket can't be read (no Jira
+      credentials, as on fork and Dependabot PRs, or Jira down), and lets the work ticket's rules be skipped when the
+      tracker's inputs are set but the tracker can't be read. Default "false": both fail.
     default: "false"
 runs:
   using: composite

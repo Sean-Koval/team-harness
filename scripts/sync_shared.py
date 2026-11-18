@@ -15,7 +15,9 @@ file and each harness gets concrete text. For each target harness this:
 - deletes any `harnesses/<h>/skills/<name>/` that it does not produce and that the harness does not declare as its
   own (`own_skills:` in targets.yaml), so an org skill that is removed or renamed does not linger and get re-pinned;
 - checks that the harness's `native/claude-code/settings.json` registers the hook on PreToolUse for Bash and MCP
-  tools, and each session hook on its event (it never edits settings.json: that file is the harness's own).
+  tools, and each session hook on its event (it never edits settings.json: that file is the harness's own);
+- with an org, renders the regex that finds an approval ticket into `flightdeck/specs/<h>.yaml`, on each line that
+  ends with SPEC_MARK, from the org's approval summaries (KAN-353), so the behavior specs match the org's wording.
 
 A harness may also name a company's org overlay (`org: orgs/<org>` in targets.yaml). Its `org.yaml`
 (`team-harness.org/v1`) is validated; its `params` may set only `tracker` and the `kb_*` keys, and win over the
@@ -71,6 +73,13 @@ ORG_PARAMS = frozenset({"tracker"})
 ORG_PARAM_PREFIXES = ("kb_",)
 PR_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]*$")
 
+
+# A behavior spec's line whose regex is the org's approval summaries' (KAN-353): `where: {input: {regex: "..."}}`
+# followed by this comment. Only the quoted regex is rendered; the rest of the spec file is the harness's own.
+SPEC_MARK = "# the org's approval summaries: scripts/sync_shared.py"
+SPEC_LINE = re.compile(r'^(?P<head>\s*where: \{input: \{regex: )"(?:[^"\\]|\\.)*"(?P<tail>\}\}\s*'
+                       + re.escape(SPEC_MARK) + r')$', re.MULTILINE)
+NEVER = "a^"  # a regex no input matches: an org without a fixed summary prefix files nothing the specs can see
 
 FRAGMENT_BEGIN = "<!-- BEGIN shared/work-system/{name}: rendered by scripts/sync_shared.py; edit it there -->"
 FRAGMENT_END = "<!-- END shared/work-system/{name} -->"
@@ -304,6 +313,33 @@ def _when(when: object) -> str:
     return " or ".join(parts)
 
 
+def _literal(s: str) -> str:
+    """`s` as a regex that matches it literally, in the subset Python `re` and RE2 (DuckDB) share."""
+    return "".join("\\" + c if c in "\\.^$|?*+()[]{}" else c for c in s)
+
+
+def approval_regex(org: dict) -> str:
+    """The regex a behavior spec matches an approval ticket's create call on: each approval ticket type's summary up
+    to its first `{field}`, case-insensitive. A summary that starts with a field has no fixed text to match and is
+    left out; with none left, the regex matches nothing."""
+    prefixes = []
+    for t in org["ticket_types"]:
+        fixed = (t.get("summary") or "").split("{", 1)[0].strip() if t["role"] == "approval" else ""
+        if fixed and fixed not in prefixes:
+            prefixes.append(fixed)
+    if not prefixes:
+        return NEVER
+    # `\b` only before an ASCII word character: Python `re` and RE2 disagree on where a word starts in other scripts
+    return "(?i)(" + "|".join(("\\b" if p[0].isascii() and p[0].isalnum() else "") + _literal(p)
+                              for p in prefixes) + ")"
+
+
+def render_spec(text: str, regex: str) -> tuple[str, int]:
+    """(the spec file with every SPEC_MARK line's regex set to `regex`, how many lines it has)."""
+    quoted = json.dumps(regex)  # a JSON string is a YAML double-quoted scalar
+    return SPEC_LINE.subn(lambda m: m["head"] + quoted + m["tail"], text)
+
+
 def org_markdown(org: dict, org_path: str) -> dict[str, str]:
     """The generated {{org_*}} placeholders for a valid org."""
     types = {t["id"]: t for t in org["ticket_types"]}
@@ -330,7 +366,7 @@ def org_markdown(org: dict, org_path: str) -> dict[str, str]:
         status = (f"The gates below are the `{org['name']}` org overlay's (`{org_path}/org.yaml`). Run them as "
                   f"written.")
     return {"org_status": status, "org_ticket_types": "\n".join(rows), "org_gates": "\n".join(gates),
-            "org_review_request": review}
+            "org_review_request": review, "org_approval_regex": approval_regex(org)}
 
 
 def _org(root: Path, h: str, entry: dict, profile: dict[str, str], problems: list[str],
@@ -517,6 +553,14 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
             want_env = render(src.read_bytes(), params, f"{h}: {t['env_example']}", problems)
             if not dst.is_file() or dst.read_bytes() != want_env:
                 stale.append((src, dst, {"": want_env}))
+        spec = root / "flightdeck" / "specs" / f"{h}.yaml"
+        if org_dir is not None and spec.is_file():
+            current = spec.read_text(encoding="utf-8")
+            want_spec, marked = render_spec(current, org_params["org_approval_regex"])
+            if not marked:
+                warnings.append(f"{h}: flightdeck/specs/{h}.yaml has no line marked {SPEC_MARK!r}")
+            elif want_spec != current:
+                stale.append((org_dir / "org.yaml", spec, {"": want_spec.encode("utf-8")}))
         settings = hd / "native" / "claude-code" / "settings.json"
         try:
             registered = json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})
@@ -560,9 +604,14 @@ def write(stale: list[tuple[Path, Path, dict[str, bytes] | None]], root: Path = 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="exit 1 when a copy differs; write nothing")
+    ap.add_argument("--specs", action="store_true",
+                    help="with --check, check only the behavior specs, the one rendered source a PR commits (KAN-353)")
     args = ap.parse_args(argv)
     warnings: list[str] = []
     stale, problems = plan(warnings=warnings)
+    if args.specs:
+        specs = ROOT / "flightdeck" / "specs"
+        stale = [s for s in stale if s[1].parent == specs]
     for w in warnings:
         print(f"warning: {w}", file=sys.stderr)
     if args.check:
@@ -571,8 +620,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {dst.relative_to(ROOT)} is not produced by the shared layer, the org or own_skills "
                       "(a removed or renamed skill?); python scripts/sync_shared.py deletes it", file=sys.stderr)
                 continue
+            where = src.relative_to(ROOT).as_posix() if src.name == "org.yaml" else "shared/work-system/"
             print(f"error: {dst.relative_to(ROOT)} differs from the rendering of {src.relative_to(ROOT)} "
-                  "(edit shared/work-system/, then python scripts/sync_shared.py)", file=sys.stderr)
+                  f"(edit {where}, then python scripts/sync_shared.py)", file=sys.stderr)
     elif not problems:
         write(stale)
     for p in problems:
