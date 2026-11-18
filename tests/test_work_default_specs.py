@@ -77,6 +77,8 @@ INFOSEC = ("mcp", "jira", "createJiraIssue", '{"projectKey": "SEC", "summary": "
 AI_DLC_SRE = ("mcp", "ai-dlc", "tracker_create", '{"title": "SRE approval: SVC-1 add the queue", "body": "x"}')
 GH_PR = ("shell", "gh pr create --draft --title 'SVC-1: add the queue' --body-file pr.md", ["pr.open"])
 
+MERGE_BY_API = "work-never-merges-in-shell-by-api"
+
 CASES = [
     ("work-nothing-filed-to-placeholders", [SRE], "pass"),
     ("work-nothing-filed-to-placeholders",
@@ -140,6 +142,66 @@ CASES = [
     ("ws-never-sets-lane-agent",
      [("mcp", "ai-dlc", "tracker_comment", '{"reference": "SVC-1", "body": "not exec:agent yet"}')], "pass"),
     ("ws-never-sets-lane-agent", [("mcp", "jira", "createJiraIssue", '{"labels": ["exec:agent"]}')], "fail"),
+    # KAN-539: the never-merge routes the hook refuses beyond `gh pr merge`, `gh pr review --approve` and the gh api
+    # merge, approve and auto-merge calls work-never-merges-in-shell counts
+    (MERGE_BY_API, [("shell", "gh api -X POST repos/o/svc/merges -f base=main -f head=SVC-1-queue", [])], "fail"),
+    (MERGE_BY_API, [("shell", "gh api -X PUT repos/o/svc/pulls/12/reviews/34/dismissals -f message=stale", [])],
+     "fail"),
+    (MERGE_BY_API,
+     [("shell", "gh api graphql -f query='mutation { dismissPullRequestReview(input: {pullRequestReviewId: \"R\", "
+                "message: \"x\"}) { clientMutationId } }'", [])], "fail"),
+    (MERGE_BY_API, [("shell", "gh api graphql -f query='mutation { approvePullRequest(input: {}) { clientMutationId } }'",
+                     [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -s -X POST https://api.github.com/graphql -H 'Authorization: bearer x' "
+                "-d '{\"query\": \"mutation { mergePullRequest(input: {pullRequestId: \\\"P\\\"}) { clientMutationId } }\"}'",
+       [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "wget -qO- --post-data '{\"query\": \"mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }\"}' "
+                "https://api.github.com/graphql", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/graphql -d '{\"query\": \"mutation { addPullRequestReview(input: "
+                "{pullRequestId: \\\"P\\\", event: APPROVE}) { clientMutationId } }\"}'", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews -d '{\"event\": \"APPROVE\"}'", [])],
+     "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X PUT https://api.github.com/repos/o/svc/pulls/12/reviews/34/dismissals -d '{\"message\": \"x\"}'",
+       [])], "fail"),
+    (MERGE_BY_API, [("shell", "curl -X POST https://api.github.com/repos/o/svc/merges -d '{\"base\": \"main\"}'", [])],
+     "fail"),
+    (MERGE_BY_API,
+     [("shell", "Invoke-RestMethod -Method Post -Uri https://api.github.com/graphql -Body '{\"query\": "
+                "\"mutation { mergePullRequest(input: {}) { clientMutationId } }\"}'", [])], "fail"),
+    # a call split over lines or fed by a heredoc, and a lower-case event, count too
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/graphql \\\n  -H 'Authorization: bearer x' \\\n"
+                "  -d '{\"query\": \"mutation { mergePullRequest(input: {}) { clientMutationId } }\"}'", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews --data-binary @- <<'EOF'\n"
+                "{\"event\": \"APPROVE\"}\nEOF", [])], "fail"),
+    (MERGE_BY_API,
+     [("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews -d '{\"event\": \"approve\"}'", [])],
+     "fail"),
+    # reads, comments and a review that only comments still pass, even when they say APPROVE or name a merges page
+    (MERGE_BY_API, [("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12 && echo 'waiting for SRE to APPROVE'",
+                     []),
+                    ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12/reviews | grep -c APPROVE", []),
+                    ("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews "
+                              "-d '{\"event\": \"COMMENT\", \"body\": \"SRE must APPROVE in OPS-1\"}'", []),
+                    ("shell", "curl -s https://docs.example.com/guide/merges", []),
+                    ("shell", "gh api graphql -f query='{ repository(owner: \"o\", name: \"svc\") { pullRequest(number: 12) "
+                              "{ reviews(states: APPROVED, first: 5) { nodes { state } } } } }'", [])],
+     "pass"),
+    # reads, comments and a review that only comments still pass
+    (MERGE_BY_API, [("shell", "gh pr view 12 --json state,reviews", []),
+                    ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12", []),
+                    ("shell", "curl -s https://api.github.com/repos/o/svc/pulls/12/reviews", []),
+                    ("shell", "gh api repos/o/svc/pulls/12/reviews", []),
+                    ("shell", "gh pr review 12 --comment -b 'see the SRE ticket'", []),
+                    ("shell", "curl -X POST https://api.github.com/repos/o/svc/pulls/12/reviews "
+                              "-d '{\"event\": \"COMMENT\", \"body\": \"approved by SRE in OPS-1?\"}'", [])],
+     "pass"),
 ]
 
 

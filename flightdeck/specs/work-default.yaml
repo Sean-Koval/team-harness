@@ -115,6 +115,24 @@ assert:
       input:
         regex: "\\bgh(\\.exe)?(\\s+(-R|--repo)(=|\\s+)\\S+)*\\s+pr(\\s+(-R|--repo)(=|\\s+)\\S+)*\\s+(merge\\b|review\\b.*\\s(--approve|-a)\\b)|\\bgh(\\.exe)?\\s+api\\b.*(/merge\\b|APPROVE|mergePullRequest|enablePullRequestAutoMerge)|\\b(curl|wget)\\b.*/pulls/\\d+/merge\\b"
 ---
+id: work-never-merges-in-shell-by-api
+scope: turn
+applies_when: {}
+assert:
+  # the other never-merge routes the hook refuses (KAN-539), beside work-never-merges-in-shell: `gh api` on the REST
+  # `/merges` endpoint, a review dismissal (`.../reviews/N/dismissals`, dismissPullRequestReview) or approvePullRequest,
+  # and an HTTP client (curl, wget, xh, Invoke-RestMethod, Invoke-WebRequest) sending the GraphQL merge, auto-merge,
+  # approve or dismiss mutations, an `APPROVE` review event, or the `/merges` or dismissal endpoint. `(?s:` lets a call
+  # split over lines (`\` continuations, a heredoc body) count; APPROVE counts only as a review's event or after a review
+  # mutation, so a read or a comment that says APPROVE passes. Only the hook sees a command it resolves first: a
+  # variable (`X=merge; gh pr $X`), `$'...'` quoting, an alias, a script the call runs, PowerShell's `Start-Process gh
+  # -ArgumentList`, and httpie run as `http`/`https`, a name a URL also matches
+  never:
+    tool: {kind: shell}
+    where:
+      input:
+        regex: "(?s:\\bgh(\\.exe)?\\s+api\\b.*(repos/[^/\\s]+/[^/\\s]+/merges\\b|/reviews/[^/\\s]+/dismissals\\b|dismissPullRequestReview|approvePullRequest)|(?i:\\b(curl|wget|xhs?|invoke-restmethod|invoke-webrequest|irm|iwr)(\\.exe)?\\b).*(mergePullRequest|enablePullRequestAutoMerge|dismissPullRequestReview|approvePullRequest|repos/[^/\\s]+/[^/\\s]+/merges\\b|/reviews/[^/\\s]+/dismissals\\b|(?i:event\\W{0,8}APPROVE\\b)|PullRequestReview\\b.*\\bAPPROVE\\b))"
+---
 id: work-never-merges-through-mcp
 scope: turn
 applies_when: {}
