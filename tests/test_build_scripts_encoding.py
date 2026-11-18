@@ -11,6 +11,9 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 BUILD = ["build_generated.py", "relock.py", "render_envs.py", "promote.py"]
+# install_local.py reads the same locks and bindings, on the person's machine; it writes their own files as bytes, so
+# it is held to UTF-8 reads only (its writes keep a file's own line endings).
+READERS = BUILD + ["install_local.py"]
 
 
 def calls(path: Path, method: str) -> list[ast.Call]:
@@ -23,7 +26,7 @@ def keywords(call: ast.Call) -> dict[str, object]:
     return {k.arg: k.value.value for k in call.keywords if isinstance(k.value, ast.Constant)}
 
 
-@pytest.mark.parametrize("script", BUILD)
+@pytest.mark.parametrize("script", READERS)
 def test_every_read_names_utf_8(script):
     bare = [c.lineno for c in calls(SCRIPTS / script, "read_text") if keywords(c).get("encoding") != "utf-8"]
     assert not bare, f"{script}: read_text without encoding='utf-8' on lines {bare}"

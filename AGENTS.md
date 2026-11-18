@@ -37,5 +37,18 @@ This is the example team harness: `harnesses/<name>/` is what agents run with, p
   code-owner review is on, KAN-220: locks and `channels.yaml` are owned paths) it opens a `bot/generated` PR and
   starts `check.yml` on it; that PR still needs a person's merge.
 - The changelog entry is a fragment, `changes/<KEY>.md` (see `changes/README.md`); never edit `CHANGELOG.md`.
+- The work-system PR check holds a PR to the settings below, read at its base commit (KAN-516,
+  `actions/work-system-pr/pr_shape.py`): a diff budget, not counting tests, `changes/` or generated files (over it,
+  split the PR or add a `Budget: <reason>` line); no generated files except in the `bot/generated` PR or one labelled
+  `generated-files`; and a `changes/<KEY>.md` fragment when the PR changes source. The `generated:` globs follow
+  `build_generated.py`'s list (`tests/test_parallel_prs.py` keeps them in step).
+
+  ```work-system-pr
+  diff-budget: 500 lines, 25 files
+  generated: CHANGELOG.md, harnesses/*/harness.lock, harnesses/*/env.*.yaml, harnesses/*/.env.example
+  generated: harnesses/suite-default/skills/**, harnesses/work-default/skills/**, !harnesses/work-default/skills/change-set/**
+  generated: harnesses/suite-default/native/claude-code/hooks/**, harnesses/work-default/native/claude-code/hooks/**
+  generated: !harnesses/work-default/native/claude-code/hooks/guard_work.py
+  ```
 - `stable` and `releases/` still move only by `scripts/promote.py`, in a PR of its own.
 - A new harness revision moves `candidate` in `channels.yaml`; only a promotion moves `stable`.
