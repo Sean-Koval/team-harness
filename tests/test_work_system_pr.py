@@ -87,42 +87,47 @@ def test_exemptions(kw):
     assert r.exempt and r.errors == []
 
 
-def issue(cat="indeterminate", name="In Progress", itype="Story", labels=("lane:pair",)):
-    return {"fields": {"status": {"name": name, "statusCategory": {"key": cat}}, "issuetype": {"name": itype},
-                       "labels": list(labels)}}
+def issue(cat="in_progress", name="In Progress", kind="work", labels=("lane:pair",), blocked_by=()):
+    """A ticket as tracker.py normalises it (KAN-437)."""
+    return {"key": "KAN-315", "status": name, "category": cat, "kind": kind, "labels": list(labels),
+            "blocked_by": list(blocked_by)}
 
 
 def test_ticket_ok():
-    assert wsp.check_ticket(issue(), [], "KAN-315") == []
+    assert wsp.check_ticket(issue(), "KAN-315") == []
 
 
 @pytest.mark.parametrize("kw, words", [
     ({"cat": "done", "name": "Done"}, "is Done"),
     ({"cat": "done", "name": "Wont Do"}, "is Wont Do"),
-    ({"itype": "Epic"}, "is a epic"),
-    ({"itype": "Decision"}, "is a decision"),
+    ({"kind": "epic"}, "is a epic"),
+    ({"kind": "decision"}, "is a decision"),
     ({"labels": ("repo:hangar",)}, "no execution label"),
-    ({"itype": "Task", "labels": ("type:decision", "exec:human")}, "is a decision"),
+    ({"labels": ("type:decision", "exec:human")}, "is a decision"),
 ])
 def test_ticket_rules(kw, words):
-    assert any(words in e for e in wsp.check_ticket(issue(**kw), [], "KAN-315"))
+    assert any(words in e for e in wsp.check_ticket(issue(**kw), "KAN-315"))
 
 
 def test_exec_labels_count_as_laned():
-    assert wsp.check_ticket(issue(labels=("exec:agent",)), [], "KAN-315") == []
+    assert wsp.check_ticket(issue(labels=("exec:agent",)), "KAN-315") == []
 
 
 def test_task_decision_blocks_like_a_decision():
-    d = {"key": "KAN-330", "fields": {"issuetype": {"name": "Task"}, "labels": ["type:decision"],
-                                      "status": {"statusCategory": {"key": "new"}}}}
-    assert any("KAN-330" in e for e in wsp.check_ticket(issue(), [d], "KAN-315"))
+    d = {"key": "KAN-330", "kind": "work", "labels": ["type:decision"], "category": "todo"}
+    assert any("KAN-330" in e for e in wsp.check_ticket(issue(blocked_by=[d]), "KAN-315"))
 
 
 def test_open_blocking_decision_fails_and_answered_one_passes():
-    open_d = {"key": "KAN-320", "fields": {"issuetype": {"name": "Decision"}, "status": {"statusCategory": {"key": "new"}}}}
-    done_d = {"key": "KAN-321", "fields": {"issuetype": {"name": "Decision"}, "status": {"statusCategory": {"key": "done"}}}}
-    assert any("KAN-320" in e for e in wsp.check_ticket(issue(), [open_d], "KAN-315"))
-    assert wsp.check_ticket(issue(), [done_d], "KAN-315") == []
+    open_d = {"key": "KAN-320", "kind": "decision", "labels": [], "category": "todo"}
+    done_d = {"key": "KAN-321", "kind": "decision", "labels": [], "category": "done"}
+    assert any("KAN-320" in e for e in wsp.check_ticket(issue(blocked_by=[open_d]), "KAN-315"))
+    assert wsp.check_ticket(issue(blocked_by=[done_d]), "KAN-315") == []
+
+
+def test_a_blocking_work_item_does_not_block():
+    w = {"key": "KAN-322", "kind": "work", "labels": ["exec:pair"], "category": "todo"}
+    assert wsp.check_ticket(issue(blocked_by=[w]), "KAN-315") == []
 
 
 def test_main_on_an_event_file(tmp_path):
