@@ -111,6 +111,10 @@ jobs:
       - name: Installer tests
         if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_install_local.py
+      # doctor --live's one network call: https only, no redirect, no proxy for plain http to this machine (KAN-540)
+      - name: Doctor live-call tests
+        if: ${{ !cancelled() }}
+        run: python -m pytest -q -rs tests/test_doctor_live.py
       # The installer's own digests against hangar's, on a Windows checkout (CRLF conversion on): the tests above
       # skip these, as their interpreter has no hangar, so they run here with the build's venv.
       - name: Installer digests match hangar's
