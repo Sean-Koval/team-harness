@@ -53,8 +53,9 @@ name and never loaded from the repository, so a PR can't bring its own. Today th
 
 With `artifact-receipt`, the check also reads the receipt of the [artifact check](../artifact-check/README.md)
 (KAN-558, rule 9). The PR needs that receipt with `passed` true; the summary lists what it found. A missing receipt fails
-unless `allow-unverified` is set. A malformed one, one committed to git or changed by the PR, a run over its budget, or
-one whose numbers don't add up to a pass always fails. A run stopped at its budget passes only if the cases it ran
+unless `allow-unverified` is set. A malformed one, one committed to git or changed by the PR, one reached through a
+symbolic link or outside a git checkout, a run over its budget, or one whose numbers don't add up to a pass always
+fails. A run stopped at its budget passes only if the cases it ran
 already reach the pass rate. `artifact-min-pass-rate` sets a floor the receipt can't lower.
 
 Fork and Dependabot PRs get no secrets, so an agent's or bot's artifact check can't run on them. Their receipt is

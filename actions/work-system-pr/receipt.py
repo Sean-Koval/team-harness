@@ -73,6 +73,18 @@ def problems(r: Any) -> list[str]:
     return out
 
 
+def _spent(v: float) -> str:
+    return "$0" if v == 0 else f"${v:.4f}" if v >= 0.01 else f"${v:.2g}"
+
+
+_DETAIL = 200  # a case's detail is the run's text, which the PR controls: cap it in the error
+
+
+def _cut(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= _DETAIL else text[:_DETAIL - 1] + "…"
+
+
 def _usd(v: Any) -> str:
     return f"${v:g}" if isinstance(v, (int, float)) else "no budget"
 
@@ -92,7 +104,7 @@ def _passes(r: dict[str, Any], min_pass_rate: float | None = None) -> str | None
     ok = rate >= need and not r["over_budget"]
     if r["passed"] and not ok:
         if r["over_budget"]:
-            return f"it says passed, but it spent ${r['cost_usd']:.4f}, over its budget of {_usd(r['budget_usd'])}"
+            return f"it says passed, but it spent {_spent(r['cost_usd'])}, over its budget of {_usd(r['budget_usd'])}"
         if r["kind"] == "mcp-server":
             return "it says passed, but an MCP server's cases must all pass"
         if min_pass_rate is not None and r["min_pass_rate"] < min_pass_rate:
@@ -102,57 +114,81 @@ def _passes(r: dict[str, Any], min_pass_rate: float | None = None) -> str | None
     if ok and r["passed"]:
         return None
     if r["over_budget"]:
-        return f"it spent ${r['cost_usd']:.4f}, over its budget of {_usd(r['budget_usd'])}"
+        return f"it spent {_spent(r['cost_usd'])}, over its budget of {_usd(r['budget_usd'])}"
     if r["stopped_at_budget"]:
         n = sum(c["status"] == "not_run" for c in cases)
         return (f"it stopped at its budget of {_usd(r['budget_usd'])} with {n} case(s) not run, and the cases it ran "
                 f"pass {rate:.0%}, against {need:.0%} needed; raise the budget or trim the cases")
     failed = [c for c in cases if c["status"] != "pass"]
-    named = "; ".join(f"{c['id']}: {c['detail']}" if c["detail"] else c["id"] for c in failed[:5])
+    named = "; ".join(f"{c['id'][:_DETAIL]}: {_cut(c['detail'])}" if c["detail"] else c["id"][:_DETAIL]
+                      for c in failed[:5])
     more = f" (and {len(failed) - 5} more)" if len(failed) > 5 else ""
     return f"pass rate {rate:.0%}, needs {need:.0%}" + (f": {named}{more}" if named else "")
 
 
-_MISSING = (FileNotFoundError, NotADirectoryError)
-
-
-def _tracked(workspace: str, path: str) -> bool:
+def _tracked(workspace: str, path: str) -> bool | None:
     """Whether git tracks `path` in the checkout: a receipt that is part of the repository came from a commit, not
-    from this run. False when git can't say."""
+    from this run. None when git can't say (no git, or no repository there), which the caller treats as a failure."""
     try:
-        out = subprocess.run(["git", "-C", workspace, "ls-files", "--", path], capture_output=True, text=True,
-                             timeout=30, check=False)
+        out = subprocess.run(["git", "-C", workspace, "ls-files", "--error-unmatch", "--", path], capture_output=True,
+                             text=True, timeout=30, check=False)
+        top = subprocess.run(["git", "-C", workspace, "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                             text=True, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
-        return False
-    return out.returncode == 0 and bool(out.stdout.strip())
+        return None
+    if top.returncode != 0 or top.stdout.strip() != "true":
+        return None
+    return out.returncode == 0
+
+
+def _link_on_the_way(workspace: str, norm: str) -> str | None:
+    """The first part of `norm`, under `workspace`, that is a symbolic link, or None."""
+    cur = workspace
+    for part in norm.split("/"):
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            return os.path.relpath(cur, workspace).replace(os.sep, "/")
+    return None
 
 
 def check(path: str, workspace: str, *, allow_unverified: bool = False, changed: list[str] | None = None,
           min_pass_rate: float | None = None) -> tuple[list[str], list[str], list[str]]:
     """(errors, warnings, summary lines) for the receipt at `path`, relative to the checkout at `workspace`.
     `changed` is the PR's changed paths: a receipt the PR itself adds or edits is refused, since the PR's author
-    could write any verdict into it."""
+    could write any verdict into it. So is one git tracks, one reached through a symbolic link, and one whose
+    tracking git can't confirm."""
     win = PureWindowsPath(path)
     if os.path.isabs(path) or path.startswith(("/", "\\")) or win.drive or ".." in win.parts:
         return [f"artifact-receipt {path!r} must be a path inside the checkout"], [], []
-    norm = path.replace("\\", "/").removeprefix("./")
-    if norm in (changed or []) or _tracked(workspace, norm):
-        why = (f"the artifact check's receipt {path} is a file in the repository or in this PR; it must be the one "
-               "the artifact-check job wrote on this run, so keep it out of git")
-        return [why], [], []
-    full = os.path.join(workspace, path)
-    root = os.path.realpath(workspace)
-    if os.path.lexists(full) and os.path.commonpath([root, os.path.realpath(full)]) != root:
-        return [f"the artifact check's receipt {path} links to a file outside the checkout"], [], []
-    try:
-        with open(full, encoding="utf-8") as fh:
-            text = fh.read()
-    except _MISSING:
+    norm = "/".join(p for p in path.replace("\\", "/").split("/") if p not in ("", "."))
+    full = os.path.join(workspace, *norm.split("/"))
+    if not os.path.lexists(full):
         msg = (f"there is no artifact check receipt at {path}; did the artifact-check job run and hand its receipt "
                "to this job?")
         if allow_unverified:
             return [], [msg + " Passing it unverified because allow-unverified is set"], []
         return [msg], [], []
+    if link := _link_on_the_way(workspace, norm):
+        why = (f"the artifact check's receipt {path} is reached through a symbolic link ({link}); hand the job the "
+               "file itself")
+        return [why], [], []
+    root = os.path.realpath(workspace)
+    real = os.path.realpath(full)
+    if os.path.commonpath([root, real]) != root:
+        return [f"the artifact check's receipt {path} is outside the checkout"], [], []
+    rel = os.path.relpath(real, root).replace(os.sep, "/")
+    tracked = _tracked(workspace, rel)
+    if tracked is None:
+        why = (f"couldn't tell whether git tracks the artifact check's receipt {path}; run this check in the "
+               "repository's checkout")
+        return [why], [], []
+    if tracked or {norm, rel} & set(changed or []):
+        why = (f"the artifact check's receipt {path} is a file in the repository or in this PR; it must be the one "
+               "the artifact-check job wrote on this run, so keep it out of git")
+        return [why], [], []
+    try:
+        with open(full, encoding="utf-8") as fh:
+            text = fh.read()
     except (OSError, ValueError) as e:
         return [f"the artifact check's receipt {path} could not be read ({type(e).__name__})"], [], []
     try:
@@ -163,7 +199,7 @@ def check(path: str, workspace: str, *, allow_unverified: bool = False, changed:
         return [f"the artifact check's receipt {path} is not a {SCHEMA} receipt: {'; '.join(bad)}"], [], []
     why = _passes(r, min_pass_rate)
     errors = [f"the artifact check ({r['kind']}) didn't pass: {why}"] if why else []
-    spent = f", ${r['cost_usd']:.4f} spent" if r["kind"] != "mcp-server" else ""
+    spent = f", {_spent(r['cost_usd'])} spent" if r["kind"] != "mcp-server" else ""
     passed = sum(c["status"] == "pass" for c in r["cases"])
     verdict = "pass" if why is None else "fail"
     lines = ["", "### Artifact check", "",

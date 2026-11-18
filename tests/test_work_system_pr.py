@@ -1300,7 +1300,20 @@ def _receipt(**over) -> dict:
     return r
 
 
+def _git(ws, *args):
+    subprocess.run(["git", "-C", str(ws), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                   check=True, capture_output=True)
+
+
+def _repo(ws):
+    """The checkout the action runs in: a git repository, with the receipt left untracked."""
+    if not (ws / ".git").exists():
+        _git(ws, "init", "-q")
+    return ws
+
+
 def _check(tmp_path, r, name="artifact-check.json", **kw):
+    _repo(tmp_path)
     (tmp_path / name).write_text(json.dumps(r) if not isinstance(r, str) else r)
     return receipt.check(name, str(tmp_path), **kw)
 
@@ -1372,6 +1385,7 @@ def test_a_missing_receipt_fails_unless_unverified_is_allowed(tmp_path):
 @pytest.mark.parametrize("result", ["pass", "fail", None])
 def test_main_reads_the_artifact_check_receipt(tmp_path, fake_api, result):
     # rule 9 (KAN-558): a passing receipt passes; a failing one names the case; none fails closed
+    _repo(tmp_path)
     fake_api.files(["README.md"])
     if result == "pass":
         (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
@@ -1425,6 +1439,7 @@ def test_a_passing_mcp_server_receipt_passes_without_a_cost(tmp_path):
 
 
 def test_an_unreadable_receipt_fails_even_under_allow_unverified(tmp_path):
+    _repo(tmp_path)
     (tmp_path / "artifact-check.json").write_bytes(b"\xff\xfe garbled")
     errors, warnings, _ = receipt.check("artifact-check.json", str(tmp_path), allow_unverified=True)
     assert "could not be read (UnicodeDecodeError)" in errors[0] and not warnings
@@ -1437,10 +1452,46 @@ def test_an_unreadable_receipt_fails_even_under_allow_unverified(tmp_path):
 def test_a_receipt_linking_outside_the_checkout_fails(tmp_path):
     work, out = tmp_path / "work", tmp_path / "elsewhere.json"
     work.mkdir()
+    _repo(work)
     out.write_text(json.dumps(_receipt()))
     (work / "artifact-check.json").symlink_to(out)
     errors, _, _ = receipt.check("artifact-check.json", str(work))
-    assert "links to a file outside the checkout" in errors[0]
+    assert "reached through a symbolic link (artifact-check.json)" in errors[0]
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink") or sys.platform == "win32", reason="needs symlinks")
+def test_a_committed_receipt_behind_a_linked_directory_fails(tmp_path):
+    # R2's case: docs/artifact-check.json and out -> docs both committed; out/artifact-check.json is neither tracked
+    # nor in the changed list by that name, but it is the committed file
+    _repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "artifact-check.json").write_text(json.dumps(_receipt()))
+    (tmp_path / "out").symlink_to("docs")
+    _git(tmp_path, "add", "docs", "out")
+    _git(tmp_path, "commit", "-qm", "forged")
+    errors, _, lines = receipt.check("out/artifact-check.json", str(tmp_path),
+                                     changed=["docs/artifact-check.json", "out"])
+    assert len(errors) == 1 and "symbolic link (out)" in errors[0] and lines == []
+    # and the committed file named directly is refused as tracked, even when the PR didn't change it
+    errors, _, _ = receipt.check("docs/artifact-check.json", str(tmp_path), changed=[])
+    assert "is a file in the repository or in this PR" in errors[0]
+
+
+def test_a_receipt_outside_a_git_checkout_fails_closed(tmp_path):
+    # git can't say whether it's tracked (no repository): fail, rather than pass a receipt that may be committed
+    (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
+    errors, warnings, _ = receipt.check("artifact-check.json", str(tmp_path), allow_unverified=True)
+    assert "couldn't tell whether git tracks" in errors[0] and not warnings
+
+
+def test_a_cheap_run_and_a_long_detail_read_well(tmp_path):
+    _, _, lines = _check(tmp_path, _receipt(cost_usd=0.0004))
+    assert any("$0.0004 spent" in ln for ln in lines)
+    _, _, lines = _check(tmp_path, _receipt(cost_usd=0))
+    assert any("$0 spent" in ln for ln in lines)
+    long = [FAIL[0], {"id": "task-2", "status": "fail", "detail": "x" * 5000}]
+    errors, _, _ = _check(tmp_path, _receipt(passed=False, pass_rate=0.5, cases=long))
+    assert len(errors[0]) < 400 and errors[0].endswith("…")
 
 
 def test_a_receipt_the_pr_changes_fails(tmp_path):
@@ -1450,9 +1501,8 @@ def test_a_receipt_the_pr_changes_fails(tmp_path):
 
 def test_a_receipt_tracked_in_git_fails(tmp_path):
     (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
-    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.com"]
-    subprocess.run([*git, "init", "-q"], check=True)
-    subprocess.run([*git, "add", "artifact-check.json"], check=True)
+    _repo(tmp_path)
+    _git(tmp_path, "add", "artifact-check.json")
     errors, _, _ = receipt.check("artifact-check.json", str(tmp_path))
     assert "is a file in the repository or in this PR" in errors[0]
     errors, _, _ = receipt.check("./artifact-check.json", str(tmp_path))
@@ -1468,6 +1518,7 @@ def test_main_passes_a_missing_receipt_under_allow_unverified(tmp_path, fake_api
 
 
 def test_main_refuses_a_receipt_the_pr_adds(tmp_path, fake_api):
+    _repo(tmp_path)
     fake_api.files(["README.md", "artifact-check.json"])
     (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
     r, _ = run_main(tmp_path, BODY, org_file="", api=fake_api,
@@ -1485,6 +1536,7 @@ def test_main_still_reads_the_receipt_on_an_exempt_pr(tmp_path, fake_api):
 
 @pytest.mark.parametrize("floor", ["high", "1.5"])
 def test_main_refuses_a_bad_pass_rate_floor(tmp_path, fake_api, floor):
+    _repo(tmp_path)
     fake_api.files(["README.md"])
     (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
     r, _ = run_main(tmp_path, BODY, org_file="", api=fake_api,
