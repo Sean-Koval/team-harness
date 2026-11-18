@@ -135,6 +135,26 @@ def test_job_exports(spec_id, steps, want):
     assert results(spec_id, trace(steps)) == {want}
 
 
+WIKI_READS = [("mcp", "atlassian", "getConfluencePage", '{"pageId": "123"}'),
+              ("mcp", "atlassian", "searchConfluenceUsingCql", '{"cql": "title ~ queue"}'),
+              ("mcp", "atlassian", "executeRead", '{"name": "getConfluenceContent", "inputs": {"id": "123"}}')]
+
+
+@pytest.mark.parametrize("steps, want", [
+    ([("mcp", "atlassian", "createConfluencePage", '{"spaceId": "1", "title": "Queue design"}')], "fail"),
+    ([("mcp", "atlassian", "updateConfluenceContent", '{"pageId": "123", "body": "x"}')], "fail"),
+    ([("mcp", "atlassian", "createConfluenceFooterComment", '{"pageId": "123", "body": "x"}')], "fail"),
+    ([("mcp", "atlassian", "executeWrite", '{"name": "updateConfluenceContent", "inputs": {"id": "123"}}')], "fail"),
+    (WIKI_READS, "pass"),
+    # a ticket comment is not a wiki write
+    ([("mcp", "atlassian", "executeWrite", '{"name": "addCommentToJiraIssue", "inputs": {"issueIdOrKey": "SVC-1"}}')],
+     "pass"),
+], ids=["create", "update", "comment", "execute", "reads", "ticket-comment"])
+def test_the_wiki_is_read_never_written(steps, want):
+    """KAN-303: confluence-context reads the pages a ticket links; a page write is counted even when refused."""
+    assert results("work-never-writes-the-wiki", trace(steps)) == {want}
+
+
 def test_a_local_session_files_the_approvals_after_its_own_pr():
     spec = "work-approvals-filed-after-own-pr"
     assert results(spec, trace([GH_PR, SRE, INFOSEC], job=None)) == {"pass"}

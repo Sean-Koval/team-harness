@@ -113,3 +113,18 @@ assert:
   never:
     tool: {kind: mcp, mcp: {server: {regex: "(?i)github"}, tool: {regex: "(?i)review"}}}
     where: {input: {regex: "\\bAPPROVE\\b"}}
+---
+id: work-never-writes-the-wiki
+scope: turn
+applies_when: {}
+assert:
+  # confluence-context and work-docs read pages and never write one: the render job publishes (KAN-303). The hook
+  # refuses wiki writes on the bound server (wiki_write_allow is empty here); this counts an attempt. A page
+  # comment is a write too. executeWrite and executeDestructive count when their input names a page or space
+  never:
+    tool:
+      kind: mcp
+      mcp:
+        server: {in: [atlassian, jira, confluence]}
+        tool: {regex: "(?i)(create|update|delete|move|publish)_?confluence|confluence_?(create|update|delete|move|publish)|^execute_?(write|destructive)$"}
+    where: {input: {regex: "(?i)confluence|page|space|blog"}}  # a page write names its page or space
