@@ -47,7 +47,8 @@ provider answers with a normalised issue: its key, status, category (`todo`, `in
 `epic` or `decision`), labels, and the issues that block it. `check.py` judges only that shape, so another tracker is
 a new provider in `tracker.py`, chosen with `tracker-provider`, and no change to `check.py`. Providers are built in by
 name and never loaded from the repository, so a PR can't bring its own. Today there is one, `jira-cloud`, with the
-`jira-*` inputs above. The org's approval gates (below) still read Jira directly until they move behind the same seam.
+`jira-*` inputs above. The org's approval gates (below) read their tickets through the same provider (KAN-538), as a
+normalised gate ticket: project, issue type, status, linked keys, description text and the `approved_field` values.
 
 ## Keep PRs small and source-only
 

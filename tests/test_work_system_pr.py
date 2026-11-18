@@ -411,6 +411,107 @@ def test_jira_gate_ticket_missing_fails(org):
     assert any("SREPROJ-7 could not be read from Jira (HTTP 404)" in e for e in errs)
 
 
+# --- rule 7 through the tracker seam (KAN-538) --------------------------------------------------------------------------
+
+class Desk:
+    """A tracker that isn't Jira: its own record layout, no HTTP, mapped to the normalised gate ticket by itself."""
+
+    label = "Desk"
+
+    def __init__(self, records, web_links=None, fail=None):
+        self.records, self.web_links, self.fail, self.asked = records, web_links or {}, fail, []
+
+    def gate_issue(self, key, fields):
+        self.asked.append((key, list(fields)))
+        if self.fail:
+            raise self.fail
+        if key not in self.records:
+            raise wsp.tracker.TicketMissing("no such record")
+        r = self.records[key]
+        return {"key": key, "project": r["queue"], "issue_type": r["kind"], "status": r["state"],
+                "links": r.get("related", []), "text": r.get("body", ""),
+                "field_values": {f: r["extra"][f] for f in fields if f in r.get("extra", {})}}
+
+    def gate_links(self, key):
+        return " ".join(self.web_links.get(key, []))
+
+
+def desk(state="Approved", **kw):
+    return {"queue": "SREPROJ", "kind": "Task", "state": state, "related": ["KAN-315"], "body": f"see {PR_URL}", **kw}
+
+
+def test_a_gate_reads_a_tracker_that_is_not_jira(org):
+    t = Desk({"SREPROJ-7": desk()})
+    gates, errs, _ = wsp.check_gates(gated(), [], org, tickets=t, work_key="KAN-315")
+    assert errs == [] and by_id(gates)["sre"].state == "checked" and t.asked[0][0] == "SREPROJ-7"
+
+
+@pytest.mark.parametrize("record, words", [
+    (desk("In Review"), "SREPROJ-7 is In Review; it must be Approved or Done"),
+    (desk(related=[]), "has no issue link to the work ticket KAN-315"),
+    (desk(body="nothing here"), "does not link this PR"),
+    (desk(queue="OPS"), "is in OPS, not SREPROJ"),
+    (desk(kind="Bug"), "is a Bug, not a Task"),
+])
+def test_a_tracker_that_is_not_jira_holds_the_gate(org, record, words):
+    _, errs, _ = wsp.check_gates(gated(), [], org, tickets=Desk({"SREPROJ-7": record}), work_key="KAN-315")
+    assert any(words in e for e in errs), errs
+
+
+def test_a_tracker_that_is_not_jira_links_the_pr_through_its_web_links(org):
+    t = Desk({"SREPROJ-7": desk(body="")}, web_links={"SREPROJ-7": [PR_URL]})
+    _, errs, _ = wsp.check_gates(gated(), [], org, tickets=t, work_key="KAN-315")
+    assert errs == []
+
+
+def test_a_tracker_that_is_not_jira_is_named_in_its_messages(org):
+    _, errs, _ = wsp.check_gates(gated(), [], org, tickets=Desk({}), work_key="KAN-315")
+    assert any("SREPROJ-7 could not be read from Desk (no such record)" in e for e in errs)
+    _, errs, _ = wsp.check_gates(gated(), [], org, tickets=None, tracker_label="Desk", work_key="KAN-315")
+    assert any("no Desk credentials" in e for e in errs)
+
+
+@pytest.mark.parametrize("fail, answer", [
+    (wsp.tracker.TrackerUnreachable("timed out"), None),
+    (RuntimeError("a provider bug"), None),  # never passes the gate
+    (None, {"key": "SREPROJ-7", "project": "SREPROJ"}),  # not the normalised shape
+    (None, {**desk(), "key": "SREPROJ-9"}),  # answered for another ticket
+])
+def test_a_tracker_that_answers_badly_fails_the_gate_closed(org, fail, answer):
+    class Bad(Desk):
+        def gate_issue(self, key, fields):
+            if fail:
+                raise fail
+            return answer
+    gates, errs, _ = wsp.check_gates(gated(), [], org, tickets=Bad({}), work_key="KAN-315")
+    assert by_id(gates)["sre"].state == "unverified" and errs, errs
+    gates, errs, warns = wsp.check_gates(gated(), [], org, tickets=Bad({}), work_key="KAN-315",
+                                         allow_unverified=True)
+    assert errs == [] and by_id(gates)["sre"].state == "not checked" and warns
+
+
+def test_a_tracker_that_is_not_jira_reads_the_approved_field(org2):
+    ess = {"queue": "ESSPROJ", "kind": "Task", "state": "Open", "extra": {"customfield_10050": ["Approved"]}}
+    t = Desk({"KAN-315": {"queue": "KAN", "kind": "Story", "state": "In Progress", "body": PR_URL},
+              "SECPROJ-8": {"queue": "SECPROJ", "kind": "Task", "state": "Approved", "body": "https://github.com/o/r"},
+              "ESSPROJ-2": ess})
+    gates, _, _ = wsp.check_gates(gated(lines=ESS), [], org2, tickets=t, work_key="KAN-315",
+                                  work_issue_type="Change Request", allow_unverified=True)
+    assert by_id(gates)["ess"].state == "checked" and ("ESSPROJ-2", ["customfield_10050"]) in t.asked
+    ess["extra"] = {}
+    gates, errs, _ = wsp.check_gates(gated(lines=ESS), [], org2, tickets=t, work_key="KAN-315",
+                                     work_issue_type="Change Request", allow_unverified=True)
+    assert any("Desk returned no customfield_10050 field for ESSPROJ-2" in e for e in errs), errs
+
+
+def test_check_py_reads_no_tracker_for_rule_7():
+    """The approval gates name no tracker's fields and make no tracker call: tracker.py's provider does (KAN-538)."""
+    src = (Path(wsp.__file__)).read_text()
+    for name in ("rest/api", "remotelink", "issuelinks", "issuetype", "statusCategory", "inwardIssue",
+                 "outwardIssue", "customfield_", "JIRA_BASE_URL", "JIRA_TOKEN", "_jira_fetcher", "Basic "):
+        assert name not in src, name
+
+
 def test_jira_status_not_required_without_approved_statuses(org):
     files = [{"filename": "src/auth/login.py"}]
     issues = {"SREPROJ-7": jira_issue("SREPROJ-7", "SREPROJ", "Done"),
