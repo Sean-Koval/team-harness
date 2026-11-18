@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import threading
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -270,6 +271,75 @@ def test_live_tools_list_per_server(laptop, capsys, mcp_server, monkeypatch):
     assert c["mcp:github"]["status"] == "ok" and "2 tools" in c["mcp:github"]["summary"]
     assert c["mcp:atlassian"]["status"] == "skip" and "ATLASSIAN_MCP_AUTHORIZATION is unset" in \
         c["mcp:atlassian"]["summary"]
+
+
+@pytest.mark.parametrize("endpoint, sends", [
+    ("https://mcp.example.invalid/mcp", True), ("HTTPS://mcp.example.invalid/mcp", True),
+    ("http://localhost:8080/mcp", True), ("http://127.0.0.1:9/mcp", True), ("http://[::1]:9/mcp", True),
+    ("http://mcp.example.invalid/mcp", False), ("http://localhost.example.invalid/mcp", False),
+    ("http://127.0.0.1.example.invalid/mcp", False), ("ftp://mcp.example.invalid/mcp", False),
+    ("mcp.example.invalid/mcp", False), ("", False), ("https:///mcp", False),
+])
+def test_a_credential_goes_only_over_https_or_to_this_machine(endpoint, sends):
+    assert doctor.sends_credential_to(endpoint) is sends
+
+
+def test_tools_list_sends_nothing_to_a_plain_http_endpoint(monkeypatch):
+    def refuse(*a, **k):
+        raise AssertionError("a request was made")
+    monkeypatch.setattr(doctor._OPENER, "open", refuse)
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    n, err = doctor.tools_list("http://mcp.example.invalid/mcp", "Authorization", SECRET)
+    assert n == 0 and "not https" in err and SECRET not in err
+
+
+class Redirect(http.server.BaseHTTPRequestHandler):
+    code, to, seen = 302, "", []
+
+    def do_POST(self):  # noqa: N802
+        self.rfile.read(int(self.headers["Content-Length"]))
+        Redirect.seen.append(self.headers.get("Authorization"))
+        self.send_response(Redirect.code)
+        self.send_header("Location", Redirect.to)
+        self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_tools_list_follows_no_redirect(mcp_server, monkeypatch, code):
+    """A 30x names its status and is not followed: the server it points at never sees the credential."""
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    Redirect.code, Redirect.to, Redirect.seen = code, mcp_server, []
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        n, err = doctor.tools_list(f"http://127.0.0.1:{srv.server_port}/mcp", "Authorization", SECRET)
+    finally:
+        srv.shutdown()
+    assert n == 0 and f"HTTP {code}" in err and "redirect" in err and SECRET not in err
+    assert Redirect.seen == [SECRET]  # one request, to the endpoint itself
+    assert FakeMCP.seen == []  # the redirect's target got none, so never the header
+
+
+def test_live_sends_no_credential_to_a_plain_http_server(laptop, capsys, monkeypatch):
+    home, proj = laptop
+    endpoint = "http://mcp.example.invalid/mcp"
+    lock = dict(LOCK, binding=dict(LOCK["binding"], mcp=[dict(m, endpoint=endpoint) if m["name"] == "github" else m
+                                                         for m in LOCK["binding"]["mcp"]]))
+    monkeypatch.setattr(doctor.il, "_lock_at", lambda root: lock)
+
+    def refuse(*a, **k):
+        raise AssertionError("a request was made")
+    monkeypatch.setattr(doctor, "tools_list", refuse)
+    fake = Fake({("claude", "mcp", "list"): (0, mcp_list_all(lock))})
+    doc(home, proj, "--live", "--skip", "channel", fake=fake, env={"GITHUB_MCP_AUTHORIZATION": SECRET})
+    out = capsys.readouterr().out
+    assert SECRET not in out
+    c = {x["id"]: x for x in json.loads(out)["checks"]}["mcp:github"]
+    assert c["status"] == "fix" and "github" in c["summary"] and \
+        "endpoint is not https; doctor won't send the credential" in c["summary"]
 
 
 def test_gh_signed_out_and_without_repo_scope(laptop, capsys):
