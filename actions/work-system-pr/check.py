@@ -667,6 +667,8 @@ def _check_work_gate(gate: Gate, g: dict, work_types: list[dict], reviewers: dic
                 gate.state = "checked"
     if g.get("github_review") and gate.state != "invalid":
         _check_review(gate, reviewers[g["approvers"]]["github_team"], ctx, warnings)
+        if not gate.errors and gate.state == "linked":
+            gate.state = "checked"  # approved on GitHub: the summary must not read as merely linked
 
 
 _DECISIVE = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}  # a COMMENTED review leaves a reviewer's verdict as it was

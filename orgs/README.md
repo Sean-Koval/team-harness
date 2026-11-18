@@ -31,7 +31,8 @@ Set `schema: team-harness.org/v2` to use these. A v1 overlay keeps working, and 
 - `scope: repo` makes a gate one ticket per repository, reused across PRs. `stage` ties a gate to a stage.
 - `approved_field: {field, values}` passes on a Jira field's value instead of, or as well as, a status.
 - `needs_approval: false` records a ticket for the audit trail; nothing waits on its approval.
-- `when` also takes `issue_types` and `projects`, matched against the work ticket.
+- `when` also takes `issue_types` and `projects`, matched against the work ticket. The work ticket is the key in
+  the PR's title, so its author chooses which ticket is judged, as with the work ticket's labels.
 
 The PR check (`actions/work-system-pr`) reads the same file. When it can't read the data a gate needs, the gate
 applies, and its approval counts as unverified, which fails the check.

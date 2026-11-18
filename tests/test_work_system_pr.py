@@ -975,6 +975,17 @@ def test_v2_passes_with_the_work_ticket_approved_and_a_team_review(org2):
     assert [g[i].state for i in ("ess", "architecture", "release")] == ["not required"] * 3
 
 
+def test_v2_a_review_only_work_gate_reads_checked_once_approved(org2):
+    """R2's note: a work gate with only github_review (nothing in Jira) shows checked, not linked, once approved."""
+    gate = org2["gates"][0]
+    for k in ("approved_statuses", "links"):
+        gate.pop(k)
+    gates, errs, _ = v2(org2)
+    assert errs == [] and by_id(gates)["sre"].state == "checked"
+    gates, errs, _ = v2(org2, **gh([]))
+    assert by_id(gates)["sre"].state == "not approved" and errs
+
+
 def test_v2_a_later_stage_is_not_held_at_merge(org2):
     gates, _, _ = v2(org2)
     assert "stage prod is a later step" in by_id(gates)["release"].why
