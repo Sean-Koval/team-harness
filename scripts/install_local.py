@@ -38,6 +38,9 @@ What it never does:
 - Install from a checkout that doesn't match its lock: every pinned digest is checked first.
 - Touch MCP servers or credentials. It prints the `claude mcp add` commands for the lock's servers, with each
   credential as a `$VARIABLE` placeholder for you to fill from your secret manager. Plugins are printed the same way.
+  A server `bindings/<harness>.yaml` marks `local_only` (KAN-380: Work Copilot) runs on a laptop only, so no lock
+  pins it; its line is printed after the others. `--check` reports each server, registered with Claude Code or not
+  and, for a stdio one, whether its command is on PATH; neither counts as drift, as this script never adds them.
 - Install two harnesses into one scope: `--uninstall` the first (work and personal harnesses stay apart).
 
 The manifest `.claude/team-harness.json` records the harness, its channel, revision and `harness_digest`, the lock's
@@ -198,6 +201,10 @@ class Harness:
     source: dict[str, Any] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)  # where the checkout differs from the lock
     scope: str = "user"
+    binding: dict[str, Any] = field(default_factory=dict)  # bindings/<name>.yaml as of the lock: its servers' names
+    # the checkout's bindings/<name>.yaml, for its local_only servers: no lock pins them, so every channel prints the
+    # checkout's (KAN-380); _run sets it from the harness directory named on the command line
+    local_binding: dict[str, Any] = field(default_factory=dict)
 
 
 def _git(root: Path, *args: str) -> str | None:
@@ -257,6 +264,7 @@ def load_harness(root: Path, scope: str, base: Path | None = None) -> Harness:
                 h.files[cid[len(NATIVE):]] = (data, src.stat().st_mode & 0o777 if src.is_file() else 0o644)
     h.settings = _scoped_settings(h.settings, scope, src=root / "native" / RUNTIME / SETTINGS, base=base)
 
+    h.binding = h.local_binding = read_binding(root, h.name)
     commit = _git(root, "rev-parse", "HEAD")
     dirty = _git(root, "status", "--porcelain", "--", ".", f"../../bindings/{h.name}.yaml")
     h.source = {"commit": commit, "dirty": bool(dirty) if dirty is not None else None}
@@ -281,7 +289,7 @@ def _lock_at(root: Path) -> dict[str, Any]:
 
 
 def channel_digest(root: Path, name: str, channel: str) -> str:
-    f = root.parent.parent / "channels.yaml"
+    f = root.resolve().parent.parent / "channels.yaml"  # resolved: a harness named as `.` has no parent to climb
     try:
         chans = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get(name) or {}) if f.is_file() else {}
     except (OSError, yaml.YAMLError) as e:
@@ -808,29 +816,143 @@ def _var(name: str, header: str, binding: dict[str, Any]) -> str:
     return m.group(1) if m else re.sub(r"[^A-Z0-9]+", "_", f"{name}_MCP_{header}".upper())
 
 
-def mcp_commands(h: Harness, scope: str) -> list[str]:
-    bfile = h.root.parent.parent / "bindings" / f"{h.name}.yaml"
-    binding = (yaml.safe_load(bfile.read_text(encoding="utf-8")) or {}) if bfile.is_file() else {}
-    # user scope: your shell fills $VAR when you run the command, so the value lands only in your own ~/.claude.json;
-    # project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never commit a token)
-    # on Windows the user-scope line is for PowerShell, which reads an environment variable as $env:NAME
+def read_binding(root: Path, name: str) -> dict[str, Any]:
+    """`bindings/<name>.yaml` beside the harness directory `root` (when installing from git history, the extracted
+    commit's), or {} when there is none. `root` is resolved first: a harness named as `.` or `harnesses/x/..`
+    would otherwise climb to the wrong directory and find no binding."""
+    bfile = root.resolve().parent.parent / "bindings" / f"{name}.yaml"
+    try:
+        data = yaml.safe_load(bfile.read_text(encoding="utf-8")) if bfile.is_file() else {}
+    except (OSError, yaml.YAMLError) as e:
+        raise Refused(f"{bfile}: {e}") from None
+    return data if isinstance(data, dict) else {}
+
+
+# The shape relock.py requires of a local_only server, checked again here: its line is built from the checkout's
+# working tree, which no relock may have checked, and is meant to be pasted into a shell.
+_SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:@+=-]+$")  # needs no quoting in a POSIX shell or PowerShell
+_ENDPOINT = re.compile(r"^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._~/-]*)?$")
+_WHOLE_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def _local_server(name: Any, s: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """(lock-shaped entry, None) for a well-formed local_only server, or (None, why it is skipped)."""
+    http = s.get("transport") == "http"
+    if s.get("transport") not in ("http", "stdio"):
+        return None, "its transport is neither http nor stdio"
+    if not _SERVER_NAME.match(str(name)):
+        return None, "its name is not letters, digits, - and _"
+    m: dict[str, Any] = {"name": str(name), "transport": s["transport"]}
+    if http:
+        if not isinstance(s.get("endpoint"), str) or not _ENDPOINT.match(s["endpoint"]):
+            return None, "its endpoint is not a plain https URL"
+        m["endpoint"] = s["endpoint"]
+    else:
+        words = [s.get("command"), *(s.get("args") if isinstance(s.get("args"), list) else [None])]
+        if not all(isinstance(w, str) and _PLAIN_WORD.match(w) for w in words):
+            return None, "its command and args are not plain words"
+        m["command"], m["args"] = s["command"], list(s["args"])
+    vals = s.get("headers" if http else "env") or {}
+    if not isinstance(vals, dict):
+        return None, f"its {'headers' if http else 'env'} is not a mapping"
+    for k, v in vals.items():
+        ref = _WHOLE_REF.match(v) if isinstance(v, str) else None
+        if not (_HEADER_NAME if http else _ENV_NAME).match(str(k)) or not ref or (not http and ref.group(1) != k):
+            return None, (f"{'header' if http else 'env'} {k} is not " +
+                          ("one `${VAR}`" if http else f"`${{{k}}}`"))
+    if vals:
+        m["header_names" if http else "env_names"] = sorted(map(str, vals))
+    return m, None
+
+
+def local_servers(binding: dict[str, Any], skipped: list[str] | None = None) -> list[dict[str, Any]]:
+    """The binding's `local_only` servers (KAN-380), shaped as lock entries: name, transport, `endpoint` or `command`
+    and `args`, and the names of their headers or env, never the values. relock.py checks them like any server and
+    keeps them out of the lock, as no sandbox runs them. The checkout's working tree may not have been relocked, so
+    the same shape is checked here: one that fails it is skipped, and why goes to `skipped`."""
+    out = []
+    for name, s in sorted((binding.get("mcp") or {}).items(), key=lambda kv: str(kv[0])):
+        if not isinstance(s, dict) or s.get("local_only") is not True:
+            continue
+        m, why = _local_server(name, s)
+        if m is not None:
+            out.append(m)
+        elif skipped is not None:
+            skipped.append(f"{name}: {why}")
+    return out
+
+
+def mcp_servers(h: Harness, skipped: list[str] | None = None) -> list[tuple[dict[str, Any], bool]]:
+    """(server, local_only) for the lock's servers, then the local_only servers of the checkout's binding. relock.py
+    refuses a local_only server named like one the lock binds; one the lock still binds here (an older channel's
+    lock) is skipped, with why in `skipped`."""
+    lock = [(m, False) for m in (h.lock.get("binding") or {}).get("mcp") or []]
+    have = {m.get("name") for m, _ in lock}
+    local = []
+    # getattr: doctor.py (KAN-372) passes only root, name and lock, and wants the lock's servers alone
+    for m in local_servers(getattr(h, "local_binding", None) or {}, skipped):
+        if m["name"] in have:
+            if skipped is not None:
+                skipped.append(f"{m['name']}: the lock binds a server of that name")
+        else:
+            local.append((m, True))
+    return lock + local
+
+
+def _shell_word(w: str) -> str:
+    """`w` as one word for the shell the printed line is for: POSIX sh, or PowerShell on Windows (single quotes, so
+    `$` and backticks stay literal). A plain word, which is every word of a checked server, is left as it is."""
+    if _PLAIN_WORD.match(w):
+        return w
+    return "'" + w.replace("'", "''") + "'" if WINDOWS else shlex.quote(w)
+
+
+def unset_variables(h: Harness) -> list[tuple[str, str]]:
+    """(server, variable) for each variable a local_only server's printed line takes from the shell that is unset in
+    this one. Its line is always filled by the shell (user or local scope), and Claude Code stores what it got: an
+    unset variable is stored empty, and the server starts with that empty value even once the variable is set."""
+    out = []
+    for m in local_servers(h.local_binding):
+        names = ([_var(m["name"], k, h.local_binding) for k in m.get("header_names") or []]
+                 + list(m.get("env_names") or []))
+        out += [(m["name"], v) for v in names if v not in os.environ]
+    return out
+
+
+def mcp_commands(h: Harness, scope: str, local_only: bool = False, skipped: list[str] | None = None) -> list[str]:
+    """The `claude mcp add` lines for the lock's servers, or with `local_only` for the binding's laptop-only ones.
+
+    A laptop-only server never goes into a project's committed `.mcp.json`: everyone who clones the repository, a
+    sandbox included, would try to start it. So in project scope its line uses Claude Code's `local` scope (this
+    machine, this project, kept in your own ~/.claude.json), run from the project."""
+    add_scope = ("local" if scope == "project" else scope) if local_only else scope
+    binding = (getattr(h, "local_binding", None) if local_only else getattr(h, "binding", None)) or {}
+
+    # user and local scope: your shell fills $VAR when you run the command, so the value lands only in your own
+    # ~/.claude.json; project scope: the literal ${VAR} goes into .mcp.json, which Claude Code expands at start (never
+    # commit a token). On Windows the shell-filled line is for PowerShell, which reads a variable as $env:NAME
     def quoted(text: str, var: str) -> str:
-        if scope == "user":
+        if add_scope != "project":
             return f'"{text}$env:{var}"' if WINDOWS else f'"{text}${var}"'
         return f"'{text}${{{var}}}'"
 
     out = []
-    for m in (h.lock.get("binding") or {}).get("mcp") or []:
-        # --env and --header take several values, so the name goes before them or claude reads it as one more
-        words = ["claude", "mcp", "add", "--scope", scope, "--transport", m.get("transport") or "stdio", m["name"]]
+    for m in (m for m, local in mcp_servers(h, skipped if local_only else None) if local == local_only):
+        words = ["claude", "mcp", "add", "--scope", add_scope, "--transport", m.get("transport") or "stdio"]
         if m.get("transport") == "http":
-            words.append(m["endpoint"])
+            words += [_shell_word(m["name"]), _shell_word(m["endpoint"])]
             for k in m.get("header_names") or []:
                 words += ["--header", quoted(f"{k}: ", _var(m["name"], k, binding))]
         else:
+            # The name goes before --env: Claude Code's --env takes every word after it up to the next option, so a
+            # name after it is read as one more variable and the add fails ("Invalid environment variable format").
+            words.append(_shell_word(m["name"]))
             for k in m.get("env_names") or []:
                 words += ["--env", quoted(f"{k}=", k)]
-            words += ["--", m.get("command") or "", *map(str, m.get("args") or [])]
+            words += ["--", *map(_shell_word, [m.get("command") or "", *map(str, m.get("args") or [])])]
         out.append(" ".join(words))
     return out
 
@@ -850,6 +972,49 @@ def plugin_commands(h: Harness, scope: str) -> list[str]:
 
 
 # --- check, uninstall -------------------------------------------------------------------------------------------
+
+def _added(f: Path, project: Path | None = None) -> set[str] | None:
+    """The names under `mcpServers` in Claude Code's JSON file `f` (with `project`, under its `projects` entry for that
+    directory, where `--scope local` adds a server); None when the file can't be read."""
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError):
+        return None
+    if project is not None:
+        projects = data.get("projects") if isinstance(data, dict) else None
+        projects = projects if isinstance(projects, dict) else {}
+        data = next((projects[k] for k in (str(project), project.as_posix()) if k in projects), None)
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return set(servers) if isinstance(servers, dict) else set()
+
+
+def mcp_report(h: Harness, scope: str, base: Path, home: Path, skipped: list[str] | None = None) -> list[str]:
+    """One line per MCP server the harness names: added to Claude Code where its printed line adds it or not, and for
+    a stdio server whether its command is on PATH. Reported only: this script prints the add lines and never runs
+    them, so a server a person chose not to add (an optional one such as Work Copilot) is not drift. User scope reads
+    `<home>/.claude.json`; project scope reads `<target>/.mcp.json`, and for a laptop-only server the project's entry
+    in `<home>/.claude.json` (`--scope local`)."""
+    target = base.parent.resolve()
+    user_file = (base.parent if scope == "user" else home) / ".claude.json"
+    where = {False: (user_file, None) if scope == "user" else (base.parent / ".mcp.json", None),
+             True: (user_file, None) if scope == "user" else (user_file, target)}
+    found = {k: _added(*v) for k, v in where.items()}
+    out = []
+    for m, local in mcp_servers(h, skipped):
+        f, project = where[local]
+        names = found[local]
+        place = f"{f}" + (f" (project {target})" if project else "")
+        kind = f"{m.get('transport') or 'stdio'}{', this machine only' if local else ''}"
+        state = (f"unknown, {f} is unreadable" if names is None else f"added in {place}" if m["name"] in names else
+                 f"not added in {place}: the dry run prints its `claude mcp add` line")
+        if m.get("transport") != "http" and m.get("command"):
+            cmd = shutil.which(str(m["command"]))
+            state += f"; {m['command']} " + (f"at {cmd}" if cmd else "is not on PATH")
+        out.append(f"{m['name']} ({kind}): {state}")
+    return out
+
 
 def check(h: Harness | None, lock_digest: str | None, lock_rev: int | None, base: Path,
           channel: str | None = None) -> list[str]:
@@ -1149,21 +1314,35 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
         m = read_manifest(base)
         channel = a.channel or (m or {}).get("channel") or "stable"
         src = resolve(a.harness, channel, scratch)
+        unreadable: list[str] = []  # why the harness or the checkout's binding can't be read: drift, said as itself
         try:
             h: Harness | None = load_harness(src.root, a.scope, base)
-        except Refused:
-            h = None
-        drift = check(h, src.digest, src.revision, base, channel)
+        except Refused as e:
+            h, unreadable = None, [f"cannot read the harness: {e}"]
+        if h is not None and src.commit:
+            try:
+                h.local_binding = read_binding(a.harness, h.name)
+            except Refused as e:
+                unreadable.append(f"cannot read the checkout's binding: {e}")
+        drift = unreadable + check(h, src.digest, src.revision, base, channel)
         if h and h.problems:
             drift += [f"checkout: {x}" for x in h.problems]
         for d in drift:
             print(f"  {d}")
+        skipped: list[str] = []
+        if h is not None and (servers := mcp_report(h, a.scope, base, a.home, skipped)):
+            print("MCP servers (reported, not drift: this script never adds them):")
+            for line in servers:
+                print(f"  {line}")
+        for x in skipped:
+            print(f"  warning: local_only server skipped: {x}", file=sys.stderr)
         print(f"{'drift' if drift else 'clean'}: {name}@{channel} in {base}")
         return 1 if drift else 0
 
     src = resolve(a.harness, a.channel or "stable", scratch)
     h = load_harness(src.root, a.scope, base)
     if src.commit:
+        h.local_binding = read_binding(a.harness, h.name)
         h.source = {"commit": src.commit, "dirty": False}
         if a.scope == "user":
             h.source["path"] = str(a.harness.resolve())
@@ -1204,12 +1383,33 @@ def _run(a: argparse.Namespace, base: Path, scratch: Path) -> int:
     runtime, model = h.lock["runtime"], h.lock["model"]
     print(f"  pinned: Claude Code {runtime.get('version')}, model {model.get('id')} (not installed by this script)")
     cmds = mcp_commands(h, a.scope)
+    # the shell fills a variable in a user-scope line (PowerShell reads it as $env:NAME); a project-scope line writes
+    # ${NAME} into .mcp.json, which Claude Code fills from its own environment when it starts
+    shell_var = "$env:NAME" if WINDOWS else "$VARIABLE"
     if cmds:
         where = "" if a.scope == "user" else f", from {a.target}"
-        print(f"MCP servers: run these yourself{where}, after setting each $VARIABLE from your secret manager "
+        var = shell_var if a.scope == "user" else "variable"
+        print(f"MCP servers: run these yourself{where}, after setting each {var} from your secret manager "
               "(its value is the whole header, such as `Bearer <token>`):")
         for c in cmds:
             print(f"  {c}")
+    skipped: list[str] = []
+    local = mcp_commands(h, a.scope, local_only=True, skipped=skipped)
+    if local:
+        where = "" if a.scope == "user" else f", from {a.target}"
+        print(f"MCP servers for this machine only, if you use them (bindings/{h.name}.yaml marks them local_only: "
+              f"no sandbox runs them): run these yourself{where}, after setting each {shell_var} to this machine's "
+              "own value:")
+        for c in local:
+            print(f"  {c}")
+        add_scope = "local" if a.scope == "project" else a.scope
+        for server, var in unset_variables(h):
+            print(f"  warning: {var} is not set in this shell. Set it before you run the {server} line: Claude Code "
+                  f"stores the value the line gives it, an unset one as empty, and starts {server} with that even "
+                  f"after you set {var}. To change it later, run `claude mcp remove --scope {add_scope} {server}` "
+                  "and its line again.", file=sys.stderr)
+    for x in skipped:
+        print(f"  warning: local_only server skipped: {x}", file=sys.stderr)
     plugins = plugin_commands(h, a.scope)
     if plugins:
         print("Plugins: run these yourself:")
