@@ -1278,7 +1278,7 @@ def test_the_read_only_stages_are_the_shared_stage_agents():
 
 @pytest.mark.parametrize("command", [
     'git clone --quiet --depth 1 "$KNOWLEDGE_REPO" "${TMPDIR:-/tmp}/knowledge"',
-    'git clone -q --single-branch --no-tags "$R" /tmp/knowledge-scratch',
+    'git clone -q --single-branch --no-tags ${KNOWLEDGE_REPO} /tmp/knowledge-scratch',
     "ai-dlc knowledge records search --provider git --type decision --status accepted --text retry",
     "ai-dlc knowledge records get --provider git DEC-0012",
     "ai-dlc knowledge why KAN-12",
@@ -1314,6 +1314,25 @@ def test_a_stage_may_read(command):
     ('git clone --template=/x "$R" /tmp/k', "scratch clone"),
     ('git clone "$R" /tmp/../home/k', "scratch clone"),
     ("ai-dlc knowledge records template source", "knowledge"),
+    # the independent review's bypasses: a variable, a planted program, a pager or external diff, another source
+    ("GIT_EXTERNAL_DIFF='sh -c x' git diff", "sets a variable"),
+    ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=x git status", "sets a variable"),
+    ("LD_PRELOAD=/tmp/k/x.so cat x", "sets a variable"),
+    ("HOME=/tmp/k; git status", "sets a variable"),
+    ('git clone -q "$KNOWLEDGE_REPO" /tmp/k && PATH=/tmp/k cat x', "sets a variable"),
+    ('TMPDIR=/home/u/.config; git clone -q "$KNOWLEDGE_REPO" "$TMPDIR/git"', "sets a variable"),
+    ("env X=1 cat x", "`env` is not on its list"),
+    ("printf -v PATH /tmp/k", "`printf` is not on its list"),
+    ("export X=1", "`export` is not on its list"),
+    ("git grep -O'sh -c x' foo", "writes or runs another program"),
+    ("git grep -nOsh foo", "writes or runs another program"),
+    ("git diff --ext-diff", "writes or runs another program"),
+    ("rg --pre=./x foo", "writes or runs another program"),
+    ("git --git-dir=/tmp/k/evil status", "sets configuration"),
+    ("git clone -q https://example.invalid/x /tmp/k", "scratch clone"),
+    ("GIT_ALLOW_PROTOCOL=ext git clone 'ext::sh -c x' /tmp/k", "sets a variable"),
+    ("git clone -q 'ext::sh -c x' /tmp/k", "scratch clone"),
+    ("cat </dev/tcp/example.invalid/80", "network"),
     ("ai-dlc work finish KAN-1", "ai-dlc work"),
     ("gh api repos/o/r/issues -f title=x", "`gh api"),
     ("gh pr comment 1 -b x", "`gh pr comment` is not a read"),
@@ -1333,6 +1352,11 @@ def test_a_stage_may_not_write_or_run(command, reason):
     ("Set-Content x y", 2),
     ("Get-Content a > b", 2),
     ("Get-Content a > $null", 0),
+    ("Get-Content a *> b", 2),
+    ("Write-Output x *>> $HOME/x.ps1", 2),
+    ("Get-Content a *> $null", 0),
+    ("Get-ChildItem \\\\host\\share", 2),
+    ("$env:PATH = 'C:\\k'", 2),
 ])
 def test_a_stage_in_powershell(command, code):
     assert stage("PowerShell", {"command": command}).returncode == code
@@ -1359,6 +1383,14 @@ def test_a_stage_may_call_read_tools(tool, args):
     ("mcp__atlassian__executeRead", {"name": "createJiraIssue"}),
     ("mcp__atlassian__executeRead", {"cloudId": "x"}),
     ("mcp__atlassian__executeWrite", {"name": "getJiraIssue"}),
+    ("mcp__atlassian__executeRead", {"name": "getJiraIssue", "slug": "deleteJiraIssue"}),
+    ("mcp__x__check_and_deploy", {}),
+    ("mcp__x__get_and_approve", {}),
+    ("mcp__x__view_and_close_issue", {}),
+    ("mcp__x__read_and_exec", {}),
+    ("mcp__x__download_attachment", {"path": "x"}),
+    ("mcp__x__call_tool", {"tool": "get_x"}),
+    ("mcp__x__run", {"name": "get_x", "command": "x"}),
 ])
 def test_a_stage_may_not_call_write_tools(tool, args):
     result = stage(tool, args, "triage")
@@ -1372,6 +1404,21 @@ def test_other_sessions_are_judged_as_before(agent):
     assert stage("mcp__ai-dlc__tracker_create", {"title": "x"}, agent).returncode == 0
     # the rules above still hold for every session, stage or not
     assert stage("Bash", {"command": "git push --force"}, agent).returncode == 2
+
+
+@pytest.mark.parametrize("agent", ["plugin:designer", "Designer", "TRIAGE"])
+def test_a_stage_is_known_by_any_case_or_plugin_prefix(agent):
+    assert stage("Bash", {"command": "echo draft > notes.md"}, agent).returncode == 2
+
+
+@pytest.mark.parametrize("command", [
+    'cat <<"E"OF\nx\nEOF\ngit push --force origin main\nE\n',
+    'cat <<E"O"F\nx\nEOF\ngit push --force origin main\n',
+    "cat <<E\\OF\nx\nEOF\ngit push --force origin main\n",
+])
+def test_a_heredoc_delimiter_is_the_whole_word(command):
+    """bash reads `<<"E"OF` as the delimiter EOF: the push after it runs, so it is judged (every session)."""
+    assert bash(command) == 2
 
 
 def test_a_stage_still_gets_the_rules_every_session_gets():

@@ -36,13 +36,17 @@ and skips the call), for:
   deletes, labels `exec:` or writes the wiki: those go through the role-bound MCP tools above.
 
 A call made inside one of the read-only stage subagents (`triage`, `designer`, `review-lint`: the event's
-`agent_type`) is held to reading, on top of everything above. Its MCP calls must be named as reads (`get`,
-`search`, `list` and the like), and a dispatcher or router call must name only read operations. Its shell calls may
-only run reading commands (`cat`, `grep`, `rg`, `find` without `-exec` or `-delete`, `Get-Content` and the like), git
-reads (`log`, `show`, `diff`, `status` and the like, no `-c`), `gh` views and lists, the `ai-dlc knowledge` reads, and
-the knowledge skills' scratch clone into `$TMPDIR` or `/tmp`; no redirect to a file, no command substitution, and in
-PowerShell no script block. The stage drafts; the session that called it files, edits and runs. Calls outside those
-stages are judged as before.
+`agent_type`, in any case and with any `plugin:` prefix) is held to reading, on top of everything above. Its MCP
+calls must hold a read word (`get`, `search`, `list` and the like) and no other verb (`get_and_approve`,
+`download_attachment` are refused), and a dispatcher such as `executeRead` must be a read and name only read
+operations; a generic router is refused. Its shell calls may only run reading commands (`cat`, `grep`, `rg`, `find`
+without `-exec` or `-delete`, `Get-Content` and the like), git reads (`log`, `show`, `diff`, `status` and the like; no
+`-c`, `--git-dir`, `-O` or `--ext-diff`), `gh` views and lists, the `ai-dlc knowledge` reads, and the knowledge skills'
+scratch clone of `$KNOWLEDGE_REPO` into `$TMPDIR` or `/tmp`. A stage's shell call sets no variable (`X=y cmd`,
+`$x = ...`), redirects to no file (`>`, `>>`, PowerShell's `*>`), runs no command substitution or PowerShell script
+block, and names no network path (`/dev/tcp`, a UNC path). The stage drafts; the session that called it files,
+edits and runs. Calls outside those stages are judged as before. Not covered: the stage's built-in tools (Write,
+WebFetch), which settings.json does not route to this hook; its `tools:` allowlist and `disallowedTools` hold those.
 
 Labels and other MCP input are compared after NFKC normalisation with format characters (zero-width and the like)
 removed, as ai-dlc does, so `exec:agent` with a zero-width space or a fullwidth colon in it still reads as `exec:agent`.
@@ -620,8 +624,8 @@ def _wiki_write(args: dict) -> str | None:
 # allowlist, which can only name whole servers and leaves a shell open.
 READ_ONLY_STAGES = frozenset({"triage", "designer", "review-lint"})
 STAGE_READERS = frozenset({
-    "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "pwd", "echo", "printf", "cut", "tr", "jq",
-    "diff", "cmp", "file", "stat", "basename", "dirname", "realpath", "readlink", "test", "[", "true", "false",
+    "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "pwd", "echo", "cut", "tr", "jq",
+    "diff", "cmp", "stat", "basename", "dirname", "realpath", "readlink", "test", "[", "true", "false",
     "which", "type", "cd", "pushd", "popd", "find",
     # PowerShell's readers (Windows teammates), by name and alias
     "get-content", "gc", "get-childitem", "gci", "dir", "select-string", "sls", "get-item", "gi", "test-path",
@@ -631,17 +635,23 @@ STAGE_GIT = frozenset({"log", "show", "diff", "status", "rev-parse", "ls-files",
                        "describe", "merge-base", "shortlog", "ls-tree", "rev-list", "show-ref", "version"})
 STAGE_GH = frozenset({("pr", "view"), ("pr", "diff"), ("pr", "checks"), ("pr", "list"), ("pr", "status"),
                       ("issue", "view"), ("issue", "list"), ("repo", "view"), ("run", "view"), ("run", "list")})
-STAGE_NEVER_FLAGS = re.compile(r"^(?:--output\b|-O$|--open-files-in-pager\b|--pre\b|--pre=|-(?:exec|execdir|ok|okdir|"
-                               r"delete|fprint0?|fprintf|fls)$)")
+STAGE_NEVER_FLAGS = re.compile(r"^(?:--output\b|--open-files-in-pager\b|--pre\b|--pre-glob\b|--ext-diff\b|--textconv\b|"
+                               r"-[A-Za-z0-9]*O|-(?:exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$)")
 STAGE_CLONE_FLAGS = re.compile(r"^(?:-q|--quiet|--single-branch|--no-tags|--depth(?:=\d+)?|--filter=\S+|-b|--branch"
                                r"(?:=\S+)?)$")
 STAGE_SCRATCH = re.compile(r"^(?:\$\{TMPDIR(?::-/tmp)?\}|\$TMPDIR|/tmp)/[^/]")  # the knowledge skills' scratch clone
+STAGE_CLONE_SOURCE = re.compile(r"^\$(?:KNOWLEDGE_REPO|\{KNOWLEDGE_REPO\})$")  # only the team's knowledge repository
+STAGE_ASSIGN = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=|\$)")  # bash `X=y`, PowerShell `$x = ...`
+STAGE_NETWORK = re.compile(r"/dev/(?:tcp|udp)/|(?:^|[\s'\"=])(?:\\\\|//)[^\\/\s]")  # bash's network files, a UNC path
 STAGE_NULL = re.compile(r"^(?:/dev/null|nul|\$null|&?[0-9]-?)$", re.I)
 
 
 def _stage(event: dict) -> str | None:
     name = event.get("agent_type")
-    return name if isinstance(name, str) and name in READ_ONLY_STAGES else None
+    if not isinstance(name, str):
+        return None
+    name = name.rsplit(":", 1)[-1].strip().lower()  # a plugin's `plugin:designer`, any case: fail closed
+    return name if name in READ_ONLY_STAGES else None
 
 
 def _stage_refuse(stage: str, what: str) -> str:
@@ -653,16 +663,32 @@ def _stage_mcp(stage: str, tool: str, args: dict) -> str | None:
     """Any MCP call from a stage must be a read by its name, and a dispatcher's every operation too."""
     m = MCP_TOOL.match(tool)
     tokens = _tokens(m.group(2))
-    verb = _verb(tokens)
-    if DISPATCH & set(tokens[:1]) or _router(tokens):
+    if DISPATCH & set(tokens[:1]):  # Atlassian's executeRead: its own name and every operation it names must read
         ops = _named(args, OP_KEYS)
-        if verb in ("write", "transition", "destructive") or not ops or \
-                any(_verb(_op_tokens(op)) != "read" for op in ops):
+        names = [v for v in args.values() if isinstance(v, str) and STAGE_OP.match(v)]
+        if not _stage_read(tokens[1:]) or not ops or not all(_stage_read(_op_tokens(op)) for op in ops) or \
+                any(STAGE_NOT_READ & set(_op_tokens(v)) for v in names):  # an operation under another key
             return _stage_refuse(stage, f"`{m.group(2)}` runs an operation that is not a read")
         return None
-    if verb != "read":
+    if _router(tokens):
+        return _stage_refuse(stage, f"`{m.group(2)}` runs another tool, which a stage may not")
+    if not _stage_read(tokens):
         return _stage_refuse(stage, f"`{m.group(2)}` is not a read")
     return None
+
+
+# A stage's MCP call reads only when its name holds a read word and no word in it does anything else:
+# `get_and_approve`, `check_and_deploy` and `download_attachment` (which saves a file) are not reads.
+STAGE_READ_WORDS = READ - {"download", "check", "doctor", "gate", "impact", "inventory"}
+STAGE_NOT_READ = WRITE | DESTRUCTIVE | TRANSITION | DISPATCH | {
+    "approve", "deploy", "kill", "close", "grant", "revoke", "exec", "download", "export", "open", "lock", "unlock",
+    "cancel", "rerun", "retry", "trigger", "dispatch", "fork", "accept", "reject", "dismiss", "request", "pin",
+    "unpin", "star", "unstar", "subscribe", "unsubscribe", "share", "transfer", "run", "use", "and", "then"}
+STAGE_OP = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
+
+
+def _stage_read(tokens: list[str]) -> bool:
+    return bool(STAGE_READ_WORDS & set(tokens)) and not STAGE_NOT_READ & set(tokens)
 
 
 def _stage_shell(stage: str, command: str, powershell: bool = False) -> str | None:
@@ -677,7 +703,13 @@ def _stage_shell(stage: str, command: str, powershell: bool = False) -> str | No
     for seg in segs:
         if powershell and re.search(r"[{}]|[$@]\(", seg):
             return _stage_refuse(stage, "its shell call holds a script block or subexpression")
-        words, i = _strip_env(_words(seg)), 0
+        if powershell and re.search(r"\*>(?!>?\s*\$null\b)", seg):
+            return _stage_refuse(stage, "its shell call writes to a file")
+        words, i = _words(seg), 0
+        if words and STAGE_ASSIGN.match(words[0]):
+            return _stage_refuse(stage, "its shell call sets a variable, which can change what a command runs")
+        if STAGE_NETWORK.search(seg):
+            return _stage_refuse(stage, "its shell call reaches the network through a file path")
         kept: list[str] = []
         while i < len(words):
             r = REDIRECT.match(words[i])
@@ -708,7 +740,8 @@ def _stage_command(stage: str, words: list[str]) -> str | None:
         j = 1
         while j < len(words) and words[j].startswith("-"):  # git's own options, before the subcommand
             w = words[j]
-            if w in ("-c", "--config-env", "--exec-path") or w.startswith(("--config-env=", "--exec-path=")):
+            if w in ("-c", "--config-env", "--exec-path", "--git-dir") or \
+                    w.startswith(("--config-env=", "--exec-path=", "--git-dir=")):
                 return _stage_refuse(stage, "its git call sets configuration, which can run a program")
             j += 2 if w in ("-C", "--git-dir", "--work-tree", "--namespace") else 1
         sub, _, rest = _git_subcommand(words)
@@ -725,7 +758,8 @@ def _stage_command(stage: str, words: list[str]) -> str | None:
                     positional.append(w)
                     j += 1
             if all(STAGE_CLONE_FLAGS.match(f) for f in flags) and len(positional) == 2 and \
-                    STAGE_SCRATCH.match(positional[1]) and ".." not in positional[1]:
+                    STAGE_CLONE_SOURCE.match(positional[0]) and STAGE_SCRATCH.match(positional[1]) and \
+                    ".." not in positional[1]:
                 return None
             return _stage_refuse(stage, "its git clone is not the knowledge skills' scratch clone in a temporary folder")
         return _stage_refuse(stage, f"`git {sub}` is not a read")
@@ -946,7 +980,13 @@ def _github_mcp(name: str, args: dict) -> str | None:
     return None
 
 
-HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z0-9_.-]+)\2")
+HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^'\n]*'|\"[^\"\n]*\"|\\.|[^\s;&|<>()'\"\\])+)")
+
+
+def _heredoc_delim(word: str) -> str:
+    """The delimiter as bash reads it: the whole word after `<<`, with its quotes and backslashes removed, so
+    `<<"E"OF` ends at a line `EOF`, not `E`."""
+    return re.sub(r"'([^']*)'|\"([^\"]*)\"|\\(.)", lambda m: next(g for g in m.groups() if g is not None), word)
 
 
 def _split(command: str) -> tuple[list[str], list[str], dict[int, str]]:
@@ -999,7 +1039,7 @@ def _split(command: str) -> tuple[list[str], list[str], dict[int, str]]:
         elif quote is None:
             m = HEREDOC.match(command, i) if command.startswith("<<", i) and not command.startswith("<<<", i) else None
             if m:
-                pending.append((m.group(3), m.group(1) == "-"))
+                pending.append((_heredoc_delim(m.group(2)), m.group(1) == "-"))
                 cur.append(m.group(0))
                 i = m.end()
                 continue
