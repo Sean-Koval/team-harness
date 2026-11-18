@@ -40,6 +40,15 @@ in KAN-450. Until then the check runs rules 1-5 without the ticket check, and th
 `unverified` and fail closed (KAN-365), so a person must approve the merge. At work, keep `allow-unverified` false
 (leave it unset) until KAN-450, so the gates stay closed.
 
+## How the ticket is read
+
+Rule 6 reads the ticket through [`tracker.py`](tracker.py), the check's side of the tracker role (KAN-437). A
+provider answers with a normalised issue: its key, status, category (`todo`, `in_progress` or `done`), kind (`work`,
+`epic` or `decision`), labels, and the issues that block it. `check.py` judges only that shape, so another tracker is
+a new provider in `tracker.py`, chosen with `tracker-provider`, and no change to `check.py`. Providers are built in by
+name and never loaded from the repository, so a PR can't bring its own. Today there is one, `jira-cloud`, with the
+`jira-*` inputs above. The org's approval gates (below) still read Jira directly until they move behind the same seam.
+
 ## Keep PRs small and source-only
 
 Parallel PRs conflict on generated files, and big PRs conflict more (KAN-481), so the check also holds every PR to
