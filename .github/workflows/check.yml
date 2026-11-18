@@ -63,6 +63,14 @@ jobs:
         run: flightdeck spec lint flightdeck/specs/*.yaml
       - name: Task check (regression-v0)
         run: flightdeck task check flightdeck/suites/regression-v0/tasks/*/
+      # a venv of its own for the scaffold-artifact MCP server template (its mcp pin is not hangar's):
+      # tests/test_scaffold_artifact.py renders the template, installs it with its pinned [dev] extra there and runs
+      # its verify command (KAN-512); SCAFFOLD_REQUIRED makes a missing venv fail here rather than skip
+      - name: Venv for the MCP server template's verify command
+        run: |
+          python -m venv "$RUNNER_TEMP/scaffold"
+          echo "SCAFFOLD_PYTHON=$RUNNER_TEMP/scaffold/bin/python" >> "$GITHUB_ENV"
+          echo "SCAFFOLD_REQUIRED=1" >> "$GITHUB_ENV"
       - name: Hook tests
         run: python -m pytest -q -rs tests
 
