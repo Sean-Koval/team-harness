@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "team-harness.artifact-check/v1",
+  "title": "Artifact check receipt",
+  "description": "What artifact_check.py found on one run: one case per tool, golden call or agent task, and what the run spent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "model", "budget_usd", "cost_usd", "tokens", "min_pass_rate", "pass_rate",
+               "stopped_at_budget", "passed", "cases"],
+  "properties": {
+    "schema": {"const": "team-harness.artifact-check/v1"},
+    "kind": {"enum": ["mcp-server", "agent", "bot"]},
+    "model": {"type": ["string", "null"], "description": "The model an agent or bot ran on; null for an MCP server."},
+    "budget_usd": {"type": ["number", "null"], "minimum": 0},
+    "cost_usd": {"type": "number", "minimum": 0},
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output"],
+      "properties": {"input": {"type": "integer", "minimum": 0}, "output": {"type": "integer", "minimum": 0}}
+    },
+    "min_pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "stopped_at_budget": {"type": "boolean"},
+    "passed": {"type": "boolean"},
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "detail"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["pass", "fail", "not_run"]},
+          "detail": {"type": "string"},
+          "tokens": {"$ref": "#/properties/tokens"},
+          "cost_usd": {"type": "number", "minimum": 0}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,113 @@
+# The artifact check (KAN-517): one eval gate a scaffolded repository calls on every PR. For an MCP server it starts
+# the server over stdio, checks every tool's input schema and runs the golden calls; for an agent or bot it runs
+# evals/tasks/*.yaml under a hard budget. It writes artifact-check.json (actions/artifact-check/receipt.schema.json) as
+# a run artifact and a job summary. Read-only: the job token reads the repository and nothing else; an agent's model
+# key comes from the caller's own secret. How to call it: actions/artifact-check/README.md.
+name: artifact-check
+on:
+  workflow_call:
+    inputs:
+      kind:
+        description: mcp-server, agent or bot
+        type: string
+        required: true
+      harness-ref:
+        description: The team-harness commit to run (the full SHA you pin this workflow at; no moving refs)
+        type: string
+        required: true
+      command:
+        description: The server command (mcp-server) or the agent command that runs one task
+        type: string
+        required: true
+      budget-usd:
+        description: Hard spending cap for an agent or bot run
+        type: number
+        default: 1
+      model:
+        description: The model an agent or bot runs on; it must have a row in the usage hook's price table
+        type: string
+        default: claude-haiku-5-5
+      min-pass-rate:
+        description: Share of agent tasks that must pass (an MCP server must pass every case)
+        type: number
+        default: 1
+      python-version:
+        type: string
+        default: "3.12"
+      setup:
+        description: Shell commands that install the repository so `command` runs (any language; run with bash)
+        type: string
+        default: python -m pip install --quiet -e ".[dev]"
+      timeout:
+        description: Seconds for one server answer or one agent task
+        type: number
+        default: 600
+      time-limit:
+        description: Seconds for the whole check; the cases left are reported not_run (keep it under 50 minutes)
+        type: number
+        default: 2700
+      artifact-name:
+        description: The run artifact's name (set it when one workflow run calls the check twice)
+        type: string
+        default: artifact-check
+    secrets:
+      model-api-key:
+        description: The repository's own model key, given to the agent command as ANTHROPIC_API_KEY
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  artifact-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: The harness ref is a full commit SHA
+        env:
+          HARNESS_REF: ${{ inputs.harness-ref }}
+        run: |
+          if ! printf '%s' "$HARNESS_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::harness-ref must be a full 40-character commit SHA, not a branch or tag"
+            exit 2
+          fi
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Sean-Koval/team-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .artifact-check/team-harness
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+      # the check's libraries in a venv of their own, so they can't change the repository's environment
+      - name: The check's own venv
+        run: |
+          python -m venv "$RUNNER_TEMP/artifact-check"
+          "$RUNNER_TEMP/artifact-check/bin/python" -m pip install --quiet "jsonschema>=4,<5" "pyyaml==6.0.3"
+      - name: Set up the repository
+        env:
+          SETUP: ${{ inputs.setup }}
+        run: eval "$SETUP"
+      - name: Artifact check
+        env:
+          KIND: ${{ inputs.kind }}
+          COMMAND: ${{ inputs.command }}
+          MODEL: ${{ inputs.model }}
+          BUDGET: ${{ inputs.budget-usd }}
+          MIN_PASS_RATE: ${{ inputs.min-pass-rate }}
+          TIMEOUT: ${{ inputs.timeout }}
+          TIME_LIMIT: ${{ inputs.time-limit }}
+          ANTHROPIC_API_KEY: ${{ secrets.model-api-key }}
+        run: >-
+          "$RUNNER_TEMP/artifact-check/bin/python" .artifact-check/team-harness/actions/artifact-check/artifact_check.py
+          --kind "$KIND" --command "$COMMAND" --model "$MODEL" --budget-usd "$BUDGET" --min-pass-rate "$MIN_PASS_RATE"
+          --timeout "$TIMEOUT" --time-limit "$TIME_LIMIT" --out artifact-check.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifact-check.json') != '' }}
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: artifact-check.json
