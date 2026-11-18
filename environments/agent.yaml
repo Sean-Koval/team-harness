@@ -23,7 +23,7 @@ tools:
 dependencies:
   script: |
     git clone --quiet --filter=blob:none https://github.com/Sean-Koval/ai-dlc /home/agent/.local/share/ai-dlc
-    git -C /home/agent/.local/share/ai-dlc checkout --quiet "67323a98e5426b067ca017f1dfcc023bbcf12906"
+    git -C /home/agent/.local/share/ai-dlc checkout --quiet "c217bd0c09918a26db8d5d42e02e00cf9e9d9e81"
     cd /home/agent/.local/share/ai-dlc
     UV_PYTHON_DOWNLOADS=never uv sync --locked --no-dev --python "$(mise which python)"
     mkdir -p /home/agent/.local/bin
@@ -46,7 +46,7 @@ env:
   AGENT_ENV: agent
   AGENT_ENV_HARNESS: suite-default
   AGENT_ENV_HARNESS_DIGEST: "sha256:e9e08fb4dc0b99856b33bb9567e9c144de78307935ec987695fe8427aaff1230"  # r17
-  AI_DLC_REF: "67323a98e5426b067ca017f1dfcc023bbcf12906"
+  AI_DLC_REF: "c217bd0c09918a26db8d5d42e02e00cf9e9d9e81"
   KNOWLEDGE_FORMAT_VERSION: "1"   # ai-dlc's knowledge-record FORMAT_VERSION; a knowledge repo pins [format] version
 secrets:                          # ENV_VAR: hangar credential name (values never live here)
   GH_TOKEN: github-agent          # clone CODE_REPO and KNOWLEDGE_REPO, read the repo's API
