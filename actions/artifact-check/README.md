@@ -13,7 +13,7 @@ in flightdeck. The logic is [`artifact_check.py`](artifact_check.py); the reusab
   protocol error. At the end the server and everything it started are killed.
 - **agent or bot:** it runs `evals/tasks/*.yaml` one at a time through the repository's agent command, on the given
   model. The budget is checked between tasks: once it is spent, no task starts and the rest are reported `not_run`. One
-  task can overrun it, and a run that spent more than its budget fails. A task's spend counts even when it fails. When a task's cost can't be read (no `usage`, or a rate the price table lacks), no further
+  task can overrun it, and a run that spent more than its budget fails (`over_budget` in the receipt). A task's spend counts even when it fails. When a task's cost can't be read (no `usage`, or a rate the price table lacks), no further
   task starts, since the budget could no longer be held.
 
 Each server answer or task gets `timeout` seconds and the whole run `time-limit`; cases past it are `not_run`.

@@ -6,7 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "kind", "model", "budget_usd", "cost_usd", "tokens", "min_pass_rate", "pass_rate",
-               "stopped_at_budget", "passed", "cases"],
+               "stopped_at_budget", "over_budget", "passed", "cases"],
   "properties": {
     "schema": {"const": "team-harness.artifact-check/v1"},
     "kind": {"enum": ["mcp-server", "agent", "bot"]},
@@ -22,6 +22,7 @@
     "min_pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
     "pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
     "stopped_at_budget": {"type": "boolean"},
+    "over_budget": {"type": "boolean", "description": "One task overran the budget, which is checked between tasks; a run over it never passes."},
     "passed": {"type": "boolean"},
     "cases": {
       "type": "array",

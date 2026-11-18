@@ -195,9 +195,9 @@ def test_an_agent_eval_passes_and_prices_its_tokens(agent_repo):
 def test_an_agent_eval_stops_at_the_budget_and_reports_partial_results(agent_repo):
     code, receipt, out = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "0.012")
     assert code == 1, out
-    assert statuses(receipt) == {"task-1": "pass", "task-2": "pass", "task-3": "not_run", "task-4": "not_run",
-                                 "budget": "fail"}  # task-2 took it to $0.014, over $0.012
-    assert receipt["stopped_at_budget"] and receipt["pass_rate"] == 0.4
+    assert statuses(receipt) == {"task-1": "pass", "task-2": "pass", "task-3": "not_run", "task-4": "not_run"}
+    assert receipt["stopped_at_budget"] and receipt["pass_rate"] == 0.5
+    assert receipt["over_budget"]  # task-2 took it to $0.014, over $0.012
     assert receipt["cost_usd"] == pytest.approx(0.014)  # the task that crossed the cap finished; none started after
     assert "Stopped at the budget" in out
 
@@ -223,18 +223,24 @@ def test_a_failing_agent_command_fails_its_task_and_its_spend_still_counts(agent
     code, receipt, _ = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "0.012")
     assert code == 1 and "exited 4" in detail(receipt, "task-1")
     assert receipt["cost_usd"] == pytest.approx(0.015) and receipt["stopped_at_budget"]
-    assert statuses(receipt) == {"task-1": "fail", "task-2": "not_run", "task-3": "not_run", "task-4": "not_run",
-                                 "budget": "fail"}
+    assert statuses(receipt) == {"task-1": "fail", "task-2": "not_run", "task-3": "not_run", "task-4": "not_run"}
+    assert receipt["over_budget"]
 
 
-def test_one_task_that_overruns_the_budget_fails_the_run(agent_repo):
-    for i in (2, 3, 4):
-        (agent_repo / "evals" / "tasks" / f"t{i}.yaml").unlink()
-    edit_task(agent_repo, "t1.yaml", usage={"input_tokens": 20_000_000, "output_tokens": 1_000_000})
-    code, receipt, _ = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "1")
-    assert code == 1 and not receipt["passed"] and receipt["cost_usd"] > 1
-    assert statuses(receipt) == {"task-1": "pass", "budget": "fail"}
-    assert "over its $1.00 budget" in detail(receipt, "budget")
+def test_one_task_that_overruns_the_budget_fails_the_run_whatever_the_pass_rate(agent_repo):
+    for i in range(5, 11):  # ten tasks, the last of which overruns: 9 of 10 pass
+        edit_task(agent_repo, "t1.yaml")
+        (agent_repo / "evals" / "tasks" / f"t{i:02}.yaml").write_text(
+            (agent_repo / "evals" / "tasks" / "t1.yaml").read_text(encoding="utf-8").replace("task-1", f"task-{i}"),
+            encoding="utf-8")
+    (agent_repo / "evals" / "tasks" / "t99.yaml").write_text(yaml.safe_dump(
+        {"id": "big", "input": "hi", "reply": "hi", "expect": {"contains": ["nope"]},
+         "usage": {"input_tokens": 20_000_000, "output_tokens": 1_000_000}}), encoding="utf-8")
+    code, receipt, out = run(agent_repo, "--kind", "agent", "--command", agent(), "--budget-usd", "1",
+                             "--min-pass-rate", "0.9")
+    assert receipt["pass_rate"] >= 0.9 and receipt["cost_usd"] > 1
+    assert code == 1 and receipt["over_budget"] and not receipt["passed"]
+    assert "Over the budget" in out
 
 
 @pytest.mark.parametrize("expect", [None, ["hi"], {"contains": "hi"}, {"contains": []}, {"contains": [""]}])

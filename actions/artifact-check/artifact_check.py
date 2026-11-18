@@ -323,7 +323,7 @@ def check_agent(repo: Path, command: str | list[str], model: str, budget: float,
             cases.append(case(cid, "fail", f"{path.name} needs expect.contains, a non-empty list of strings"))
             continue
         if not halt and spent >= budget:
-            halt, stopped = f"not run: the budget of ${budget:.2f} was spent", True
+            halt, stopped = f"not run: the budget of ${budget:g} was spent", True
         if not halt and time.monotonic() >= end:
             halt = "not run: the run's time limit was reached"
         if halt:
@@ -348,9 +348,9 @@ def check_agent(repo: Path, command: str | list[str], model: str, budget: float,
         missing = [w for w in wanted if w not in str(out.get("output"))]
         detail = f"the output lacks {missing[0]!r}" if missing else ""
         cases.append(case(cid, "fail" if missing else "pass", detail, tokens=used, cost_usd=round(cost, 6)))
-    if spent > budget:  # checked between tasks, so one task can overrun it: that never passes
-        cases.append(case("budget", "fail", f"the run spent ${spent:.4f}, over its ${budget:.2f} budget"))
-    return cases, {"cost_usd": round(spent, 6), "tokens": tokens, "stopped_at_budget": stopped}
+    # checked between tasks, so one task can overrun it: an overrun fails the run whatever the pass rate
+    return cases, {"cost_usd": round(spent, 6), "tokens": tokens, "stopped_at_budget": stopped,
+                   "over_budget": spent > budget}
 
 
 # ---------------------------------------------------------------- receipt
@@ -360,9 +360,10 @@ def summary(receipt: dict) -> str:
     head = "passed" if receipt["passed"] else "failed"
     lines = [f"### Artifact check ({receipt['kind']}): {head}", "",
              f"Pass rate {receipt['pass_rate']:.0%} (needs {receipt['min_pass_rate']:.0%})"
-             + (f", ${receipt['cost_usd']:.4f} of ${receipt['budget_usd']:.2f} on {receipt['model']}"
+             + (f", ${receipt['cost_usd']:.4f} of ${receipt['budget_usd']:g} on {receipt['model']}"
                 if receipt["model"] else "")
-             + (". Stopped at the budget." if receipt["stopped_at_budget"] else "."), "",
+             + (". Stopped at the budget." if receipt["stopped_at_budget"] else ".")
+             + (" Over the budget, which fails the run." if receipt["over_budget"] else ""), "",
              "| Case | Result | Detail |", "| --- | --- | --- |"]
     lines += [f"| {c['id']} | {c['status']} | {c['detail'].replace('|', '/')} |" for c in receipt["cases"]]
     return "\n".join(lines) + "\n"
@@ -405,7 +406,8 @@ def main(argv: list[str] | None = None) -> int:
         "budget_usd": a.budget_usd if agent else None, "cost_usd": spend.get("cost_usd", 0.0),
         "tokens": spend.get("tokens", {"input": 0, "output": 0}), "min_pass_rate": a.min_pass_rate if agent else 1.0,
         "pass_rate": round(rate, 4), "stopped_at_budget": spend.get("stopped_at_budget", False),
-        "passed": rate >= a.min_pass_rate if agent else rate == 1.0, "cases": cases,
+        "over_budget": spend.get("over_budget", False), "cases": cases,
+        "passed": (rate >= a.min_pass_rate and not spend.get("over_budget")) if agent else rate == 1.0,
     }
     from jsonschema import Draft202012Validator
 
