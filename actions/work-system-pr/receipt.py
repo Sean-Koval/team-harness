@@ -2,15 +2,16 @@
 
 A repository that runs the artifact-check workflow (KAN-517) passes its receipt (artifact-check.json, schema
 team-harness.artifact-check/v1, actions/artifact-check/receipt.schema.json) to this check with `artifact-receipt`.
-The PR then needs that receipt, well formed, with `passed` true. A missing or unreadable receipt fails, unless
-allow-unverified is set. A run stopped at or over its budget, or one whose numbers don't add up to a pass, never
-passes. Stdlib only, like the rest of the check.
+The PR then needs that receipt, well formed, with `passed` true by the check's own rule. A missing receipt fails
+unless allow-unverified is set; an unreadable or malformed one, one committed to the repository or the PR, a run over
+its budget, or one whose numbers don't add up to a pass always fails. Stdlib only, like the rest of the check.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import PureWindowsPath
 from typing import Any
 
@@ -72,48 +73,99 @@ def problems(r: Any) -> list[str]:
     return out
 
 
-def _passes(r: dict[str, Any]) -> str | None:
-    """Why a well-formed receipt doesn't pass, or None. `passed` is the check's own verdict; a receipt that says
-    passed while its own numbers say otherwise is refused, as a hand-edited or broken one."""
-    if r["stopped_at_budget"]:
-        n = sum(c["status"] == "not_run" for c in r["cases"])
-        return f"it stopped at its budget of ${r['budget_usd']} with {n} case(s) not run; raise the budget or trim them"
+def _usd(v: Any) -> str:
+    return f"${v:g}" if isinstance(v, (int, float)) else "no budget"
+
+
+def _passes(r: dict[str, Any], min_pass_rate: float | None = None) -> str | None:
+    """Why a well-formed receipt doesn't pass, or None. It follows the check's own rule (artifact_check.py): the
+    share of cases that passed, with not_run cases counted as not passed, must reach min_pass_rate (all of them for
+    an MCP server), and a run over its budget fails. So a run stopped at its budget passes only if the cases it ran
+    already carry the rate. A receipt whose `passed` or pass_rate disagrees with its own cases is refused, as a
+    hand-edited or broken one. `min_pass_rate`, when the caller sets one, is a floor the receipt can't lower."""
+    cases = r["cases"]
+    n_pass = sum(c["status"] == "pass" for c in cases)
+    rate = n_pass / len(cases)
+    if abs(round(rate, 4) - r["pass_rate"]) > 5e-5:
+        return f"its cases pass {rate:.0%} but it reports {r['pass_rate']:.0%}"
+    need = 1.0 if r["kind"] == "mcp-server" else max(r["min_pass_rate"], min_pass_rate or 0.0)
+    ok = rate >= need and not r["over_budget"]
+    if r["passed"] and not ok:
+        if r["over_budget"]:
+            return f"it says passed, but it spent ${r['cost_usd']:.4f}, over its budget of {_usd(r['budget_usd'])}"
+        if r["kind"] == "mcp-server":
+            return "it says passed, but an MCP server's cases must all pass"
+        if min_pass_rate is not None and r["min_pass_rate"] < min_pass_rate:
+            return (f"its cases pass {rate:.0%}; it asked for {r['min_pass_rate']:.0%}, but this repository needs "
+                    f"{min_pass_rate:.0%}")
+        return f"it says passed, but its cases pass {rate:.0%}, against {need:.0%} needed"
+    if ok and r["passed"]:
+        return None
     if r["over_budget"]:
-        return f"it spent ${r['cost_usd']:.4f}, over its budget of ${r['budget_usd']}"
-    if not r["passed"]:
-        failed = [c for c in r["cases"] if c["status"] != "pass"]
-        named = "; ".join(f"{c['id']}: {c['detail']}" if c["detail"] else c["id"] for c in failed[:5])
-        more = f" (and {len(failed) - 5} more)" if len(failed) > 5 else ""
-        return (named + more) if named else f"pass rate {r['pass_rate']:.0%}, needs {r['min_pass_rate']:.0%}"
-    rate = sum(c["status"] == "pass" for c in r["cases"]) / len(r["cases"])
-    if r["pass_rate"] < r["min_pass_rate"] or abs(rate - r["pass_rate"]) > 1e-6:
-        return (f"it says passed, but its cases pass {rate:.0%} (it reports {r['pass_rate']:.0%}, against "
-                f"{r['min_pass_rate']:.0%} needed)")
-    if r["kind"] == "mcp-server" and any(c["status"] != "pass" for c in r["cases"]):
-        return "it says passed, but an MCP server's cases must all pass"
-    return None
+        return f"it spent ${r['cost_usd']:.4f}, over its budget of {_usd(r['budget_usd'])}"
+    if r["stopped_at_budget"]:
+        n = sum(c["status"] == "not_run" for c in cases)
+        return (f"it stopped at its budget of {_usd(r['budget_usd'])} with {n} case(s) not run, and the cases it ran "
+                f"pass {rate:.0%}, against {need:.0%} needed; raise the budget or trim the cases")
+    failed = [c for c in cases if c["status"] != "pass"]
+    named = "; ".join(f"{c['id']}: {c['detail']}" if c["detail"] else c["id"] for c in failed[:5])
+    more = f" (and {len(failed) - 5} more)" if len(failed) > 5 else ""
+    return f"pass rate {rate:.0%}, needs {need:.0%}" + (f": {named}{more}" if named else "")
 
 
-def check(path: str, workspace: str, *, allow_unverified: bool = False) -> tuple[list[str], list[str], list[str]]:
-    """(errors, warnings, summary lines) for the receipt at `path`, relative to the checkout at `workspace`."""
+_MISSING = (FileNotFoundError, NotADirectoryError)
+
+
+def _tracked(workspace: str, path: str) -> bool:
+    """Whether git tracks `path` in the checkout: a receipt that is part of the repository came from a commit, not
+    from this run. False when git can't say."""
+    try:
+        out = subprocess.run(["git", "-C", workspace, "ls-files", "--", path], capture_output=True, text=True,
+                             timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and bool(out.stdout.strip())
+
+
+def check(path: str, workspace: str, *, allow_unverified: bool = False, changed: list[str] | None = None,
+          min_pass_rate: float | None = None) -> tuple[list[str], list[str], list[str]]:
+    """(errors, warnings, summary lines) for the receipt at `path`, relative to the checkout at `workspace`.
+    `changed` is the PR's changed paths: a receipt the PR itself adds or edits is refused, since the PR's author
+    could write any verdict into it."""
     win = PureWindowsPath(path)
     if os.path.isabs(path) or path.startswith(("/", "\\")) or win.drive or ".." in win.parts:
         return [f"artifact-receipt {path!r} must be a path inside the checkout"], [], []
+    norm = path.replace("\\", "/").removeprefix("./")
+    if norm in (changed or []) or _tracked(workspace, norm):
+        why = (f"the artifact check's receipt {path} is a file in the repository or in this PR; it must be the one "
+               "the artifact-check job wrote on this run, so keep it out of git")
+        return [why], [], []
+    full = os.path.join(workspace, path)
+    root = os.path.realpath(workspace)
+    if os.path.lexists(full) and os.path.commonpath([root, os.path.realpath(full)]) != root:
+        return [f"the artifact check's receipt {path} links to a file outside the checkout"], [], []
     try:
-        with open(os.path.join(workspace, path), encoding="utf-8") as fh:
-            r = json.load(fh)
-    except (OSError, ValueError) as e:
-        msg = (f"the artifact check's receipt {path} could not be read ({type(e).__name__}); did the artifact-check "
-               "job run and hand its receipt to this job?")
+        with open(full, encoding="utf-8") as fh:
+            text = fh.read()
+    except _MISSING:
+        msg = (f"there is no artifact check receipt at {path}; did the artifact-check job run and hand its receipt "
+               "to this job?")
         if allow_unverified:
             return [], [msg + " Passing it unverified because allow-unverified is set"], []
         return [msg], [], []
+    except (OSError, ValueError) as e:
+        return [f"the artifact check's receipt {path} could not be read ({type(e).__name__})"], [], []
+    try:
+        r = json.loads(text)
+    except ValueError:
+        return [f"the artifact check's receipt {path} is not JSON"], [], []
     if bad := problems(r):
         return [f"the artifact check's receipt {path} is not a {SCHEMA} receipt: {'; '.join(bad)}"], [], []
-    why = _passes(r)
+    why = _passes(r, min_pass_rate)
     errors = [f"the artifact check ({r['kind']}) didn't pass: {why}"] if why else []
     spent = f", ${r['cost_usd']:.4f} spent" if r["kind"] != "mcp-server" else ""
     passed = sum(c["status"] == "pass" for c in r["cases"])
     verdict = "pass" if why is None else "fail"
-    lines = ["", "### Artifact check", "", f"{r['kind']}: {verdict}, {passed} of {len(r['cases'])} cases passed{spent}."]
+    lines = ["", "### Artifact check", "",
+             f"{r['kind']}: {verdict}, {passed} of {len(r['cases'])} cases passed{spent}.", ""]
     return errors, [], lines

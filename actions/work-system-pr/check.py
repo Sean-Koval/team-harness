@@ -1110,8 +1110,18 @@ def main() -> int:
 
     receipt_lines: list[str] = []
     if _out("ARTIFACT_RECEIPT"):
-        rerrs, rwarns, receipt_lines = receipt.check(_out("ARTIFACT_RECEIPT"), os.environ.get("GITHUB_WORKSPACE", "."),
-                                                     allow_unverified=allow_unverified)
+        floor = _out("ARTIFACT_MIN_PASS_RATE")
+        try:
+            min_rate = float(floor) if floor else None
+        except ValueError:
+            min_rate = None
+            res.errors.append(f"artifact-min-pass-rate {floor!r} is not a number from 0 to 1")
+        if min_rate is not None and not 0 <= min_rate <= 1:
+            res.errors.append(f"artifact-min-pass-rate {floor!r} is not a number from 0 to 1")
+            min_rate = None
+        rerrs, rwarns, receipt_lines = receipt.check(
+            _out("ARTIFACT_RECEIPT"), os.environ.get("GITHUB_WORKSPACE", "."), allow_unverified=allow_unverified,
+            changed=_changed_paths(files) if files is not None else None, min_pass_rate=min_rate)
         res.errors += rerrs
         res.warnings += rwarns
 
