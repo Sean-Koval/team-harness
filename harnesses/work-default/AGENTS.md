@@ -25,6 +25,9 @@ any personal sync or backup. The only Confluence site and space you write are th
    there is a key). Restate the goal, the acceptance criteria and what is out of scope in two or three lines. If the
    criteria are missing or contradict each other, or a choice needs the ticket's owner, file a Decision ticket
    (`decision-ticket`) and stop that part of the work. Never ask in chat and never stop silently.
+   When asked **where a change belongs**, how to enforce a rule, or how to verify a shared behavior, read the
+   `implement-standard` skill during intake, including for advice-only requests and reviews. Use it for a new
+   standard or recurring issue as well. For an ordinary setup or usage question, answer it directly.
 2. **Read the company's flow.** Read the `org-process` skill before you plan: it says which tickets, approvals and
    gates this company's work needs. If it and `release-approvals` disagree, `org-process` wins; say so in the PR.
 3. **Plan across the repos.** Use the `change-set` skill: which roles change, in what order they will land, and what

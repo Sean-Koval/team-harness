@@ -46,6 +46,7 @@ A second harness, `work-default`, and the environments around it are for a compa
 harnesses/work-default/
   CLAUDE.md, AGENTS.md               how the agent works across a service's infra, database, code and deploy repos
   skills/
+    implement-standard/SKILL.md      find where to enforce shared behavior and how to verify it, from plan to review
     change-set/SKILL.md              plan across /workspace/<role>, keep each repo safe on its own, say what depends on what
     jira-ticket/ … work-start/       the shared work-system layer, rendered from shared/work-system/profiles/work-default.yaml:
                                      jira-ticket, work-start, decision-ticket, work-docs, and these two
