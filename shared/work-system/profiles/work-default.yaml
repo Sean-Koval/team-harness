@@ -5,6 +5,9 @@
 # with the real site and space before the harness is used. Until it does, the skills write no Confluence page. They
 # are never defaulted to another site.
 params:
+  # The repository whose artifact check a scaffolded repository's CI calls (KAN-559); the commit is filled at build.
+  # A placeholder like kb_site: the company's org overlay names its own copy of this repository.
+  artifact_check_repo: "COMPANY-ORG/team-harness"
   owner: "the ticket's owner"
   tracker: "the team's Jira project on the company's Atlassian site"
   kb_site: "COMPANY-SITE.atlassian.net"

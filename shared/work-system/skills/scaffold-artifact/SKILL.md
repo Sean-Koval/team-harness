@@ -63,7 +63,7 @@ those, say there is no template yet and stop.
 | `evals/` | Golden calls now; agent evals later (`evals/README.md`) |
 | `changes/` | Changelog fragments, `changes/<KEY>.md` or `changes/<KEY>.<kind>.md`, never one shared file |
 | `AGENTS.md` | Owner, approvals, conventions and the verify command, for the agents that work in the repository |
-| `.github/workflows/ci.yml` | ruff, pyright and pytest on `ubuntu-latest` and `windows-latest` |
+| `.github/workflows/ci.yml` | ruff, pyright and pytest on `ubuntu-latest` and `windows-latest`, and the artifact check at a pinned commit (left out until the org overlay names the check's repository) |
 
 The owner and approval steps in the rendered `AGENTS.md` come from this harness: owner {{owner}}; approvals:
 {{approvals}}

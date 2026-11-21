@@ -11,6 +11,11 @@ on:
         description: mcp-server, agent or bot
         type: string
         required: true
+      harness-repo:
+        description: The copy of team-harness to run the check from (a company's own copy); the one `uses:` names
+        type: string
+        default: Sean-Koval/team-harness
+        required: false
       harness-ref:
         description: The team-harness commit to run (the full SHA you pin this workflow at; no moving refs)
         type: string
@@ -51,6 +56,9 @@ on:
         type: string
         default: artifact-check
     secrets:
+      harness-token:
+        description: A read token for harness-repo when it is private and not this repository's own
+        required: false
       model-api-key:
         description: The repository's own model key, given to the agent command as ANTHROPIC_API_KEY
         required: false
@@ -76,8 +84,9 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v5
         with:
-          repository: Sean-Koval/team-harness
+          repository: ${{ inputs.harness-repo }}
           ref: ${{ inputs.harness-ref }}
+          token: ${{ secrets.harness-token || github.token }}
           path: .artifact-check/team-harness
           persist-credentials: false
       - uses: actions/setup-python@v6
