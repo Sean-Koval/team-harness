@@ -128,3 +128,11 @@ def test_it_refuses_malformed_names(name, ticket, description):
 
 def test_the_skill_stays_short():
     assert len((SKILL / "SKILL.md").read_text(encoding="utf-8").splitlines()) <= 150
+
+
+def test_every_verify_command_has_a_powershell_form():
+    # coworkers on Windows run it in PowerShell without Git Bash; Windows PowerShell 5.1 rejects &&
+    for rel in ("SKILL.md", "templates/mcp-server/AGENTS.md", "templates/mcp-server/README.md"):
+        text = (SKILL / rel).read_text(encoding="utf-8")
+        assert text.count("python -m pytest -q") == text.count("if ($?) { python -m pytest -q }") * 2, rel
+    assert ".venv\\Scripts\\Activate.ps1" in (SKILL / "SKILL.md").read_text(encoding="utf-8")
