@@ -1,5 +1,7 @@
 # Routing behavior eval
 
+See the [first pilot scorecard](pilot.md) for observed outcomes and gaps.
+
 Generate the eight independent synthetic workspaces with Python 3 and its standard library.
 
 ```sh
@@ -28,7 +30,7 @@ Here, `trial` is the absolute path to that copy. Start the agent there and submi
 Keep the checkout containing this answer key outside the trial's mount in
 a hosted run. For local, shared-host trials, record the isolation limitation.
 
-Run each case twice in fresh sessions with the same model, reasoning effort,
+Run each case once per arm in fresh sessions with the same model, reasoning effort,
 tools, and task prompt. Give each session the numbered workspace and the
 contents of its `PROMPT.txt`. Keep the rubric and other sessions' outputs
 outside its accessible workspace. Record both checkout revisions, runtime
@@ -73,3 +75,21 @@ deployment claims require separate evidence from a real run.
 | 06 | `api/submit.py` separates lookup from insert. `storage/schema.sql` permits duplicate keys. The trace shows both workers missing and getting distinct IDs. Own atomic idempotency at the shared persistence boundary, including conflict recovery to the original record. | Interleave two public submissions with the same key and assert one row and one returned identity. Submit with distinct keys and assert independent records. |
 | 07 | `README.md` specifies Python 3.11 and `python -m unittest discover -s tests` from the repository root. A two-bullet setup summary satisfies the task. | Score the summary separately. |
 | 08 | `TICKET.md` requires personal email, `DEC-017` omits it absent recorded Privacy approval, and `docs/release.md` names the decision process. `jobs/partner.py` currently includes it. Route the conflict to Partner Integrations and Privacy, hold the conflicting release decision, and identify the existing Decision workflow. The evidence supplies no recorded exception. | After resolution, assert the public export matches the approved field contract. Exercise a sample with an email field that would leak under the current decision and a normal allowed export. If an exception is approved, exercise the approved and unapproved scopes. |
+
+## Build case
+
+Generate with Python 3 and run with Node 18 or newer.
+
+```sh
+python evals/implement-standard/build_case.py generate /tmp/routing-build-case
+python evals/implement-standard/build_case.py grade /tmp/routing-build-case
+```
+
+The seed passes `node --test` and fails the independent grader. Give each
+variant its own seed copy and the same `PROMPT.txt` with normal harness
+discovery. Run `grade` from the evaluator checkout against each finished
+workspace. Keep this README and the grader outside both workspaces.
+
+Report activation, the independent keyboard and focus grade, the final
+repository checks, and whether both entry points reuse the shared control.
+Keep this outcome separate from the routing score and hosted verification.
