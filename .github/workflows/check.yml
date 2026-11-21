@@ -123,6 +123,14 @@ jobs:
       - name: Doctor live-call tests
         if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_doctor_live.py
+      # the artifact check's server and agent commands reach CreateProcess whole on Windows (KAN-517)
+      - name: Artifact check tests
+        if: ${{ !cancelled() }}
+        run: |
+          python -m pip install --quiet "jsonschema==4.26.0"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest -q -rs tests/test_artifact_check.py
+          exit $LASTEXITCODE
       # The installer's own digests against hangar's, on a Windows checkout (CRLF conversion on): the tests above
       # skip these, as their interpreter has no hangar, so they run here with the build's venv.
       - name: Installer digests match hangar's

@@ -385,6 +385,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `shared/work-system/` | The work-system skills and hook, edited once; `targets.yaml` names the harnesses that carry them |
 | `orgs/<org>/` | A company's org overlay: its `org-process` flow skill and `org.yaml` (ticket types, gates, review request); `example-co` is the placeholder |
 | `actions/work-system-pr/` | The PR check other repositories call, pinned by commit |
+| `actions/artifact-check/`, `.github/workflows/artifact-check.yml` | The artifact check a scaffolded repository calls: MCP contract and golden calls over stdio, or a capped agent eval, with a JSON receipt |
 | `templates/` | The PR template the PR check reads |
 | `scripts/sync_shared.py` | Copy the shared layer into each harness; `--check` reports drift |
 | `scripts/build_generated.py` | Build every generated file (sync, relock, render, `candidate`); CI runs it on each PR, `generated.yml` on main after merge |
