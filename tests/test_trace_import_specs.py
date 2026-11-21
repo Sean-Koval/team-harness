@@ -18,9 +18,11 @@ SPECS = {s["id"]: s for s in lang.load(
     (Path(__file__).resolve().parents[1] / "flightdeck" / "specs" / "work-default.yaml").read_text())}
 SID = "5e1c9c3a-1f0b-4d7e-9b52-7a0e2c4d6f81"
 READ = ("mcp__atlassian__getJiraIssue", {"cloudId": "c1", "issueIdOrKey": "SVC-1"})
+# an approval ticket an agent files: the example org's ESS request (SRE approves the work ticket itself, KAN-373). The
+# long description comes first in the call, so the spec matches only if the import keeps the summary in the preview
 SRE = ("mcp__atlassian__createJiraIssue", {"cloudId": "c1", "projectKey": "OPS", "issueTypeName": "Task",
                                            "description": "Why the queue is safe to ship. " * 20,
-                                           "summary": "SRE approval: SVC-1 add the queue"})
+                                           "summary": "ESS request: SVC-1 add the queue"})
 PR = ("Bash", {"command": "gh pr create --draft --title 'SVC-1: add the queue' --body-file /tmp/pr.md"})
 
 

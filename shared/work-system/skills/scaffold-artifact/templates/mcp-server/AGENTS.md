@@ -12,8 +12,15 @@
 Run before every commit and keep it green; CI runs the same on Linux and Windows:
 
 ```sh
+# macOS, Linux or Git Bash
 python -m pip install -e ".[dev]"
 python -m ruff check . && python -m ruff format --check . && python -m pyright && python -m pytest -q
+```
+
+```powershell
+# Windows PowerShell (5.1 has no &&)
+python -m pip install -e ".[dev]"
+python -m ruff check .; if ($?) { python -m ruff format --check . }; if ($?) { python -m pyright }; if ($?) { python -m pytest -q }
 ```
 
 ## Conventions

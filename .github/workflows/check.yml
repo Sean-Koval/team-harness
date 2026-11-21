@@ -11,7 +11,7 @@ permissions:
 
 env:
   # pin the tools: a newer hangar may change the lock rules under you; bump deliberately
-  HANGAR_REF: ca88be327f7d57283070610cd0ae9e753ad45f1b
+  HANGAR_REF: 2fc117591d6b170ab4420097c9852e63b7d18e2d
   FLIGHTDECK_REF: 4fb5c2c98439b3393e4a28845f059cb86b9cbb93
   AI_DLC_REF: c217bd0c09918a26db8d5d42e02e00cf9e9d9e81   # environments/agent.yaml's pin; the knowledge tests run against it
 
@@ -144,3 +144,10 @@ jobs:
       - name: Guide PowerShell
         if: ${{ !cancelled() }}
         run: python -m pytest -q -rs tests/test_guide_powershell.py
+      # the scaffold template's verify line in Windows PowerShell 5.1, as a coworker without Git Bash runs it: it
+      # passes on a clean render and stops at ruff on a lint error (KAN-547). One Python is enough for a shell line.
+      - name: Scaffold verify in Windows PowerShell
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        env:
+          SCAFFOLD_POWERSHELL_REQUIRED: "1"
+        run: python -m pytest -q -rs tests/test_scaffold_powershell.py
