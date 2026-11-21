@@ -347,3 +347,62 @@ def test_issue_type_is_optional_in_the_normalised_shape():
 def test_jira_cloud_gives_the_issue_type_name():
     r, _ = provider({"KAN-1": jira("KAN-1", itype="Change Request")})
     assert r.read("KAN-1")["issue_type"] == "Change Request"
+
+
+# --- the jira-cloud provider's gate tickets (rule 7, KAN-538) --------------------------------------------------------
+
+def test_jira_cloud_reads_a_gate_ticket():
+    issue = {"key": "SRE-7", "fields": {
+        "project": {"key": "SRE"}, "issuetype": {"name": "Change Request"}, "status": {"name": "Approved"},
+        "issuelinks": [{"outwardIssue": {"key": "KAN-1"}}, {"inwardIssue": {"key": "KAN-2"}}, "junk"],
+        "description": {"type": "doc", "content": [{"type": "text", "text": "https://github.com/o/r/pull/7"}]},
+        "customfield_10050": [{"value": "Approved"}, {"name": "x"}], "customfield_2": None}}
+    r, seen = provider({"SRE-7": issue})
+    got = r.gate_issue("SRE-7", ["customfield_2", "customfield_10050"])
+    assert seen == ["https://example.atlassian.net/rest/api/3/issue/SRE-7?fields=status,project,issuetype,"
+                    "issuelinks,description,customfield_10050,customfield_2"]
+    assert got["project"] == "SRE" and got["issue_type"] == "Change Request" and got["status"] == "Approved"
+    assert got["links"] == ["KAN-1", "KAN-2"] and "github.com/o/r/pull/7" in got["text"]
+    assert got["field_values"] == {"customfield_10050": ["Approved", "x"], "customfield_2": []}
+    assert "customfield_9" not in r.gate_issue("SRE-7", ["customfield_9"])["field_values"]  # not returned: absent
+
+
+def test_jira_cloud_gate_ticket_errors():
+    r, _ = provider({})
+    with pytest.raises(tracker.TicketMissing, match="HTTP 404"):
+        r.gate_issue("SRE-7")
+    r, _ = provider({}, {"SRE-7": ValueError("Expecting value")})  # an SSO page
+    with pytest.raises(tracker.TrackerUnreachable):
+        r.gate_issue("SRE-7")
+    r, _ = provider({"SRE-7": {"errorMessages": []}})
+    with pytest.raises(tracker.TrackerUnreachable, match="not an issue"):
+        r.gate_issue("SRE-7")
+
+
+def test_jira_cloud_reads_a_gate_tickets_remote_links():
+    r, seen = provider({"SRE-7/remotelink": [{"object": {"url": "https://github.com/o/r/pull/7"}}]})
+    assert "https://github.com/o/r/pull/7" in r.gate_links("SRE-7")
+    assert seen == ["https://example.atlassian.net/rest/api/3/issue/SRE-7/remotelink"]
+    r, _ = provider({}, {"SRE-7/remotelink": urllib.error.URLError("down")})
+    with pytest.raises(tracker.TrackerUnreachable):
+        r.gate_links("SRE-7")
+
+
+def test_a_bad_gate_answer_through_a_reader_is_wrapped_once():
+    """R1's nit on #101: a Reader's gate read went through GateReader twice, nesting the message."""
+    class Sloppy:
+        label = "Desk"
+
+        def gate_issue(self, key, fields):
+            return {"key": key, "status": "Done", "project": 7}
+
+        def gate_links(self, key):
+            return 7
+
+    reader = tracker.gate_reader(tracker.Reader("desk", Sloppy()))
+    with pytest.raises(tracker.BadAnswer) as e:
+        reader.gate_issue("X-1")
+    assert "provider failed" not in str(e.value) and "project" in str(e.value)
+    with pytest.raises(tracker.BadAnswer) as e:
+        reader.gate_links("X-1")
+    assert str(e.value) == "the desk provider's remote links for X-1 are not text"
