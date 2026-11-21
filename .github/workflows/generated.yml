@@ -109,7 +109,7 @@ jobs:
       - name: Apply the patch, refusing anything outside the generated files
         run: |
           P="$RUNNER_TEMP/generated.patch"
-          bad=$( { git apply --numstat "$P" | cut -f3- | grep -vE '^(harnesses/[^/]+/(skills/[^/]+/|native/claude-code/hooks/[^/]+$|harness\.lock$|env\.(stable|candidate)\.yaml$|\.env\.example$)|channels\.yaml$|environments/agent\.yaml$)'; \
+          bad=$( { git apply --numstat "$P" | cut -f3- | grep -vE '^(harnesses/[^/]+/(skills/[^/]+/|native/claude-code/(hooks|agents)/[^/]+$|harness\.lock$|env\.(stable|candidate)\.yaml$|\.env\.example$)|channels\.yaml$|environments/agent\.yaml$)'; \
                    git apply --numstat "$P" | cut -f3- | grep -E '(^|/)\.\.(/|$)'; \
                    git apply --numstat "$P" | grep -P '^-\t-\t' | cut -f3- | grep -vE '^harnesses/[^/]+/skills/'; \
                    git apply --summary "$P" | grep -E 'mode 120000|mode change|rename|copy'; } || true )
