@@ -100,8 +100,8 @@ GRADER = """
         const listArchive = new EventTarget();
         const quickArchive = new EventTarget();
         const state = { selected: 2, drafts: [{ id: 1 }, { id: 2 }, { id: 3 }] };
-        let focus = 'archive control';
-        const list = { focus() { focus = 'list'; } };
+        let listFocusCalls = 0;
+        const list = { focus() { listFocusCalls += 1; } };
         mountDrafts({ list, listArchive, quickArchive, state });
         const press = (button, key) => button.dispatchEvent(Object.assign(
             new Event('keydown', { cancelable: true }), { key },
@@ -109,16 +109,17 @@ GRADER = """
         return {
             listArchive, quickArchive, press,
             ids: () => state.drafts.map(({ id }) => id),
-            focused: () => focus,
+            listFocusCalls: () => listFocusCalls,
         };
     }
 
     const quick = setup();
     quick.press(quick.quickArchive, 'Enter');
     assert.deepEqual(quick.ids(), [1, 2, 3], 'first Enter only opens confirmation');
+    const beforeCancel = quick.listFocusCalls();
     quick.press(quick.quickArchive, 'Escape');
     assert.deepEqual(quick.ids(), [1, 2, 3], 'Escape preserves the draft');
-    assert.equal(quick.focused(), 'list', 'Escape restores list focus');
+    assert.ok(quick.listFocusCalls() > beforeCancel, 'Escape restores list focus');
     quick.press(quick.quickArchive, 'Enter');
     assert.deepEqual(quick.ids(), [1, 2, 3], 'first Enter after cancel opens a new confirmation');
 
@@ -126,9 +127,10 @@ GRADER = """
         const app = setup();
         app.press(app[entry], 'Enter');
         assert.deepEqual(app.ids(), [1, 2, 3], 'opening must preserve drafts');
+        const beforeConfirm = app.listFocusCalls();
         app.press(app[entry], 'Enter');
         assert.deepEqual(app.ids(), [1, 3], 'only the selected draft is archived');
-        assert.equal(app.focused(), 'list', 'confirmation restores list focus');
+        assert.ok(app.listFocusCalls() > beforeConfirm, 'confirmation restores list focus');
     }
 """
 
