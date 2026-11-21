@@ -47,7 +47,20 @@ provider answers with a normalised issue: its key, status, category (`todo`, `in
 `epic` or `decision`), labels, and the issues that block it. `check.py` judges only that shape, so another tracker is
 a new provider in `tracker.py`, chosen with `tracker-provider`, and no change to `check.py`. Providers are built in by
 name and never loaded from the repository, so a PR can't bring its own. Today there is one, `jira-cloud`, with the
-`jira-*` inputs above. The org's approval gates (below) still read Jira directly until they move behind the same seam.
+`jira-*` inputs above. The org's approval gates (below) read their tickets through the same provider (KAN-538), as a
+normalised gate ticket: project, issue type, status, linked keys, description text and the `approved_field` values.
+
+## The artifact check's receipt
+
+With `artifact-receipt`, the check also reads the receipt of the [artifact check](../artifact-check/README.md)
+(KAN-558, rule 9). The PR needs that receipt with `passed` true; the summary lists what it found. A missing receipt fails
+unless `allow-unverified` is set. A malformed one, one committed to git or changed by the PR, one reached through a
+symbolic link or outside a git checkout, a run over its budget, or one whose numbers don't add up to a pass always
+fails. A run stopped at its budget passes only if the cases it ran
+already reach the pass rate. `artifact-min-pass-rate` sets a floor the receipt can't lower.
+
+Fork and Dependabot PRs get no secrets, so an agent's or bot's artifact check can't run on them. Their receipt is
+missing, which fails unless `allow-unverified` is set.
 
 ## Keep PRs small and source-only
 
