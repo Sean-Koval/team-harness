@@ -33,6 +33,8 @@ earlier. Rules:
    (`review-token`). Data a v2 rule needs that can't be read applies the gate, or leaves it unverified.
 8. The PR's shape (pr_shape.py, settings from AGENTS.md at the base commit): within its diff budget unless the body has
    a `Budget: <reason>` line, no hand-edited generated files, and a `changes/<KEY>.md` fragment when it changes source.
+9. With `artifact-receipt` (receipt.py, KAN-558): the artifact check's receipt is there, well formed, and passed.
+   It holds on every PR, exempt ones too; a missing receipt passes with a warning only under `allow-unverified`.
 
 Exempt: PRs with the exemption label (default `no-ticket`) and PRs by the exempt authors (default the dependency
 bots) skip rules 1-6; the org's gates (rule 7) still hold, since an exemption is about the ticket, not the approvals.
@@ -66,6 +68,7 @@ _spec.loader.exec_module(tracker)  # type: ignore[union-attr]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pr_shape  # noqa: E402  (rule 8, beside this file)
+import receipt  # noqa: E402  (rule 9, beside this file)
 
 DEFAULT_KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]+"
 EXEC_PREFIXES = ("exec:", "lane:")  # execution labels; lane:* is the older name, accepted while Jira is relabelled
@@ -1081,6 +1084,23 @@ def main() -> int:
         res.errors += serrs
         res.warnings += cwarns + swarns
 
+    receipt_lines: list[str] = []
+    if _out("ARTIFACT_RECEIPT"):
+        floor = _out("ARTIFACT_MIN_PASS_RATE")
+        try:
+            min_rate = float(floor) if floor else None
+        except ValueError:
+            min_rate = None
+            res.errors.append(f"artifact-min-pass-rate {floor!r} is not a number from 0 to 1")
+        if min_rate is not None and not 0 <= min_rate <= 1:
+            res.errors.append(f"artifact-min-pass-rate {floor!r} is not a number from 0 to 1")
+            min_rate = None
+        rerrs, rwarns, receipt_lines = receipt.check(
+            _out("ARTIFACT_RECEIPT"), os.environ.get("GITHUB_WORKSPACE", "."), allow_unverified=allow_unverified,
+            changed=_changed_paths(files) if files is not None else None, min_pass_rate=min_rate)
+        res.errors += rerrs
+        res.warnings += rwarns
+
     gates: list[Gate] | None = None
     org_file = _out("ORG_FILE")
     if org_file:
@@ -1117,6 +1137,7 @@ def main() -> int:
         lines.append(f"- error: {e}")
     if gates is not None:
         lines += ["", "### Merge gates", ""] + gate_summary(gates)
+    lines += receipt_lines
     if not res.errors and not res.exempt:
         lines.append(f"Passes for {res.key}.")
     elif not res.errors and gates:

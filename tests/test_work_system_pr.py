@@ -1401,3 +1401,267 @@ def test_main_v2_an_unreadable_team_fails_closed(tmp_path, fake_api):
     r, _ = run_main(tmp_path, BODY + ESS, ORG_V2, api=fake_api, jira=True)
     assert r.returncode == 1 and "the team could not be read (HTTP 404)" in r.stdout
     assert "/orgs/test-org/teams/sre/memberships/sre-1" not in fake_api.seen
+
+
+# ============================================================================ rule 9: the artifact check's receipt
+_rspec = importlib.util.spec_from_file_location("receipt", CHECK.parent / "receipt.py")
+receipt = importlib.util.module_from_spec(_rspec)
+_rspec.loader.exec_module(receipt)  # type: ignore[union-attr]
+
+
+def _receipt(**over) -> dict:
+    """A v1 receipt as actions/artifact-check/artifact_check.py writes it (KAN-517): an agent, two tasks passed."""
+    r = {"schema": "team-harness.artifact-check/v1", "kind": "agent", "model": "claude-haiku", "budget_usd": 1.0,
+         "cost_usd": 0.02, "tokens": {"input": 1200, "output": 300}, "min_pass_rate": 0.9, "pass_rate": 1.0,
+         "stopped_at_budget": False, "over_budget": False, "passed": True,
+         "cases": [{"id": "task-1", "status": "pass", "detail": "", "tokens": {"input": 600, "output": 150},
+                    "cost_usd": 0.01},
+                   {"id": "task-2", "status": "pass", "detail": "", "cost_usd": 0.01}]}
+    r.update(over)
+    return r
+
+
+def _git(ws, *args):
+    subprocess.run(["git", "-C", str(ws), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                   check=True, capture_output=True)
+
+
+def _repo(ws):
+    """The checkout the action runs in: a git repository, with the receipt left untracked."""
+    if not (ws / ".git").exists():
+        _git(ws, "init", "-q")
+    return ws
+
+
+def _check(tmp_path, r, name="artifact-check.json", **kw):
+    _repo(tmp_path)
+    (tmp_path / name).write_text(json.dumps(r) if not isinstance(r, str) else r)
+    return receipt.check(name, str(tmp_path), **kw)
+
+
+def test_a_passing_receipt_passes_and_is_summed_up(tmp_path):
+    errors, warnings, lines = _check(tmp_path, _receipt())
+    assert errors == [] and warnings == []
+    assert "### Artifact check" in lines and "agent: pass, 2 of 2 cases passed, $0.0200 spent." in lines
+
+
+FAIL = [{"id": "task-1", "status": "pass", "detail": ""}, {"id": "task-2", "status": "fail", "detail": "wrong file"}]
+
+
+@pytest.mark.parametrize("over,expect", [
+    ({"passed": False, "pass_rate": 0.5, "cases": FAIL}, "task-2: wrong file"),
+    ({"stopped_at_budget": True, "passed": False, "pass_rate": 0.5,
+      "cases": [FAIL[0], {"id": "task-2", "status": "not_run", "detail": "budget"}]}, "1 case(s) not run"),
+    ({"over_budget": True, "cost_usd": 1.5, "passed": False}, "spent $1.5000, over its budget of $1"),
+    ({"over_budget": True, "passed": True}, "it says passed, but it spent"),  # over budget never passes
+    ({"cases": FAIL}, "its cases pass 50% but it reports 100%"),  # hand-edited: a case failed, rate left at 1
+    ({"pass_rate": 0.8}, "its cases pass 100% but it reports 80%"),  # rate doesn't match the cases
+    ({"cases": FAIL, "pass_rate": 0.5}, "it says passed, but its cases pass 50%, against 90% needed"),
+    ({"kind": "mcp-server", "model": None, "min_pass_rate": 0.5, "pass_rate": 0.5, "cases": FAIL},
+     "an MCP server's cases must all pass"),
+])
+def test_a_receipt_that_didnt_pass_fails_and_says_why(tmp_path, over, expect):
+    errors, _, lines = _check(tmp_path, _receipt(**over))
+    assert len(errors) == 1 and expect in errors[0], errors
+    assert any(": fail," in ln for ln in lines)
+
+
+@pytest.mark.parametrize("r,expect", [
+    ("not json", "is not JSON"),
+    (json.dumps(_receipt())[:40], "is not JSON"),  # truncated
+    ([], "it is not a JSON object"),
+    ({**_receipt(), "schema": "team-harness.artifact-check/v2"}, "its schema is"),
+    ({k: v for k, v in _receipt().items() if k != "passed"}, "it has no passed"),
+    ({**_receipt(), "result": "pass"}, "fields the schema doesn't: result"),
+    (_receipt(passed="yes"), "passed is not true or false"),
+    (_receipt(pass_rate=1.5), "pass_rate is not a number from 0 to 1"),
+    (_receipt(tokens=5), "tokens is not input and output counts"),
+    (_receipt(cases=[]), "cases is not a list of at least one case"),
+    (_receipt(cases=[{"id": "t", "status": "skipped", "detail": ""}]), "case 1 is not a case"),
+])
+def test_a_malformed_receipt_fails_closed(tmp_path, r, expect):
+    errors, _, _ = _check(tmp_path, r)
+    assert len(errors) == 1 and expect in errors[0], errors
+
+
+def test_a_malformed_receipt_fails_even_under_allow_unverified(tmp_path):
+    errors, warnings, _ = _check(tmp_path, _receipt(passed=1), allow_unverified=True)
+    assert errors and not warnings
+
+
+@pytest.mark.parametrize("path", ["/etc/passwd", "../outside.json", "a/../../b.json", "C:\\receipt.json",
+                                  "\\\\server\\share\\r.json", "..\\r.json"])
+def test_the_receipt_path_stays_inside_the_checkout(tmp_path, path):
+    errors, _, _ = receipt.check(path, str(tmp_path))
+    assert errors == [f"artifact-receipt {path!r} must be a path inside the checkout"]
+
+
+def test_a_missing_receipt_fails_unless_unverified_is_allowed(tmp_path):
+    errors, warnings, _ = receipt.check("artifact-check.json", str(tmp_path))
+    assert "there is no artifact check receipt at artifact-check.json" in errors[0] and not warnings
+    errors, warnings, _ = receipt.check("artifact-check.json", str(tmp_path), allow_unverified=True)
+    assert not errors and "Passing it unverified" in warnings[0]
+
+
+@pytest.mark.parametrize("result", ["pass", "fail", None])
+def test_main_reads_the_artifact_check_receipt(tmp_path, fake_api, result):
+    # rule 9 (KAN-558): a passing receipt passes; a failing one names the case; none fails closed
+    _repo(tmp_path)
+    fake_api.files(["README.md"])
+    if result == "pass":
+        (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
+    elif result == "fail":
+        (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt(passed=False, pass_rate=0.5, cases=FAIL)))
+    r, summary = run_main(tmp_path, BODY, org_file="", api=fake_api,
+                          extra_env={"INPUT_ARTIFACT_RECEIPT": "artifact-check.json"})
+    if result == "pass":
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "### Artifact check" in summary and "agent: pass" in summary
+    elif result == "fail":
+        assert r.returncode == 1
+        assert "::error::the artifact check (agent) didn't pass: pass rate 50%, needs 90%: task-2: wrong file" in r.stdout
+    else:
+        assert r.returncode == 1 and "there is no artifact check receipt" in r.stdout
+
+
+THIRDS = [{"id": "t1", "status": "pass", "detail": ""}, {"id": "t2", "status": "pass", "detail": ""},
+          {"id": "t3", "status": "fail", "detail": "no"}]
+
+
+def test_a_rounded_pass_rate_passes(tmp_path):
+    # the writer stores round(rate, 4): 2 of 3 is 0.6667, which must still match the cases
+    errors, _, lines = _check(tmp_path, _receipt(min_pass_rate=0.5, pass_rate=0.6667, cases=THIRDS))
+    assert errors == [] and any("agent: pass, 2 of 3" in ln for ln in lines)
+
+
+def test_a_run_stopped_at_its_budget_passes_if_the_cases_it_ran_carry_the_rate(tmp_path):
+    # as artifact_check.py decides: not_run counts as not passed, and passed is rate >= min and not over budget
+    cases = [*THIRDS[:2], {"id": "t3", "status": "not_run", "detail": "budget"}]
+    errors, _, _ = _check(tmp_path, _receipt(min_pass_rate=0.5, pass_rate=0.6667, stopped_at_budget=True, cases=cases))
+    assert errors == []
+    errors, _, _ = _check(tmp_path, _receipt(min_pass_rate=0.9, pass_rate=0.6667, stopped_at_budget=True,
+                                             passed=False, cases=cases))
+    assert "stopped at its budget of $1 with 1 case(s) not run" in errors[0]
+
+
+def test_the_caller_can_set_a_floor_the_receipt_cant_lower(tmp_path):
+    r = _receipt(min_pass_rate=0.5, pass_rate=0.6667, cases=THIRDS)
+    errors, _, _ = _check(tmp_path, r, min_pass_rate=0.9)
+    assert "it asked for 50%, but this repository needs 90%" in errors[0]
+    errors, _, _ = _check(tmp_path, r, min_pass_rate=0.6)
+    assert errors == []
+
+
+def test_a_passing_mcp_server_receipt_passes_without_a_cost(tmp_path):
+    r = _receipt(kind="mcp-server", model=None, budget_usd=None, cost_usd=0, min_pass_rate=1.0,
+                 tokens={"input": 0, "output": 0})
+    errors, _, lines = _check(tmp_path, r)
+    assert errors == [] and "mcp-server: pass, 2 of 2 cases passed." in lines
+
+
+def test_an_unreadable_receipt_fails_even_under_allow_unverified(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / "artifact-check.json").write_bytes(b"\xff\xfe garbled")
+    errors, warnings, _ = receipt.check("artifact-check.json", str(tmp_path), allow_unverified=True)
+    assert "could not be read (UnicodeDecodeError)" in errors[0] and not warnings
+    (tmp_path / "dir.json").mkdir()
+    errors, warnings, _ = receipt.check("dir.json", str(tmp_path), allow_unverified=True)
+    assert "could not be read" in errors[0] and not warnings
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink") or sys.platform == "win32", reason="needs symlinks")
+def test_a_receipt_linking_outside_the_checkout_fails(tmp_path):
+    work, out = tmp_path / "work", tmp_path / "elsewhere.json"
+    work.mkdir()
+    _repo(work)
+    out.write_text(json.dumps(_receipt()))
+    (work / "artifact-check.json").symlink_to(out)
+    errors, _, _ = receipt.check("artifact-check.json", str(work))
+    assert "reached through a symbolic link (artifact-check.json)" in errors[0]
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink") or sys.platform == "win32", reason="needs symlinks")
+def test_a_committed_receipt_behind_a_linked_directory_fails(tmp_path):
+    # R2's case: docs/artifact-check.json and out -> docs both committed; out/artifact-check.json is neither tracked
+    # nor in the changed list by that name, but it is the committed file
+    _repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "artifact-check.json").write_text(json.dumps(_receipt()))
+    (tmp_path / "out").symlink_to("docs")
+    _git(tmp_path, "add", "docs", "out")
+    _git(tmp_path, "commit", "-qm", "forged")
+    errors, _, lines = receipt.check("out/artifact-check.json", str(tmp_path),
+                                     changed=["docs/artifact-check.json", "out"])
+    assert len(errors) == 1 and "symbolic link (out)" in errors[0] and lines == []
+    # and the committed file named directly is refused as tracked, even when the PR didn't change it
+    errors, _, _ = receipt.check("docs/artifact-check.json", str(tmp_path), changed=[])
+    assert "is a file in the repository or in this PR" in errors[0]
+
+
+def test_a_receipt_outside_a_git_checkout_fails_closed(tmp_path):
+    # git can't say whether it's tracked (no repository): fail, rather than pass a receipt that may be committed
+    (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
+    errors, warnings, _ = receipt.check("artifact-check.json", str(tmp_path), allow_unverified=True)
+    assert "couldn't tell whether git tracks" in errors[0] and not warnings
+
+
+def test_a_cheap_run_and_a_long_detail_read_well(tmp_path):
+    _, _, lines = _check(tmp_path, _receipt(cost_usd=0.0004))
+    assert any("$0.0004 spent" in ln for ln in lines)
+    _, _, lines = _check(tmp_path, _receipt(cost_usd=0))
+    assert any("$0 spent" in ln for ln in lines)
+    _, _, lines = _check(tmp_path, _receipt(cost_usd=0.000007))  # R2: it printed $7e-06
+    assert any("under $0.0001 spent" in ln for ln in lines), lines
+    long = [FAIL[0], {"id": "task-2", "status": "fail", "detail": "x" * 5000}]
+    errors, _, _ = _check(tmp_path, _receipt(passed=False, pass_rate=0.5, cases=long))
+    assert len(errors[0]) < 400 and errors[0].endswith("…")
+
+
+def test_a_receipt_the_pr_changes_fails(tmp_path):
+    errors, _, _ = _check(tmp_path, _receipt(), changed=["README.md", "artifact-check.json"])
+    assert "is a file in the repository or in this PR" in errors[0]
+
+
+def test_a_receipt_tracked_in_git_fails(tmp_path):
+    (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
+    _repo(tmp_path)
+    _git(tmp_path, "add", "artifact-check.json")
+    errors, _, _ = receipt.check("artifact-check.json", str(tmp_path))
+    assert "is a file in the repository or in this PR" in errors[0]
+    errors, _, _ = receipt.check("./artifact-check.json", str(tmp_path))
+    assert errors
+
+
+def test_main_passes_a_missing_receipt_under_allow_unverified(tmp_path, fake_api):
+    fake_api.files(["README.md"])
+    r, _ = run_main(tmp_path, BODY, org_file="", api=fake_api,
+                    extra_env={"INPUT_ARTIFACT_RECEIPT": "artifact-check.json", "INPUT_ALLOW_UNVERIFIED": "true"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "::warning::there is no artifact check receipt" in r.stdout
+
+
+def test_main_refuses_a_receipt_the_pr_adds(tmp_path, fake_api):
+    _repo(tmp_path)
+    fake_api.files(["README.md", "artifact-check.json"])
+    (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
+    r, _ = run_main(tmp_path, BODY, org_file="", api=fake_api,
+                    extra_env={"INPUT_ARTIFACT_RECEIPT": "artifact-check.json"})
+    assert r.returncode == 1 and "is a file in the repository or in this PR" in r.stdout
+
+
+def test_main_still_reads_the_receipt_on_an_exempt_pr(tmp_path, fake_api):
+    # a no-ticket PR skips the ticket rules, not the artifact check: the artifact still changed
+    fake_api.files(["README.md"])
+    r, _ = run_main(tmp_path, "Typo fix.", org_file="", api=fake_api, labels=("no-ticket",),
+                    extra_env={"INPUT_ARTIFACT_RECEIPT": "artifact-check.json"})
+    assert r.returncode == 1 and "there is no artifact check receipt" in r.stdout
+
+
+@pytest.mark.parametrize("floor", ["high", "1.5"])
+def test_main_refuses_a_bad_pass_rate_floor(tmp_path, fake_api, floor):
+    _repo(tmp_path)
+    fake_api.files(["README.md"])
+    (tmp_path / "artifact-check.json").write_text(json.dumps(_receipt()))
+    r, _ = run_main(tmp_path, BODY, org_file="", api=fake_api,
+                    extra_env={"INPUT_ARTIFACT_RECEIPT": "artifact-check.json", "INPUT_ARTIFACT_MIN_PASS_RATE": floor})
+    assert r.returncode == 1 and "is not a number from 0 to 1" in r.stdout
