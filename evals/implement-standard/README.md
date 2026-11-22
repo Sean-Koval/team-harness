@@ -1,6 +1,6 @@
 # Routing behavior eval
 
-See the [first pilot scorecard](pilot.md) for observed outcomes and gaps.
+See the [first pilot scorecard](pilot.md) for observed outcomes and gaps. The [54-ticket field panel](field54/README.md) adds executable edit cases and separates discovery, decision quality and completed changes.
 
 Generate the eight independent synthetic workspaces with Python 3 and its standard library.
 
