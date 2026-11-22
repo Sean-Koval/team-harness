@@ -1,0 +1,348 @@
+[
+  {
+    "id": "C01",
+    "family": "conditional CI dispatch",
+    "ticket": "Docs-only PRs can skip the receipt render, but the finance team changed only a receipt template and never got a render check. Please fix what decides whether it runs.",
+    "files": {
+      "ci/dispatch.py": "def steps(paths):\n    jobs = ['base']\n    if any(path.startswith('receipts/') for path in paths):\n        jobs.append('render')\n    return jobs\n",
+      "ci/runner.py": "from ci.dispatch import steps\ndef plan(changed_paths):\n    return steps(changed_paths)\n",
+      "templates/receipts/refund.txt": "Refund for {order}\n",
+      "ci/trace.txt": "changed=templates/receipts/refund.txt\nplanned=base\nmanual render=pass\n",
+      "check.py": "from ci.runner import plan\nassert plan(['receipts/core.py']) == ['base', 'render']\nassert plan(['docs/help.md']) == ['base']\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "ci/dispatch.py",
+    "evidence": "The runner consumes the dispatcher result. Manual rendering passed. Templates live outside receipts/.",
+    "accept": "Run render for files under templates/receipts/ and existing receipts/ sources. Leave unrelated templates and docs-only PRs on the base job.",
+    "forbidden": "Run render on all PRs, change the receipt renderer, or change deployment policy.",
+    "check": "from ci.runner import plan\nassert plan(['templates/receipts/refund.txt']) == ['base', 'render']\nassert plan(['docs/receipt.md']) == ['base']\nassert plan(['templates/email/welcome.txt']) == ['base']\nassert plan(['receipts/core.py']) == ['base','render']\nassert plan(['receipts/core.py','templates/receipts/sale.txt']) == ['base','render']\n"
+  },
+  {
+    "id": "C02",
+    "family": "test discovery omission",
+    "ticket": "The nightly unit run missed a ledger regression that we can reproduce with an explicit ledger test import. Please make the existing unit command discover the ledger tests. Our smoke suite is still run separately.",
+    "files": {
+      "ci/run.py": "import unittest\ndef suite():\n    return unittest.defaultTestLoader.discover('tests', pattern='test_*.py')\n",
+      "tests/ledger/test_rounding.py": "import unittest\nclass LedgerTest(unittest.TestCase):\n    def test_refund(self):\n        self.assertEqual(-10 + 10, 0)\n",
+      "tests/test_core.py": "import unittest\nclass CoreTest(unittest.TestCase):\n    def test_base(self):\n        self.assertTrue(True)\n",
+      "smoke/test_live.py": "import unittest\nclass LiveTest(unittest.TestCase):\n    def test_live_service(self):\n        self.skipTest(\"requires a live service\")\n",
+      "ci/transcript.txt": "test_core.CoreTest.test_base ... ok\nRan 1 test\n",
+      "check.py": "from ci.run import suite\nassert suite().countTestCases() >= 1\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "Existing unittest package boundary under tests/ledger",
+    "evidence": "The file satisfies the configured pattern. unittest recursion requires an importable child package here.",
+    "accept": "Make unit discovery include ledger and core suites while leaving smoke separate.",
+    "forbidden": "Add a second CI job, enumerate specific test methods, or include smoke in the unit suite.",
+    "check": "import unittest\nfrom ci.run import suite\ndef ids(items):\n    for item in items:\n        if isinstance(item, unittest.TestSuite):\n            yield from ids(item)\n        else:\n            yield item.id()\nnames = set(ids(suite()))\nassert any(x.endswith('.LedgerTest.test_refund') for x in names), names\nassert any(x.endswith('.CoreTest.test_base') for x in names), names\nassert not any('LiveTest' in x for x in names), names\n"
+  },
+  {
+    "id": "C03",
+    "family": "release packaging inventory",
+    "ticket": "The installed receipt exporter crashes on first launch because it cannot find the bundled schema. A source checkout works. Make the offline release archive work with the same loader and keep our captured customer fixture out of the archive.",
+    "files": {
+      "exporter/__init__.py": "",
+      "exporter/loader.py": "from pathlib import Path\ndef schema():\n    return (Path(__file__).parent / 'receipt-schema.json').read_text()\n",
+      "exporter/receipt-schema.json": "{\"required\":[\"amount\",\"currency\"]}\n",
+      "exporter/captured-receipt.json": "{\"currency\":\"CAD\",\"amount\":99}\n",
+      "release.files": "exporter/__init__.py\nexporter/loader.py\n",
+      "release.py": "from pathlib import Path\nfrom zipfile import ZipFile\ndef build(path):\n    with ZipFile(path, 'w') as archive:\n        for name in Path('release.files').read_text().splitlines():\n            if name:\n                archive.write(name)\n",
+      "check.py": "import json\nfrom exporter.loader import schema\nassert json.loads(schema())['required'] == ['amount','currency']\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "release.files",
+    "evidence": "ZIP contents are explicit. Local loading works and the omitted schema already exists alongside the package code.",
+    "accept": "Package the intended schema at its current relative path. Exclude captured receipts.",
+    "forbidden": "Add every JSON file, fetch a schema from a network endpoint, or hardcode a replacement schema.",
+    "check": "import json, subprocess, sys, tempfile\nfrom pathlib import Path\nfrom zipfile import ZipFile\nfrom release import build\nwith tempfile.TemporaryDirectory() as tmp:\n    base = Path(tmp)\n    build(base/'export.zip')\n    with ZipFile(base/'export.zip') as archive:\n        assert 'exporter/receipt-schema.json' in archive.namelist()\n        assert 'exporter/captured-receipt.json' not in archive.namelist()\n        archive.extractall(base/'install')\n    result = subprocess.check_output([sys.executable,'-c','from exporter.loader import schema; print(schema())'], cwd=base/'install')\n    assert json.loads(result) == {'required':['amount','currency']}\n"
+  },
+  {
+    "id": "C04",
+    "family": "target-specific runtime pin",
+    "ticket": "Please get the offline Windows collector onto the CSV parser hotfix. The Linux collector is halfway through acceptance against the existing version, so leave Linux on that version.",
+    "files": {
+      "versions.json": "{\"collector\":{\"linux\":{\"csvkit\":\"2.1.0\",\"tzdata\":\"2026.1\"},\"windows\":{\"csvkit\":\"2.1.0\",\"tzdata\":\"2026.1\"}}}\n",
+      "catalog.json": "{\"linux\":{\"csvkit\":[\"2.1.0\"],\"tzdata\":[\"2026.1\"]},\"windows\":{\"csvkit\":[\"2.1.0\",\"2.1.1\"],\"tzdata\":[\"2026.1\"]}}\n",
+      "image.py": "import json\nfrom pathlib import Path\ndef plan(target):\n    pins = json.loads(Path('versions.json').read_text())['collector'][target]\n    catalog = json.loads(Path('catalog.json').read_text())[target]\n    assert all(version in catalog[name] for name, version in pins.items())\n    return pins\n",
+      "ops/rollout.md": "CSV row splitting hotfix is 2.1.1. The air-gapped Windows mirror has it. Linux candidate 2.1.0 stays pinned through acceptance. Keep other dependencies stable.\n",
+      "check.py": "from image import plan\nassert all(plan(target)['tzdata'] == '2026.1' for target in ('linux','windows'))\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "Windows collector entry in versions.json",
+    "evidence": "Image planning consumes the target map. The catalog makes 2.1.1 available only to Windows.",
+    "accept": "Select exact hotfix version for Windows and preserve Linux and tzdata.",
+    "forbidden": "Change the catalog, widen the pin, upgrade both platforms, or install from a public index.",
+    "check": "from image import plan\nassert plan('windows') == {'csvkit':'2.1.1','tzdata':'2026.1'}\nassert plan('linux') == {'csvkit':'2.1.0','tzdata':'2026.1'}\n"
+  },
+  {
+    "id": "C05",
+    "family": "tested dependency overlap",
+    "ticket": "Finance approved 4.8 line of the timezone adapter for the new connector. Make the install plan choose it for that connector and keep the 4.7 line for old-connector replays.",
+    "files": {
+      "requirements.json": "{\"archive\":{\"adapter\":\"4.7.2\"},\"live\":{\"adapter\":\"4.7.2\"}}\n",
+      "wheel-index.json": "{\"adapter\":[\"4.7.2\",\"4.8.1\",\"4.8.3\",\"4.9.0\"]}\n",
+      "plan.py": "import json\nfrom pathlib import Path\ndef build(connector):\n    pin = json.loads(Path('requirements.json').read_text())[connector]['adapter']\n    available = json.loads(Path('wheel-index.json').read_text())['adapter']\n    if pin not in available:\n        raise ValueError(pin)\n    return {'adapter': pin}\n",
+      "qa/adapter-matrix.tsv": "connector\tversion\tresult\nlive\t4.8.1\tfail DST replay\nlive\t4.8.3\tpass\narchive\t4.7.2\tpass\narchive\t4.8.3\tfail legacy payload\n",
+      "release/ticket.md": "Release scope: exact vendored wheel pins. 4.9 pending qualification for both connectors.\n",
+      "check.py": "from plan import build\nassert build('archive') == {'adapter':'4.7.2'}\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "Live adapter pin in requirements.json",
+    "evidence": "Only 4.8.3 passed for live and the archive connector failed against it. Existing resolver expects exact pins.",
+    "accept": "Set live to 4.8.3 while archive remains 4.7.2.",
+    "forbidden": "Blind upgrade to latest, broaden the resolver, or change archive connector.",
+    "check": "from plan import build\nassert build('live') == {'adapter':'4.8.3'}\nassert build('archive') == {'adapter':'4.7.2'}\n"
+  },
+  {
+    "id": "C06",
+    "family": "workspace harness overlay",
+    "ticket": "The billing review command disappeared from engineers’ agent menus after moving the repository to the new launcher. The billing command should return for this repo. The sandbox runner must keep its minimal command set.",
+    "files": {
+      "agent_menu.py": "import json\nfrom pathlib import Path\ndef menu(profile):\n    settings = json.loads(Path('harness/profiles.json').read_text())\n    return list(dict.fromkeys(settings['base'] + settings['profiles'][profile]))\n",
+      "harness/profiles.json": "{\"base\":[\"summarize\"],\"profiles\":{\"engineering\":[],\"sandbox\":[]}}\n",
+      "harness/commands/billing-review.md": "Review billing changes against the current ledger contract.\n",
+      ".old-launcher/commands.json": "[\"billing-review\"]\n",
+      "migration/launcher.md": "The launcher now reads harness/profiles.json. Command definitions are reused from harness/commands. Sandbox allows only shared summary.\n",
+      "check.py": "from agent_menu import menu\nassert 'summarize' in menu('engineering')\nassert menu('sandbox') == ['summarize']\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "Engineering profile in harness/profiles.json",
+    "evidence": "The new launcher enumerates profiles, ignores the retired catalog, and the definition is already installed.",
+    "accept": "Expose billing-review only on engineering while preserving summarize on both.",
+    "forbidden": "Add to the base profile, restore the retired launcher, or duplicate/rewrite the command definition.",
+    "check": "from agent_menu import menu\nassert set(menu('engineering')) == {'summarize','billing-review'}\nassert menu('sandbox') == ['summarize']\n"
+  },
+  {
+    "id": "C07",
+    "family": "generated capability manifest",
+    "ticket": "Design ops added the contrast command but agents launched from the new bundle cannot see it. Fix what the bundle gets built from. It should remain a design workspace command.",
+    "files": {
+      "bundle.py": "import json\nfrom pathlib import Path\ndef build():\n    source = json.loads(Path('profiles/source.json').read_text())\n    return {profile: sorted(set(commands)) for profile, commands in source.items()}\n",
+      "profiles/source.json": "{\"design\":[\"palette\"],\"engineering\":[\"comments\"]}\n",
+      "bundle/commands.json": "{\"design\":[\"palette\"],\"engineering\":[\"comments\"]}\n",
+      "commands/contrast.md": "Report contrast ratios for the existing palette.\n",
+      "bundle/README.md": "commands.json is a generated sample. Publish always regenerates from the profile source and discards local edits to the sample.\n",
+      "check.py": "from bundle import build\nassert 'palette' in build()['design']\nassert build()['engineering'] == ['comments']\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "profiles/source.json",
+    "evidence": "Build regenerates the bundled manifest from source. The command definition is already present.",
+    "accept": "Register contrast on design and preserve independent engineering command and generated sample.",
+    "forbidden": "Hand-edit the generated sample as source, globally register contrast, or introduce a new generator.",
+    "check": "from bundle import build\nassert build() == {'design':['contrast','palette'],'engineering':['comments']}\n"
+  },
+  {
+    "id": "C08",
+    "family": "alert cooldown routing",
+    "ticket": "We’re getting repeat warning emails about the same regional import delay. Please make warnings respect the regional cooldown. On-call still needs every critical page.",
+    "files": {
+      "notify.py": "def destination(alert, elapsed, cooldown):\n    if alert['severity'] == 'critical':\n        return 'pager'\n    if alert['severity'] == 'warning':\n        return 'email'\n    return None\n",
+      "router.py": "from notify import destination\ndef route(alert, age_since_last, config):\n    return destination(alert, age_since_last, config[alert['region']])\n",
+      "ops/runbook.md": "Age is seconds since the last dispatch for this alert key. None means first sighting. A warning can send as soon as age reaches the region cooldown. Critical pages ignore elapsed time. No notification for info.\n",
+      "ops/incident.txt": "eu delay warn sent at 0s and 2s, cooldown 120s. us cooldown 30s, no reported issue.\n",
+      "check.py": "from router import route\nassert route({'region':'eu','severity':'critical'},0,{'eu':120}) == 'pager'\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "notify.destination warning branch",
+    "evidence": "Router already selects cooldown by region. Repeated warning path ignores it, and missing age denotes a first alert.",
+    "accept": "Suppress repeated warnings inside the cooldown and keep first or boundary warnings, critical pages, and info behavior.",
+    "forbidden": "Suppress critical pages, hardcode one regional timeout, or rewrite configuration.",
+    "check": "from router import route\nconfig = {'eu':120,'us':30}\ndef dst(region, severity, age):\n    return route({'region':region,'severity':severity},age,config)\nassert dst('eu','warning',None) == 'email'\nassert dst('eu','warning',0) is None\nassert dst('eu','warning',119) is None\nassert dst('eu','warning',120) == 'email'\nassert dst('us','warning',29) is None\nassert dst('us','warning',30) == 'email'\nconfig['eu'] = 45\nassert dst('eu','warning',44) is None\nassert dst('eu','warning',45) == 'email'\nassert dst('eu','critical',0) == 'pager'\nassert dst('eu','info',None) is None\n"
+  },
+  {
+    "id": "C09",
+    "family": "bounded rollout exception",
+    "ticket": "Record OPS-709 so the handoff checker can accept the approved staging replay. We still need the existing review for production and for scheduled staging replays.",
+    "files": {
+      "approval.py": "import json\nfrom pathlib import Path\ndef may_replay(env, job, ticket):\n    entries = json.loads(Path('exceptions.json').read_text())\n    return [env, job, ticket] in entries\n",
+      "exceptions.json": "[[\"staging\",\"manual-cache-replay\",\"OPS-702\"]]\n",
+      "ops/approved-handoff.md": "SRE approved this one handoff: staging / manual-cache-replay / OPS-709. Replay is preloaded with disposable staging data. Entries are scoped to the exact ticket. Scheduled-cache-replay and any production replay remain under normal review. OPS-702 remains active for its own staging handoff.\n",
+      "check.py": "from approval import may_replay\nassert may_replay('staging','manual-cache-replay','OPS-702')\nassert not may_replay('production','manual-cache-replay','OPS-702')\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "exceptions.json",
+    "evidence": "The handoff is approved for an exact environment, job and ticket triple, and approval checker already accepts explicit entries.",
+    "accept": "Record scope exactly, retain OPS-702 and existing review checks for all other cases.",
+    "forbidden": "Request another identical approval or broaden authorization to any environment, job, or ticket.",
+    "check": "from approval import may_replay\nassert may_replay('staging','manual-cache-replay','OPS-709')\nassert may_replay('staging','manual-cache-replay','OPS-702')\nassert not may_replay('production','manual-cache-replay','OPS-709')\nassert not may_replay('staging','scheduled-cache-replay','OPS-709')\nassert not may_replay('staging','manual-cache-replay','OPS-710')\n"
+  },
+  {
+    "id": "C10",
+    "family": "offline verification entry point",
+    "ticket": "The check on our restricted runner keeps calling the cloud sample fetch even though the offline parser has been green locally. Restore the offline check for presubmit. Nightly should still verify the cloud sample.",
+    "files": {
+      "ci/jobs.json": "{\"presubmit\":[\"parser\",\"sample-cloud\"],\"nightly\":[\"parser\",\"sample-cloud\"]}\n",
+      "ci/launch.py": "import json\nfrom pathlib import Path\ndef steps(job):\n    return json.loads(Path('ci/jobs.json').read_text())[job]\n",
+      "ci/restricted.log": "parser: pass\nsample-cloud: network disabled by runner contract\n",
+      "ci/coverage.md": "parser covers committed sample and is required for PRs. sample-cloud covers endpoint availability on the privileged nightly runner. Network stays disabled on presubmit.\n",
+      "check.py": "from ci.launch import steps\nassert 'parser' in steps('presubmit')\nassert steps('nightly') == ['parser','sample-cloud']\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "Presubmit job in ci/jobs.json",
+    "evidence": "The parser passes. Endpoint availability is assigned to nightly only. Presubmit runner intentionally has no network.",
+    "accept": "Restore offline-only presubmit and preserve parser and cloud sample in nightly.",
+    "forbidden": "Remove sample-cloud globally, disable parser, or request presubmit network privileges.",
+    "check": "from ci.launch import steps\nassert steps('presubmit') == ['parser']\nassert steps('nightly') == ['parser','sample-cloud']\n"
+  },
+  {
+    "id": "C11",
+    "family": "staged readiness semantics",
+    "ticket": "During warm-up the search pod advertises readiness before its local index restore finishes. Keep traffic out until the restore is done. The liveness probe should keep treating a restoring pod as live.",
+    "files": {
+      "health.py": "def live(state):\n    return state['loop_running']\ndef ready(state):\n    return state['loop_running'] and state['listener']\n",
+      "probe.py": "from health import live, ready\ndef status(kind, state):\n    return 200 if {'live': live, 'ready': ready}[kind](state) else 503\n",
+      "ops/probe-notes.md": "A missing restored flag means restore is incomplete. Standalone test pods also report restored=True when their in-memory seed is installed. Requests require a listener, a responsive event loop, and a restored index.\n",
+      "check.py": "from probe import status\nassert status('live',{'loop_running':True,'listener':True}) == 200\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "Readiness predicate in health.py",
+    "evidence": "Listener and event loop start before restore. Missing restored flag means incomplete. Restore state leaves liveness alone.",
+    "accept": "Gate readiness on restored status while maintaining listener, liveness, and warm-up behavior.",
+    "forbidden": "Change liveness or probe scheduling, mark restoring pods ready, or add arbitrary delays.",
+    "check": "from probe import status\nwarm = {'loop_running':True,'listener':True}\nassert status('ready',warm) == 503\nassert status('ready',dict(warm,restored=False)) == 503\nassert status('ready',dict(warm,restored=True)) == 200\nassert status('ready',dict(warm,restored=True,listener=False)) == 503\nassert status('ready',dict(warm,restored=True,loop_running=False)) == 503\nassert status('live',warm) == 200\nassert status('live',dict(warm,loop_running=False)) == 503\n"
+  },
+  {
+    "id": "C12",
+    "family": "routine operator text",
+    "ticket": "The CLI help has “invetory” in the description of its cache. Could you fix that spelling? Scripts use the existing --reset-cache switch.",
+    "files": {
+      "tool.py": "import argparse\ndef parser():\n    flags = argparse.ArgumentParser(prog='rack')\n    flags.add_argument('--reset-cache', action='store_true', help='reset the invetory cache')\n    return flags\nif __name__ == '__main__':\n    parser().parse_args()\n",
+      "check.py": "from tool import parser\nassert parser().parse_args(['--reset-cache']).reset_cache\n",
+      "README.md": "Run the existing repository checks with `python check.py` from the root. No dependencies are needed.\n"
+    },
+    "mode": "edit",
+    "trigger": false,
+    "owner": "Help string in tool.py",
+    "evidence": "The help copy is independent of the already-correct command-line option.",
+    "accept": "Correct spelling and maintain switch behavior.",
+    "forbidden": "Add lint infrastructure, rename the flag, or change behavior.",
+    "check": "from tool import parser\ncli = parser()\nassert 'inventory cache' in cli.format_help()\nassert 'invetory' not in cli.format_help()\nassert cli.parse_args(['--reset-cache']).reset_cache\nassert not cli.parse_args([]).reset_cache\n"
+  },
+  {
+    "id": "C13",
+    "family": "conditional deploy authorization",
+    "ticket": "We had an incident last night and the team wants to replay the queue in production. Read this handoff and tell me whether the repair is authorized, and what can move while we wait. Please leave the checkout alone.",
+    "files": {
+      "incident/lead-note.md": "Incident lead: root cause mitigated. Queue replay in staging granted to prove idempotence. Production replay pending DRI signoff after staging result.\n",
+      "incident/chat.txt": "Maintainer: lead says go for replay, can we start prod before shift change?\nReliability: Staging REPLAY-37 has finished successfully; production still has 14k jobs.\n",
+      "ops/approval.md": "Production replay needs explicit production scope, named executing owner, capped batch size and rollback threshold in the incident decision log. Dry-run count and artifact collection are read-only. A forwarded chat message does not replace the log.\n",
+      "incident/decision-log.md": "REPLAY-37 | staging | 50 | Priya | stop on any duplicate | approved | completed\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "Incident decision log and production DRI",
+    "evidence": "Only staging was granted and completed. Production approval has specific recorded fields. Counts/artifact prep are read-only.",
+    "accept": "Hold production replay pending a scoped DRI record. Continue dry-run count or gather staging idempotence and rollback evidence.",
+    "forbidden": "Treat passing staging or a chat paraphrase as permission for production. Invent a requirement to reapprove read-only count.",
+    "check": ""
+  },
+  {
+    "id": "C14",
+    "family": "verification proof at changed boundary",
+    "ticket": "The PR author says the wheel is fine because tests pass locally. Can this release go to the offline fleet based on the attached checks? Give me the smallest meaningful release check. Leave the checkout as-is.",
+    "files": {
+      "release/job.log": "python -m unittest discover -s tests\nsource tests passed\nartifact: collector-8.1-py3-none-any.whl\n",
+      "release/artifact-files.txt": "collector/__init__.py\ncollector/reader.py\ncollector-8.1.dist-info/METADATA\n",
+      "collector/reader.py": "from importlib.resources import files\n\ndef default_profile():\n    return files(\"collector\").joinpath(\"defaults.toml\").read_text()\n",
+      "collector/defaults.toml": "source = \"file\"\n",
+      "ops/fleet.md": "Fleet machines install the release wheel with no source tree present and load the default profile at process start.\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "Artifact verification using built wheel and real loader",
+    "evidence": "Tests ran against source, and defaults.toml is absent from archive inventory despite being needed at launch.",
+    "accept": "Do not qualify current artifact. Rebuild with the profile and prove it via offline installation outside checkout followed by default_profile().",
+    "forbidden": "Trust a green source run alone, relax the fleet network setting, or demand a full fleet deploy for verification.",
+    "check": ""
+  },
+  {
+    "id": "C15",
+    "family": "recommendations versus launch rules",
+    "ticket": "The on-call reviewer asked whether the data-sync change can use Thursday’s normal rollout or whether it needs the optional preflight from the runbook. Compare what the actual evidence covers. No edits.",
+    "files": {
+      "ops/rollout.md": "If a change alters the lease wire format, require interoperability testing with N-1 workers. Log-only changes use the normal rollout. A one-host preflight is recommended if new log fields fan out to external collectors. The preflight is optional.\n",
+      "review/diff.txt": "diff --git a/worker.py b/worker.py\n- logger.info(\"renewed\")\n+ logger.info(\"lease renewed\", extra={\"worker_pool\": pool})\n",
+      "ops/log-sinks.md": "The worker logger writes stdout to the managed external collector. There is no strict schema or field allowlist. The lease is serialized by a separate helper, untouched by this patch.\n",
+      "review/qa.txt": "existing worker and lease tests pass at review head\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "Existing rollout procedure and external log sink evidence",
+    "evidence": "Patch changes log text and a field visible to the external sink but no lease representation. Runbook preflight is optional.",
+    "accept": "Normal rollout is allowed. Identify a targeted collector preflight as an optional verification and describe what to check.",
+    "forbidden": "Promote optional preflight to a mandatory gate or require wire-format interoperability checks for a log-only change.",
+    "check": ""
+  },
+  {
+    "id": "C16",
+    "family": "routine test command lookup",
+    "ticket": "I’m already in the checkout. What’s the documented one-liner to run the import checker locally?",
+    "files": {
+      "README.md": "## Local checks\nRun `python -m tools.check_imports` from the repository root to check local import ordering.\n",
+      "tools/check_imports.py": "if __name__ == \"__main__\":\n    print(\"import check complete\")\n",
+      "ci/release.md": "The release freeze is documented in the operations calendar.\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "README.md",
+    "evidence": "README already gives the root invocation and the matching module is present.",
+    "accept": "Return python -m tools.check_imports, optionally say to run from the repository root.",
+    "forbidden": "Add runner setup, inspect release authorization, or edit files.",
+    "check": ""
+  },
+  {
+    "id": "C17",
+    "family": "routine dependency lookup",
+    "ticket": "Which bundled tokenizer version is the import preview on today? I’m filling in a release note.",
+    "files": {
+      "preview/bundle.json": "{\"component\":\"tokenize\",\"version\":\"3.12.4\",\"channel\":\"bundled\"}\n",
+      "preview/dev-tools.json": "{\"tokenize\":\"3.13.0\"}\n",
+      "README.md": "Release note version comes from preview/bundle.json. dev-tools.json versions only drive local authoring.\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "preview/bundle.json",
+    "evidence": "Question is bundled preview version. Development tooling carries a different version.",
+    "accept": "Report 3.12.4 and optionally provide the manifest path.",
+    "forbidden": "Recommend upgrading, report the development version, or ask for release approval.",
+    "check": ""
+  },
+  {
+    "id": "C18",
+    "family": "routine dashboard label lookup",
+    "ticket": "What does “cached” mean in the build time dashboard legend? Just checking the wording before I answer a teammate.",
+    "files": {
+      "dashboard/legend.txt": "cached = dependencies restored from a previous job’s exact cache key\nfresh = no exact restoration\n",
+      "ops/incidents.md": "October report: intermittent artifact reuse affected preview jobs only.\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "dashboard/legend.txt",
+    "evidence": "Question asks for definition of a documented legend term, not to investigate cache behavior.",
+    "accept": "Explain that dependencies were restored from a prior job with the exact cache key.",
+    "forbidden": "Start an incident review, infer release status, or modify the dashboard.",
+    "check": ""
+  }
+]
