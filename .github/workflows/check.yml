@@ -71,7 +71,14 @@ jobs:
           python -m venv "$RUNNER_TEMP/scaffold"
           echo "SCAFFOLD_PYTHON=$RUNNER_TEMP/scaffold/bin/python" >> "$GITHUB_ENV"
           echo "SCAFFOLD_REQUIRED=1" >> "$GITHUB_ENV"
+      - name: Browser for the worked UI standard
+        run: |
+          python -m pip install playwright==1.62.0
+          chrome=$(command -v google-chrome)
+          echo "CHROMIUM_PATH=$chrome" >> "$GITHUB_ENV"
       - name: Hook tests
+        env:
+          STANDARD_BROWSER_REQUIRED: "1"
         run: python -m pytest -q -rs tests
 
   # Coworkers run the hooks natively on Windows (KAN-460). No bash: every step is Python under PowerShell. The checkout

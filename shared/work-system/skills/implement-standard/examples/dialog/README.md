@@ -17,6 +17,8 @@ python verify.py
 
 On a Linux CI runner that needs browser system libraries, use `python -m playwright install --with-deps chromium`. For a preinstalled Chromium, set `CHROMIUM_PATH` to its executable when running `verify.py`. The test starts a temporary loopback HTTP server. To try the UI yourself, run `python -m http.server --bind 127.0.0.1 8000` here and open http://127.0.0.1:8000.
 
+The Team Harness Linux PR job uses Playwright with the runner's Chrome. From the Team Harness root, run `STANDARD_BROWSER_REQUIRED=1 python -m pytest -q tests/test_standard_examples.py` after installing the browser dependencies. This runs the same verifier on the working example and on a scratch copy that removes only the button, where the browser check must detect the draft left behind.
+
 ## What the checks cover
 
 - `check_ui.py` parses `index.html` and `features/**/*.html` for raw dialog start tags. Adding `<dialog>` to feature HTML produces `UI001` with the file, line and replacement API. Pass individual HTML files as arguments to override the default paths. Dynamic JavaScript and framework templates sit outside this example rule's coverage.

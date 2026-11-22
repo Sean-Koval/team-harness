@@ -8,8 +8,8 @@ file and each harness gets concrete text. For each target harness this:
 
 - renders `shared/work-system/skills/<name>/` into `harnesses/<h>/skills/<name>/` (the whole directory), for every
   shared skill directory (a new one needs no edit to targets.yaml) plus the harness's own `skills:` from targets.yaml;
-- renders the hook into `harnesses/<h>/native/claude-code/hooks/`, and each `session_hooks:` entry beside it, with
-  the entry's `data:` files (such as a price table) copied there too;
+- renders the hook into `harnesses/<h>/native/claude-code/hooks/`, and each shared or harness-specific
+  `session_hooks:` entry beside it, with the entry's `data:` files (such as a price table) copied there too;
 - renders `guide_fragment:` into the harness's `CLAUDE.md` (and `AGENTS.md`, its copy), between the markers FRAGMENT_BEGIN and FRAGMENT_END (a
   write appends the block when the markers are missing); the rest of the guide is the harness's own;
 - renders `env_example:` into `harnesses/<h>/.env.example`, the session's environment contract (names only);
@@ -722,7 +722,8 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         want_hook = render(hook_src.read_bytes(), params, f"{h}: {t['hook']}", problems)
         if not dst.is_file() or dst.read_bytes() != want_hook:
             stale.append((hook_src, dst, {"": want_hook}))
-        for sh in t.get("session_hooks") or []:
+        session_hooks = [*(t.get("session_hooks") or []), *(entry.get("session_hooks") or [])]
+        for sh in session_hooks:
             for rel in [sh["file"], *(sh.get("data") or [])]:
                 src = shared / rel
                 dst = hd / "native" / "claude-code" / "hooks" / src.name
@@ -778,10 +779,12 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         except (OSError, ValueError) as e:
             problems.append(f"{h}: cannot read {settings.relative_to(root)}: {e}")
             continue
-        for sh in t.get("session_hooks") or []:
+        for sh in session_hooks:
             if not any(x.get("command") == sh["command"] for e in registered.get(sh["event"], [])
+                       if "matcher" not in sh or e.get("matcher") == sh["matcher"]
                        for x in e.get("hooks", [])):
-                problems.append(f"{h}: settings.json does not register {sh['command']!r} on {sh['event']}")
+                matcher = f" with matcher {sh['matcher']!r}" if "matcher" in sh else ""
+                problems.append(f"{h}: settings.json does not register {sh['command']!r} on {sh['event']}{matcher}")
         entries = [e for e in pre if any(x.get("command") == t["hook_command"] for x in e.get("hooks", []))]
         matchers = " ".join(e.get("matcher", "") for e in entries)
         if not entries:

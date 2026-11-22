@@ -36,3 +36,14 @@ On read-only tickets, use the authored owner, acceptable behavior and forbidden 
 | A local check fails correctly but the PR skips it | The job's path filter, actual check command and required status on the affected revision. |
 
 Record natural timely access and correct actions separately. Include unexpected opens and unnecessary new requirements on routine work. Repeated green results in these small repos leave native discovery, noisy production tickets and branch protection to be tested on the actual deployment.
+
+## Check the filing decision
+
+This separate holdout contains 24 frozen synthetic requests. It checks whether a ticket filer adds the exact Jira label `standards-change` when the request calls for a shared standard. Export only the briefs and give them to the filer in a fresh session with the filing guidance. Keep the scorer and expected decisions outside that session. Ask the filer to return a JSON array with one entry per masked reference, for example `[{"ref":"HX-000","labels":["proposed","standards-change"]}]`. Extra fields such as a short reason are allowed.
+
+```sh
+python evals/implement-standard/field/filing.py export > /tmp/filing-briefs.json
+python evals/implement-standard/field/filing.py score /tmp/filing-predictions.json
+```
+
+Save the predictions before scoring. The scorer rejects incomplete or mismatched submissions and reports counts for correctly marked briefs (TP), misses (FN), routine briefs marked (FP), and routine briefs left unmarked (TN). It lists ambiguous briefs separately for review. Inspect the misses and false positives when comparing filing guidance. This check measures the filing decision on these briefs. The field panel above measures skill discovery and implementation separately.

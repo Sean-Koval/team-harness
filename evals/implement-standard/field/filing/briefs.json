@@ -1,0 +1,98 @@
+[
+  {
+    "ref": "HX-731",
+    "request": "The monthly Invoice CSV shows 'Billing contacts' above a column the March launch brief calls 'Billing contact'. Please fix the header and the screenshot in the help article before the next export."
+  },
+  {
+    "ref": "HX-746",
+    "request": "Finance told partners a CSV header survives a locale change. We just found one header taken from the screen translation bundle. Please straighten this out across invoice and credit exports before partners switch their parsers."
+  },
+  {
+    "ref": "HX-709",
+    "request": "Can someone read the new usage card PR today? I mostly need another set of eyes on the spacing at 320px and the empty screenshot. The ticket has the exact dimensions."
+  },
+  {
+    "ref": "HX-762",
+    "request": "The accessibility review for the compact activity card found that clicking a date opens details, but keyboard users reach a dead end. We already tell customers that every interaction in the activity feed is usable from a keyboard. The older cards use a different interaction pattern. Can we fix this before the compact card ships?"
+  },
+  {
+    "ref": "HX-718",
+    "request": "New merchant setup prepopulates the default tax region from the template. There's a request to 'make it consistent' with the bulk importer. The bulk importer team says the difference may be intentional. Can you take a look?"
+  },
+  {
+    "ref": "HX-755",
+    "request": "For the Tuesday intake template, rename the 'Office' field to 'Office or remote', per People Ops' signed-off copy. Keep the existing field key because two dashboards use it."
+  },
+  {
+    "ref": "HX-723",
+    "request": "The intake template asks who can approve elevated access, but Slack-created requests skip the field and still reach reviewers. Internal Audit was told every elevated request arrives with a named approver. Make the entry points behave the same for the next audit cycle."
+  },
+  {
+    "ref": "HX-743",
+    "request": "The MCP listing for the ledger reader says 'transaction detailes'. Please fix the tool description and mirror the corrected wording in the catalog."
+  },
+  {
+    "ref": "HX-710",
+    "request": "An MCP client timed out while starting the nightly reconciliation and retried. Two runs came up. We tell consumers that retrying a start with the same request ID produces one job. The CLI starts jobs through the same service. Can we make that statement true for both?"
+  },
+  {
+    "ref": "HX-752",
+    "request": "Rerun the failed integration job for branch receipts-202 and attach the run link to its existing issue. Infra attributed the first failure to yesterday's registry outage."
+  },
+  {
+    "ref": "HX-703",
+    "request": "Release asked whether a skipped architecture job still counts for our published 'every supported target exercised' sign-off. The job disappears on docs-only PRs, and some release branches cherry-pick from those PRs. Give release a decision they can use on Friday."
+  },
+  {
+    "ref": "HX-768",
+    "request": "The retry workflow has generated three red builds overnight. Can you get it back to green before support starts, and tell me if we should treat this as normal for that workflow?"
+  },
+  {
+    "ref": "HX-728",
+    "request": "SRE approved the one-time index rebuild in CHG-88. Schedule it in the approved window, then record the change number and the observed runtime in the maintenance issue."
+  },
+  {
+    "ref": "HX-739",
+    "request": "A maintenance job that rewrites invoice rows can now be started by the scheduler. Its runbook still says an SRE has signed off whenever the job runs in production. Confirm with SRE whether the approved release window covers unattended runs or whether each run needs its own approval, and capture what operators should rely on."
+  },
+  {
+    "ref": "HX-713",
+    "request": "The overnight export caller keeps displaying the internal operation ID in its toast. It already has the display name on the response. Switch the toast to the display name for this caller, following the exact string in UX-641."
+  },
+  {
+    "ref": "HX-760",
+    "request": "The new payment exporter works alone, but breaks the older caller that sends a missing region. We told integration teams this client update accepts the prior request shape through year-end. Please land the update without making those teams change their callers early."
+  },
+  {
+    "ref": "HX-735",
+    "request": "Update the image resizing library from the old patch release to the patch pinned in the dependency bulletin. The upgrade bot already opened the branch and requested the customary smoke run."
+  },
+  {
+    "ref": "HX-706",
+    "request": "The address normalizer has a new library release. One of its transliteration changes merges two addresses we currently preserve as distinct. All importing products use this package and operations has promised those existing addresses remain distinct through upgrades. Work out how we can take the release without breaking the import promise."
+  },
+  {
+    "ref": "HX-749",
+    "request": "Please proofread the production migration checklist against the existing approved outline. The request from Operations is to fix spelling and replace two old channel names with the names in the directory."
+  },
+  {
+    "ref": "HX-721",
+    "request": "Staging accepts workflow names that look identical when rendered, and the queue dashboard later shows them as one item. We promised operators that each displayed name can be matched to exactly one active workflow. Could you resolve it before we add the scheduled importer?"
+  },
+  {
+    "ref": "HX-766",
+    "request": "The Python worker example uses a shortened module path and the TypeScript example uses a full one. Can someone tidy the examples and settle which form we mean people to copy?"
+  },
+  {
+    "ref": "HX-716",
+    "request": "The frontend and docs example still allow a first line starting with 'From ', but the worker's exported .eml sometimes folds it into a fake envelope line. Support says our advertised 'paste a draft and get the same plain text back' was intended for multiline content too. Make the reply flow deliver on that before next week's rollout."
+  },
+  {
+    "ref": "HX-741",
+    "request": "Please post the current coverage summary for the billing release into its existing Jira issue. Use last night's report and copy the totals into the three fields already on the issue."
+  },
+  {
+    "ref": "HX-757",
+    "request": "On the connector PR, a reviewer says including raw event IDs in support exports may go against our customer promise. The identifiers are already shown to workspace owners in the app. Can you give this a focused review before we raise it with Product?"
+  }
+]
