@@ -35,4 +35,10 @@ When the promise or exception is undecided, ask the person who owns it. Use the 
 3. In the PR, show the ordinary verification command, the observed failure on a deliberate violation, and the permitted case passing. Link the real run when checking hosted CI. AI-DLC can use that evidence in the existing delivery flow.
 4. Hand a second engineer a normal new-caller ticket. Check whether they inherit the rule without a reminder. Keep one worked example and links in Confluence. Change the code, check, workflow or harness cue where the evidence shows the gap.
 
+## Make discovery observable
+
+For a pilot, let the agent runner record the installed digest, when the body was delivered, the first product edit, and the verification command and exit. A skill directory listing alone tells you little. An agent that selected the right file and only proposed an authorized fix has a different problem from an agent that never saw the skill.
+
+For work the team can identify mechanically, the launcher can load the versioned skill before the first edit when a ticket explicitly flags a standard change or the repo declares a relevant change path. Keep the condition narrow. Pair each trigger with a legitimate ordinary ticket that should proceed without extra steps. Measure misses on unmarked work separately. This is an optional launcher integration; the current work-default package supplies an intake cue. A product invariant that must hold for every contributor belongs in the shared code and its ordinary required checks, including for contributors who never use an agent.
+
 To rehearse without touching production, the [field panel](../evals/implement-standard/field54/README.md) prepares 54 isolated tickets and checks completed edits. The [worked UI example](../shared/work-system/skills/implement-standard/examples/dialog/README.md) includes local lint and browser verification.
