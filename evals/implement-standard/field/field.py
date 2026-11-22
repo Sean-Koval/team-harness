@@ -2,16 +2,18 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 def load_cases():
     cases = {}
     for name in ("a.json", "b.json", "c.json", "d.json"):
-        for case in json.loads(Path(__file__).with_name(name).read_text()):
+        for case in json.loads(Path(__file__).with_name(name).read_text(encoding="utf-8")):
             identifier = case["id"]
             if identifier in cases:
                 raise ValueError(f"Duplicate case ID: {identifier}")
@@ -49,10 +51,16 @@ def verify(case, destination):
         ("private behavior check", ["-c", case["check"]]),
     ]
     passed = True
-    for label, args in commands:
-        process = subprocess.run([sys.executable, *args], cwd=destination, check=False)
-        print(f"{label}: exit {process.returncode}", flush=True)
-        passed = passed and process.returncode == 0
+    environment = os.environ.copy()
+    environment.pop("PYTHONOPTIMIZE", None)
+    # Some cases mutate equal-length expressions between Python processes.
+    # Ignore any existing bytecode and keep the mutation runs source-based.
+    with tempfile.TemporaryDirectory(prefix="field-bytecode-") as cache:
+        environment.update(PYTHONPYCACHEPREFIX=cache, PYTHONDONTWRITEBYTECODE="1")
+        for label, args in commands:
+            process = subprocess.run([sys.executable, *args], cwd=destination, env=environment, check=False)
+            print(f"{label}: exit {process.returncode}", flush=True)
+            passed = passed and process.returncode == 0
     return 0 if passed else 1
 
 
