@@ -1,17 +1,17 @@
 # Test whether a project standard reaches the next engineer
 
-Use the [team guide](../../../docs/working-with-standards.md) for day-to-day implementation. These 54 synthetic tickets check three different outcomes. Did a fresh agent discover the skill in time? Did it identify the owning code, test, workflow or human decision? On an authorized build ticket, did it actually change and verify the repo?
+Use the [team guide](../../../docs/working-with-standards.md) for day-to-day implementation. These 64 synthetic tickets check three different outcomes. Did a fresh agent discover the skill in time? Did it identify the owning code, test, workflow or human decision? On an authorized build ticket, did it actually change and verify the repo?
 
-The panels cover UI and accessibility, shared-library adoption, MCP and bot contracts, storage, rollout, authorization, CI and harness discovery. Each includes 12 edits, three read-only decision requests and three ordinary questions. One edit per panel is intentionally routine. Some scenarios use a simple executable model of a UI or CI rule.
+The original 54 tickets cover UI and accessibility, shared-library adoption, MCP and bot contracts, storage, rollout, authorization, CI and harness discovery. Each includes 12 edits, three read-only decision requests and three ordinary questions. One edit per panel is intentionally routine. A separately reviewed panel adds ten harder cases with conflicting evidence, six edits and four decision requests. Across the two panels, 52 tickets are expected to need the skill. Keep the core and supplementary scores separate when comparing runs. Some scenarios use a simple executable model of a UI or CI rule.
 
 ## Run a ticket
 
 Use Python 3, Node.js and a POSIX shell in a disposable development environment. From the root of Team Harness:
 
 ```sh
-python evals/implement-standard/field54/field.py list
+python evals/implement-standard/field/field.py list
 trial_dir=$(mktemp -d)
-python evals/implement-standard/field54/field.py prepare A09 "$trial_dir/case"
+python evals/implement-standard/field/field.py prepare A09 "$trial_dir/case"
 ```
 
 Install the work-default build under evaluation in that project, following the [pilot install instructions](../README.md). Give the engineer only the checkout, the installed harness and the ticket. Keep these case files, which include expected decisions and checks, outside the engineer's environment. In a separate matched session, deliver the same skill explicitly and start from the same unedited fixture. Record model, runtime and harness digest. Give each case and condition a fresh session.
@@ -19,7 +19,7 @@ Install the work-default build under evaluation in that project, following the [
 Once the engineer hands back an edit, run both the ordinary check and the private acceptance check in a disposable copy of the delivered project. The evaluator executes project code. Use the same isolated environment for both conditions.
 
 ```sh
-python evals/implement-standard/field54/field.py verify A09 "$trial_dir/case"
+python evals/implement-standard/field/field.py verify A09 "$trial_dir/case"
 ```
 
 On read-only tickets, use the authored owner, acceptable behavior and forbidden actions to review the answer. Check the command record when a user asked the engineer to run something. On edit tickets, also inspect changed files, retained exceptions and whether the engineer ran the repo's ordinary check. A private check can pass even when a change adds an unnecessary approval or hardcodes the fixture.

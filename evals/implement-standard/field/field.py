@@ -10,7 +10,7 @@ import sys
 
 def load_cases():
     cases = {}
-    for name in ("a.json", "b.json", "c.json"):
+    for name in ("a.json", "b.json", "c.json", "d.json"):
         for case in json.loads(Path(__file__).with_name(name).read_text()):
             identifier = case["id"]
             if identifier in cases:
@@ -43,7 +43,7 @@ def verify(case, destination):
     ticket = destination / "TICKET.md"
     if not ticket.is_file() or ticket.read_text(encoding="utf-8") != case["ticket"] + "\n":
         raise ValueError("Use the case ID and the matching prepared checkout.")
-    ordinary_args = {"A": ["test_smoke.py"], "B": ["-m", "unittest", "discover"], "C": ["check.py"]}
+    ordinary_args = {"A": ["test_smoke.py"], "B": ["-m", "unittest", "discover"], "C": ["check.py"], "D": ["check.py"]}
     commands = [
         ("ordinary repo check", ordinary_args[case["id"][0]]),
         ("private behavior check", ["-c", case["check"]]),
