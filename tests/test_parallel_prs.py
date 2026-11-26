@@ -438,3 +438,23 @@ def test_this_repository_settings_match_the_build():
              and pr_shape.matches(p, cfg.generated) != build_generated.is_generated(prefixes, p)]
     assert wrong == []
     assert pr_shape.matches("CHANGELOG.md", cfg.generated)
+
+
+def test_the_push_job_accepts_every_path_the_build_writes():
+    """KAN-595: generated.yml's push job refuses any patch path outside its own allowlist. When the build learned to
+    write the stage agents (KAN-513) and the allowlist didn't, every post-merge run failed there and nothing was
+    committed. Hold the allowlist to build_generated's list of what the build writes."""
+    import re
+
+    import build_generated
+
+    gen = yaml.safe_load((ROOT / ".github/workflows/generated.yml").read_text(encoding="utf-8"))
+    step = next(s for s in gen["jobs"]["push"]["steps"] if str(s.get("name", "")).startswith("Apply the patch"))
+    m = re.search(r"cut -f3- \| grep -vE '([^']+)'", step["run"])
+    assert m, "the push job's path allowlist moved; update this test"
+    allowed = re.compile(m.group(1))
+    paths = [p + "SKILL.md" if p.endswith("/") else p for p in build_generated.generated_prefixes(ROOT)]
+    paths += list(build_generated.LINE_FILES)
+    assert any("/native/claude-code/agents/" in p for p in paths), "the build writes no stage agents any more"
+    refused = [p for p in paths if not allowed.search(p)]
+    assert not refused, f"generated.yml's push job would refuse paths the build writes: {refused}"
