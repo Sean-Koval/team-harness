@@ -41,7 +41,7 @@ The agent reads the ticket, creates a branch keyed to it, makes and tests the ch
 
 For a team rule, inspect the owning code first. If the shared button already does the right thing but feature code bypasses it, make the existing PR lint check reject the direct import. Prove that the design-system wrapper can still import the primitive.
 
-For the pilot, mark the Jira ticket `standards-change`. If the session hasn’t loaded `implement-standard` before the first relevant edit, open the installed skill and record the missed trigger. [Where to put a team standard](working-with-standards.md)
+For the pilot, mark the Jira ticket `standards-change`. Check which build you installed. Public candidate r20 supplies `implement-standard` for manual use. To measure automatic intake, the private candidate must include the marked-issue hook. If that hook misses, open the installed skill before editing and record the manual recovery. [Where to put a team standard](working-with-standards.md)
 
 ## Review the PR
 
