@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import collect_changes  # noqa: E402
-import lockfile as hl  # noqa: E402
+import harness_lockfile as hl  # noqa: E402
 import promote  # noqa: E402
 import relock  # noqa: E402
 import render_envs  # noqa: E402

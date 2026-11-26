@@ -395,7 +395,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `channels.yaml` | Channel → `harness_digest`, per harness |
 | `bindings/<name>.yaml` | Where each MCP credential comes from (credential names, `${VAR}` references), for the environments |
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
-| `scripts/relock.py` | Re-pin a hand-edited harness, with hangar's digests (`scripts/lockfile.py`, no hangar needed) |
+| `scripts/relock.py` | Re-pin a hand-edited harness, with hangar's digests (`scripts/harness_lockfile.py`, no hangar needed) |
 | `scripts/promote.py` | Promote: write `releases/rN/` and point `stable` at it |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |
