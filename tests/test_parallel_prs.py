@@ -1,5 +1,6 @@
 """KAN-481: two PRs that each add a feature and a changelog entry merge one after the other with no conflict."""
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -161,6 +162,24 @@ def _clone(tmp_path: Path) -> Path:
 def _tree(d: Path) -> dict[str, bytes]:
     return {str(p.relative_to(d)): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()}
 
+
+
+def test_a_shallow_build_keeps_the_committed_artifact_check_pin(tmp_path):
+    """KAN-559: the scaffold's artifact-check pin comes from git history. A depth-1 clone has none, so its build keeps
+    the pin in the committed copy rather than move every lock and digest. (Stable's environment is held by its own
+    rule: test_stable_env_changes_only_with_a_promotion.)"""
+    pytest.importorskip("hangar")
+    full = _clone(tmp_path)
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{full}", str(shallow)], check=True,
+                   capture_output=True)
+    pinned = [f"harnesses/{h}/skills/scaffold-artifact/templates/mcp-server/.github/workflows/ci.yml"
+              for h in ("suite-default", "work-default")]
+    before = [(shallow / p).read_text() for p in pinned]
+    assert all(re.search(r"artifact-check\.yml@[0-9a-f]{40}$", b, re.M) for b in before)
+    r = _run(shallow, "scripts/sync_shared.py")
+    assert r.returncode == 0 and "without its artifact-check job" not in r.stderr, r.stderr
+    assert [(shallow / p).read_text() for p in pinned] == before
 
 def test_build_moves_candidate_only_and_is_idempotent(tmp_path):
     """A one-line shared/ edit: candidate moves, the stable lines and every releases/ copy stay byte for byte (only
@@ -419,3 +438,23 @@ def test_this_repository_settings_match_the_build():
              and pr_shape.matches(p, cfg.generated) != build_generated.is_generated(prefixes, p)]
     assert wrong == []
     assert pr_shape.matches("CHANGELOG.md", cfg.generated)
+
+
+def test_the_push_job_accepts_every_path_the_build_writes():
+    """KAN-595: generated.yml's push job refuses any patch path outside its own allowlist. When the build learned to
+    write the stage agents (KAN-513) and the allowlist didn't, every post-merge run failed there and nothing was
+    committed. Hold the allowlist to build_generated's list of what the build writes."""
+    import re
+
+    import build_generated
+
+    gen = yaml.safe_load((ROOT / ".github/workflows/generated.yml").read_text(encoding="utf-8"))
+    step = next(s for s in gen["jobs"]["push"]["steps"] if str(s.get("name", "")).startswith("Apply the patch"))
+    m = re.search(r"cut -f3- \| grep -vE '([^']+)'", step["run"])
+    assert m, "the push job's path allowlist moved; update this test"
+    allowed = re.compile(m.group(1))
+    paths = [p + "SKILL.md" if p.endswith("/") else p for p in build_generated.generated_prefixes(ROOT)]
+    paths += list(build_generated.LINE_FILES)
+    assert any("/native/claude-code/agents/" in p for p in paths), "the build writes no stage agents any more"
+    refused = [p for p in paths if not allowed.search(p)]
+    assert not refused, f"generated.yml's push job would refuse paths the build writes: {refused}"

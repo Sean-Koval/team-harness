@@ -31,6 +31,17 @@ def load(skill_dir: Path):
     return mod
 
 
+def load_sync():
+    spec = importlib.util.spec_from_file_location("sync_shared_for_scaffold", ROOT / "scripts/sync_shared.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def git(*args: str, cwd: Path = ROOT) -> str:
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
 def rendered(h: str) -> Path:
     return ROOT / "harnesses" / h / "skills" / "scaffold-artifact"
 
@@ -69,6 +80,69 @@ def test_the_harness_copy_fills_owner_and_approvals_from_its_profile(h):
     shared = (SKILL / "templates/mcp-server/AGENTS.md").read_text(encoding="utf-8")
     assert "{{owner}}" in shared and "{{approvals}}" in shared
     assert "{{" not in agents
+
+
+def test_the_ci_calls_the_artifact_check_pinned_to_the_commit_that_last_changed_it(tmp_path):
+    """KAN-559: a scaffolded server's CI runs the artifact check on its PRs, from the repository it names and at one
+    full commit: the last that changed the check."""
+    shared = (SKILL / "templates/mcp-server/.github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "{{artifact_check_repo}}" in shared and "{{artifact_check_sha}}" in shared
+    ci = (render(tmp_path) / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "pull_request_target" not in ci
+    uses = re.search(r"(?m)^    uses: ([\w.-]+/[\w.-]+)/\.github/workflows/artifact-check\.yml@([0-9a-f]{40})$", ci)
+    assert uses, ci
+    assert re.search(rf'(?m)^      harness-repo: "{uses[1]}"$', ci), "the check's code: the copy `uses:` names"
+    assert re.search(rf'(?m)^      harness-ref: "{uses[2]}"$', ci) and re.search(r"(?m)^      kind: mcp-server$", ci)
+    if git("rev-parse", "--is-shallow-repository") != "false":
+        pytest.skip("needs a full clone to read the check's last commit")
+    assert uses[2] == git("log", "-1", "--format=%H", "--", *load_sync().ARTIFACT_CHECK_PATHS)
+
+
+def test_a_placeholder_repository_leaves_the_job_out_and_says_so(tmp_path):
+    """work-default on the example org names COMPANY-ORG: an unresolvable `uses:` would invalidate the whole ci.yml."""
+    scaffold = load(SKILL)
+    head = "jobs:\n  linux:\n    runs-on: ubuntu-latest\n"
+    job = ("\n  # artifact-check: begin\n  artifact-check:\n    uses: {}/.github/workflows/artifact-check.yml@{}\n"
+           "  # artifact-check: end\n").format
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    for left_out in (job("COMPANY-ORG/team-harness", sha), job("acme/team-harness", "unpinned")):
+        assert scaffold.unpinned(head + left_out) == head + "\n"
+    assert scaffold.unpinned(head + job("acme/team-harness", sha)) == head + job("acme/team-harness", sha)
+    dest = tmp_path / "weather-tools"
+    r = subprocess.run([sys.executable, str(rendered("work-default") / "scaffold.py"), "mcp-server", str(dest),
+                        "--name", "weather-tools", "--ticket", "PROJ-12", "--description", "Weather"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    ci = (dest / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    if "COMPANY-ORG" in (rendered("work-default") / "templates/mcp-server/.github/workflows/ci.yml").read_text("utf-8"):
+        assert "artifact-check" not in ci and "artifact_check_repo" in r.stderr
+        assert re.search(r"(?m)^    runs-on: windows-latest$", ci), "the rest of the CI stays"
+
+
+def test_the_pin_needs_full_history(tmp_path):
+    """A shallow clone has no answer (it would depend on the depth): the build warns and leaves the job out."""
+    sync = load_sync()
+    last = git("log", "-1", "--format=%H", "--", *sync.ARTIFACT_CHECK_PATHS)
+    assert sync.artifact_check_sha.__wrapped__(ROOT) in (None, last)
+    pinned = tmp_path / "harness" / sync.SCAFFOLD_CI
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text(f"    uses: acme/team-harness/.github/workflows/artifact-check.yml@{'a' * 40}\n")
+    assert sync.committed_pin(tmp_path / "harness") == "a" * 40 and sync.committed_pin(tmp_path) is None
+    if git("rev-parse", "--is-shallow-repository") != "false":
+        pytest.skip("needs a full clone to make a shallow one from")
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{ROOT}", str(shallow)], check=True)
+    assert git("rev-parse", "--is-shallow-repository", cwd=shallow) == "true"
+    assert sync.artifact_check_sha.__wrapped__(shallow) is None
+    for h in HARNESSES:  # once main commits the built copies, a clone has their pin: take it away for this path
+        (shallow / "harnesses" / h / sync.SCAFFOLD_CI).unlink(missing_ok=True)
+    warnings: list[str] = []
+    stale, problems = sync.plan(shallow, warnings)
+    # no copy to keep a pin from: the job is left out (test_parallel_prs covers keeping a committed one)
+    assert problems == [] and any("without its artifact-check job" in w for w in warnings), (problems, warnings)
+    ci = next(data for _, _, files in stale for k, data in (files or {}).items()
+              if k.endswith("mcp-server/.github/workflows/ci.yml"))
+    assert b"@unpinned" in ci
 
 
 def test_the_template_runs_its_own_verify_command(tmp_path):

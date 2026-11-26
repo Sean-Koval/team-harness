@@ -25,12 +25,12 @@ file and each harness gets concrete text. For each target harness this:
   ends with SPEC_MARK, from the org's approval summaries (KAN-353), so the behavior specs match the org's wording.
 
 A harness may also name a company's org overlay (`org: orgs/<org>` in targets.yaml). Its `org.yaml`
-(`team-harness.org/v1`) is validated; its `params` may set only `tracker` and the `kb_*` keys, and win over the
-profile's for those (the merge rule, the wall and the rest stay the profile's); it fills the generated placeholders
-`{{org_status}}`, `{{org_ticket_types}}`, `{{org_gates}}` and `{{org_review_request}}` (markdown); and each of its
-`skills/<name>/` (at least `org-process`, the company's own flow skill) is copied into the harness's skills verbatim,
-never rendered, so a company document may hold `{{ }}` freely. suite-default never takes an org: that is the
-work/home wall.
+(`team-harness.org/v1`) is validated; its `params` may set only `tracker`, `artifact_check_repo` and the `kb_*` keys,
+and win over the profile's for those (the merge rule, the wall and the rest stay the profile's); it fills the generated
+placeholders `{{org_status}}`, `{{org_ticket_types}}`, `{{org_gates}}` and `{{org_review_request}}` (markdown); and
+each of its `skills/<name>/` (at least `org-process`, the company's own flow skill) is copied into the harness's
+skills verbatim, never rendered, so a company document may hold `{{ }}` freely. suite-default never takes an org: that
+is the work/home wall.
 
 A placeholder the profile does not fill is an error, never an empty string.
 
@@ -50,7 +50,9 @@ import json
 import re
 import shutil
 import string
+import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 import yaml
@@ -58,6 +60,44 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SHARED = ROOT / "shared" / "work-system"
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}")
+
+# The artifact check's files (KAN-517): a scaffolded repository calls the reusable workflow and runs the check at the
+# last commit that changed any of them, filled into {{artifact_check_sha}} at build time (KAN-559), so no PR commits
+# the pin and it moves only when the check does.
+SCAFFOLD_CI = "skills/scaffold-artifact/templates/mcp-server/.github/workflows/ci.yml"
+COMMITTED_PIN = re.compile(r"/\.github/workflows/artifact-check\.yml@([0-9a-f]{40})$", re.M)
+UNPINNED = "unpinned"  # no full history: scaffold.py leaves the job out rather than pin a guess
+ARTIFACT_CHECK_PATHS = (".github/workflows/artifact-check.yml", "actions/artifact-check",
+                        "shared/work-system/hooks/usage_session_end.py", "shared/work-system/hooks/prices.json")
+
+
+@cache
+def artifact_check_sha(root: Path = ROOT) -> str | None:
+    """The last commit in `root`'s history that changed the artifact check, or None when it has no full history to
+    read it from (not a git checkout, or a shallow clone, where the answer would depend on the depth)."""
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True,
+                              timeout=60).stdout.strip()
+    if not (root / ".git").exists():  # a copy with no history of its own: never read an enclosing repository's
+        return None
+    try:
+        if git("rev-parse", "--is-shallow-repository") != "false":
+            return None
+        sha = git("log", "-1", "--format=%H", "--", *ARTIFACT_CHECK_PATHS)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def committed_pin(harness_dir: Path) -> str | None:
+    """The pin in the harness's checked-out scaffold copy (on main, the committed build): a shallow build keeps it
+    rather than guess or fail."""
+    try:
+        m = COMMITTED_PIN.search((harness_dir / SCAFFOLD_CI).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return m[1] if m else None
+
 
 # The work/home wall: these harnesses never carry a company's org overlay.
 NO_ORG = frozenset({"suite-default"})
@@ -89,7 +129,7 @@ TEMPLATE_FIELDS = SUMMARY_FIELDS | {"summary", "gate_lines", "risk"}
 RESERVED_PR_LINES = {"jira", "docs", "decision"}  # the PR check's own lines
 # What an org may override: where tickets and pages go. The merge rule, the wall, the approval steps and the rest are
 # the harness profile's, so a company fork cannot turn on merging or drop the wall from org.yaml.
-ORG_PARAMS = frozenset({"tracker"})
+ORG_PARAMS = frozenset({"tracker", "artifact_check_repo"})  # artifact_check_repo: the company's own copy
 ORG_PARAM_PREFIXES = ("kb_",)
 PR_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]*$")
 
@@ -351,8 +391,8 @@ def validate_org(org: object, where: str, profile_keys: set[str] | None = None) 
         if str(k).startswith("org_"):
             problems.append(f"{where}: params.{k}: org_* placeholders are generated from org.yaml")
         elif k not in ORG_PARAMS and not str(k).startswith(ORG_PARAM_PREFIXES):
-            problems.append(f"{where}: params.{k} cannot be set by an org (only tracker and kb_* may be; the merge "
-                            f"rule, the wall and the rest stay the harness profile's)")
+            problems.append(f"{where}: params.{k} cannot be set by an org (only tracker, artifact_check_repo and kb_* "
+                            f"may be; the merge rule, the wall and the rest stay the harness profile's)")
         elif profile_keys is not None and k not in profile_keys:
             problems.append(f"{where}: params.{k} is not a profile parameter (org params override the profile's)")
 
@@ -689,6 +729,12 @@ def plan(root: Path = ROOT, warnings: list[str] | None = None
         params = _profile(shared, h, entry, problems)
         org_dir, org_params = _org(root, h, entry, params, problems, warnings)
         params = {**params, **org_params}  # the org wins
+        if params.pop("artifact_check_sha", None) is not None:
+            problems.append(f"{h}: artifact_check_sha is read from git history; a profile cannot set it")
+        params["artifact_check_sha"] = artifact_check_sha(root) or committed_pin(hd) or UNPINNED
+        if params["artifact_check_sha"] == UNPINNED:
+            warnings.append(f"{h}: no full git history and no committed pin, so the scaffold's CI is built without its "
+                            f"artifact-check job (build from a full clone, fetch-depth: 0, as CI does)")
         problems += _json_params(h, params)
         sources = [(shared / "skills" / s, s, True) for s in common.get(h, []) + list(entry.get("skills") or [])]
         own = set(entry.get("own_skills") or [])

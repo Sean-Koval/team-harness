@@ -16,6 +16,9 @@ params:
   standards_drafting: >-
     For newly drafted tickets, use the applicability and acceptance criteria in `work-start` to decide whether
     to include `standards-change` alongside the base labels. The person filing uses the draft labels.
+  # The repository whose artifact check a scaffolded repository's CI calls (KAN-559); the commit is filled at build.
+  # A placeholder like kb_site: the company's org overlay names its own copy of this repository.
+  artifact_check_repo: "COMPANY-ORG/team-harness"
   owner: "the ticket's owner"
   tracker: "the team's Jira project on the company's Atlassian site"
   kb_site: "COMPANY-SITE.atlassian.net"

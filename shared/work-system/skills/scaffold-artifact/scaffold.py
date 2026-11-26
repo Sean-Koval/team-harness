@@ -22,6 +22,11 @@ KINDS = sorted(p.name for p in (HERE / "templates").iterdir() if p.is_dir())
 TOKEN = re.compile(r"@@[a-z_]+@@")
 NAME = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 TICKET = re.compile(r"[A-Z][A-Z0-9]{1,9}-[0-9]+")
+# The artifact-check job in a template's CI, left out while the harness names no real copy of the check yet, or was
+# built without the history that gives its pin: an unresolvable reusable workflow would make the whole workflow file
+# invalid, so lint and tests would stop running too.
+CHECK_JOB = re.compile(r"\n  # artifact-check: begin\n.*?  # artifact-check: end\n", re.S)
+RESOLVABLE = re.compile(r"(?m)^    uses: (?!COMPANY-[A-Z]+/)[\w.-]+/[\w.-]+/\S+@[0-9a-f]{40}$")
 DESCRIPTION_MAX = 70  # the description lands in a source line and a docstring; longer would break ruff's E501
 # packages the template itself installs or imports: a project of the same name would shadow or replace them
 TAKEN = {"mcp", "mcp_types", "pytest", "ruff", "pyright", "jsonschema", "setuptools", "pip", "fakes", "tests", "src"}
@@ -51,6 +56,11 @@ def fill(text: str, vals: dict[str, str]) -> str:
     return text
 
 
+def unpinned(text: str) -> str:
+    """`text` without its artifact-check job unless that job names a real repository at a full commit."""
+    return CHECK_JOB.sub(lambda m: m.group(0) if RESOLVABLE.search(m.group(0)) else "\n", text)
+
+
 def render(kind: str, dest: Path, vals: dict[str, str]) -> list[Path]:
     src = HERE / "templates" / kind
     if not src.is_dir():
@@ -65,7 +75,7 @@ def render(kind: str, dest: Path, vals: dict[str, str]) -> list[Path]:
             out.parent.mkdir(parents=True, exist_ok=True)
             data = f.read_bytes()
             try:
-                text = fill(data.decode("utf-8"), vals)
+                text = unpinned(fill(data.decode("utf-8"), vals))
             except UnicodeDecodeError:
                 out.write_bytes(data)
             else:
@@ -99,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(f"rendered {len(written)} files into {a.dest}; next, run its verify command (AGENTS.md)")
+    if (HERE / "templates" / a.kind / ".github/workflows/ci.yml").is_file() and "artifact-check:" not in (
+            a.dest / ".github/workflows/ci.yml").read_text(encoding="utf-8"):
+        print("note: its CI has no artifact-check job: this harness names no copy of the check yet "
+              "(artifact_check_repo, orgs/README.md) or was built without full git history", file=sys.stderr)
     return 0
 
 

@@ -36,7 +36,6 @@ The agent environment's pins agree with what they name (`agent_pin_problems`; `-
 from __future__ import annotations
 
 import argparse
-import contextlib
 import re
 import subprocess
 import sys
@@ -93,41 +92,6 @@ def resolve_channel(root: Path, name: str, channel: str, digest: str) -> str:
         raise ValueError(f"{name}@{channel} ({digest}) is neither the current lock nor a release copy under "
                          f"harnesses/{name}/{promote.RELEASES}/ (scripts/promote.py writes one)")
     return rel.relative_to(harness).as_posix()
-
-
-def _resolve_from_releases(root: Path):
-    """hangar's `harness_thaw.resolve`, finding a channel's lock in the release copies instead of git history. The
-    copy's directory is the registry path, so `materialize` reads the files a claim needs from it. hangar#465 makes
-    hangar's own resolver do this (KAN-477); drop this once HANGAR_REF includes it."""
-    hangar_resolve = harness_thaw.resolve
-
-    def resolve(settings: Any, ref: str) -> Any:
-        name, _, at = ref.partition("@")
-        harness = root / "harnesses" / name
-        digest = None
-        if at and not at.startswith("sha256:") and not re.fullmatch(r"r\d+", at):
-            digest = ((yaml.safe_load((root / "channels.yaml").read_text()) or {}).get(name) or {}).get(at)
-        elif at.startswith("sha256:"):
-            digest = at
-        if digest and hl.harness_digest(hl.load(harness)) != digest:
-            rel = promote.find_release(harness, digest)
-            if rel is not None:
-                lock = hl.load(rel)
-                return harness_thaw.Resolved(ref, name, lock, digest,
-                                             (rel / hl.LOCK_FILE).relative_to(root).as_posix())
-        return hangar_resolve(settings, ref)
-
-    return resolve
-
-
-@contextlib.contextmanager
-def _releases_resolver(root: Path):
-    saved = harness_thaw.resolve
-    harness_thaw.resolve = _resolve_from_releases(root)
-    try:
-        yield
-    finally:
-        harness_thaw.resolve = saved
 
 
 def release_base_problems(root: Path, base: str, d: Path) -> list[str]:
@@ -187,8 +151,7 @@ def claim_channel(root: Path, name: str, channel: str) -> str:
     with tempfile.TemporaryDirectory() as data:  # pin copies the lock's files out (hangar#221 mounts them)
         fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data),
                                 catalog=EnvCatalog([root / "harnesses" / name]))
-        with _releases_resolver(root):
-            p = harness_thaw.pin(fleet, f"{name}@{channel}", env)
+        p = harness_thaw.pin(fleet, f"{name}@{channel}", env)
     return f"claim on {env}: ok ({p['harness']} {p['version']}, {p['model']}, {p['approvals']})"
 
 
@@ -280,8 +243,7 @@ def claim_role_environments(root: Path, cat: EnvCatalog, names: dict[str, Any]) 
         with tempfile.TemporaryDirectory() as data:
             fleet = SimpleNamespace(settings=SimpleNamespace(harness_repo=str(root), data_dir=data), catalog=cat)
             try:
-                with _releases_resolver(root):
-                    p = harness_thaw.pin(fleet, f"{base}@stable", env)
+                p = harness_thaw.pin(fleet, f"{base}@stable", env)
                 print(f"{base}@stable: claim on {env}: ok ({p['harness']} {p['version']}, {p['model']})")
             except harness_thaw.ThawError as e:
                 errors.append(f"{base}@stable on {env}: {e}")
