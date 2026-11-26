@@ -39,7 +39,9 @@ Ask Claude Code to “Pick up KEY-123. Read our org process, make the change, ru
 
 The agent reads the ticket, creates a branch keyed to it, makes and tests the change, and opens a draft PR. Keep the project-scope install files out of this ticket’s diff. Review `git status` and stage only the ticket’s paths. The [laptop runbook](work-laptop-runbook.md) lists the install paths to check.
 
-For a team rule, inspect the owning code first. If the shared button already does the right thing but feature code bypasses it, make the existing PR lint check reject the direct import. Prove that the design-system wrapper can still import the primitive. For the pilot, mark the Jira ticket `standards-change`. If the session hasn’t loaded `implement-standard` before the first relevant edit, open the installed skill and record the missed trigger. [Where to put a team standard](working-with-standards.md)
+For a team rule, inspect the owning code first. If the shared button already does the right thing but feature code bypasses it, make the existing PR lint check reject the direct import. Prove that the design-system wrapper can still import the primitive.
+
+For the pilot, mark the Jira ticket `standards-change`. If the session hasn’t loaded `implement-standard` before the first relevant edit, open the installed skill and record the missed trigger. [Where to put a team standard](working-with-standards.md)
 
 ## Review the PR
 
