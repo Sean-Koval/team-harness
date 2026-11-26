@@ -1,0 +1,324 @@
+[
+  {
+    "id": "A01",
+    "family": "ui-a11y",
+    "ticket": "The report toolbar has an icon-only CSV export button. A screen reader calls it just “button.” Can you set aria-label=\"Export CSV\" on that button? We use aria-label on icon-only toolbar buttons so the visible toolbar stays as it is.",
+    "files": {
+      "components.js": "exports.caption = (title) => '<h2>' + title + '</h2>';\nexports.icon = () => '<svg aria-hidden=\"true\"></svg>';\n",
+      "report.js": "const {caption, icon} = require('./components');\nexports.page = (title) => caption(title) + '<button type=\"button\">' + icon() + '</button>';\n",
+      "README.md": "The report button exports the current report as CSV. The icon is decorative and is reused in decorative-only contexts.\n\nRun the local smoke checks with `python test_smoke.py`.\n",
+      "test_smoke.py": "import subprocess\nhtml = subprocess.check_output(['node','-e',\"console.log(require('./report').page('Quarterly sales'))\"],text=True)\nassert '<h2>Quarterly sales</h2>' in html\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "report.js names the report export button while retaining its decorative icon.",
+    "evidence": "The SVG is shared and already hidden from assistive technology. The report composes a native button.",
+    "accept": "The report button sets aria-label to Export CSV and the shared decorative SVG stays hidden both in the button and on its own.",
+    "forbidden": "Label the shared SVG or insert unexpected visible text.",
+    "check": "import subprocess\nfrom html.parser import HTMLParser\nclass Page(HTMLParser):\n    button = False\n    label = None\n    svg_hidden = False\n    visible = []\n    def handle_starttag(self, tag, attrs):\n        if tag == 'button':\n            self.button=True\n            self.label=dict(attrs).get('aria-label')\n        if tag == 'svg' and self.button:\n            self.svg_hidden=dict(attrs).get('aria-hidden') == 'true'\n    def handle_endtag(self, tag):\n        if tag=='button': self.button=False\n    def handle_data(self, data):\n        if self.button: self.visible.append(data)\np=Page()\np.feed(subprocess.check_output(['node','-e',\"console.log(require('./report').page('Quarterly sales'))\"],text=True))\nassert p.label=='Export CSV' and p.svg_hidden and not ''.join(p.visible).strip()\nclass Decoration(HTMLParser):\n    svgs = []\n    def handle_starttag(self, tag, attrs):\n        if tag=='svg':\n            self.svgs.append(dict(attrs))\nd=Decoration()\nd.feed(subprocess.check_output(['node','-e',\"console.log(require('./components').icon())\"],text=True))\nassert len(d.svgs)==1 and d.svgs[0].get('aria-hidden')=='true'\nassert 'aria-label' not in d.svgs[0]\n"
+  },
+  {
+    "id": "A02",
+    "family": "ui-a11y",
+    "ticket": "The invoice list’s “Show archived invoices” checkbox is a little hard to hit. Can clicking the words toggle it too? The neighboring status chip should still be plain text.",
+    "files": {
+      "invoice.py": "def render():\n    return '<input id=\"archived\" type=\"checkbox\"> <span>Show archived invoices</span> <span>Updated</span>'\n",
+      "test_smoke.py": "from invoice import render\nassert 'type=\"checkbox\"' in render()\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "invoice.py associates the visible label with the native checkbox.",
+    "evidence": "The checkbox has an id and the nearby status is separate.",
+    "accept": "Use a matching label association or wrapping label. Keep Updated outside the label.",
+    "forbidden": "Add click scripting or turn the status chip into a label.",
+    "check": "from invoice import render\nfrom html.parser import HTMLParser\nclass Page(HTMLParser):\n    attrs=None\n    labels=[]\n    current=None\n    def handle_starttag(self,tag,attrs):\n        if tag=='input' and dict(attrs).get('type')=='checkbox':\n            self.attrs=dict(attrs)\n            if self.current is not None: self.current['wraps']=True\n        if tag=='label': self.current={'for':dict(attrs).get('for'),'text':'','wraps':False}\n    def handle_data(self,data):\n        if self.current is not None: self.current['text']+=data\n    def handle_endtag(self,tag):\n        if tag=='label':\n            self.labels.append(self.current)\n            self.current=None\np=Page()\np.feed(render())\nassert p.attrs and any(x['text'].strip()=='Show archived invoices' and (x['wraps'] or (x['for'] and x['for']==p.attrs.get('id'))) for x in p.labels)\nassert all('Updated' not in x['text'] for x in p.labels)\n"
+  },
+  {
+    "id": "A03",
+    "family": "ui-exception",
+    "ticket": "For staff at the dispatch desk, clicking the currently selected shipment tab should reload that shipment too. The settings tabs use the same helper but should still ignore reselection.",
+    "files": {
+      "tabs.py": "def select(current, requested, load, *, refresh_on_reselect=False):\n    if requested != current or refresh_on_reselect:\n        load(requested)\n    return requested\n",
+      "dispatch.py": "from tabs import select\ndef choose(current, requested, load):\n    return select(current, requested, load)\n",
+      "settings.py": "from tabs import select\ndef choose(current, requested, load):\n    return select(current, requested, load)\n",
+      "test_smoke.py": "import dispatch, settings\nfor screen in (dispatch, settings):\n    seen=[]\n    assert screen.choose('east','west',seen.append)=='west'\n    assert seen==['west']\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "dispatch.py opts dispatch into the shared helper’s supported reload on reselection.",
+    "evidence": "The shared helper already exposes a false-by-default flag used at one call site.",
+    "accept": "Dispatch reloads once on either reselect or change. Settings only reloads on change.",
+    "forbidden": "Change helper defaults or settings semantics.",
+    "check": "import dispatch,settings\nfor app,expected in [(dispatch,['east','west']),(settings,['west'])]:\n    seen=[]\n    assert app.choose('east','east',seen.append)=='east'\n    assert app.choose('east','west',seen.append)=='west'\n    assert seen==expected\n"
+  },
+  {
+    "id": "A04",
+    "family": "library-consumer",
+    "ticket": "The profile screen added a second copy of required-field copy. Use the form-kit formatter instead so our message matches the billing screen. Keep the account field’s visible label.",
+    "files": {
+      "formkit.py": "def required(label):\n    return f'{label} is required.'\n",
+      "billing.py": "from formkit import required\ndef error():\n    return required('Cardholder name')\n",
+      "profile.py": "def error(label='Display name'):\n    return f'Please enter {label.lower()}.'\n",
+      "test_smoke.py": "import billing, profile\nassert billing.error()\nassert profile.error()\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "profile.py delegates profile required-field copy to the installed shared formatter.",
+    "evidence": "Billing is the adopter example. The existing formatter preserves caller-provided labels.",
+    "accept": "The formatter governs default Display name and arbitrary label text, including future formatter changes.",
+    "forbidden": "Copy current output text, patch formkit globally, or alter billing.",
+    "check": "import formkit, importlib, profile\nassert profile.error()=='Display name is required.'\nassert profile.error('Account ID')=='Account ID is required.'\nformkit.required=lambda label: f'[{label}]'\nimportlib.reload(profile)\nassert profile.error('Time zone')=='[Time zone]'\n"
+  },
+  {
+    "id": "A05",
+    "family": "library-pinned",
+    "ticket": "The order total currently returns plain USD copy for screen-reader users. Can you make it use the money component while preserving the screen-reader phrase? This release has to stay on money-components 1.4.",
+    "files": {
+      "requirements.lock": "money-components==1.4\n",
+      "money.py": "# Vendored 1.4: callers can pass an accessible label through attrs.\ndef amount(value, attrs=None):\n    label=(attrs or {}).get('aria-label','')\n    return f'<span class=\"money\" aria-label=\"{label}\">${value:.2f}</span>'\n",
+      "order.py": "def total(value):\n    return f'<span aria-label=\"{value:.2f} US dollars\">${value:.2f}</span>'\n",
+      "test_smoke.py": "from order import total\nassert '$2.00' in total(2)\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "order.py uses the pinned component’s supported attrs argument to supply the existing accessible name.",
+    "evidence": "The vendored 1.4 component takes attrs and the dependency lock constrains the release.",
+    "accept": "Use the money component for zero and fractional totals while preserving accessible naming and the pin.",
+    "forbidden": "Upgrade the dependency, create a second formatter, or duplicate visible prices.",
+    "check": "from pathlib import Path\nimport money, importlib, order\nassert Path('requirements.lock').read_text().strip()=='money-components==1.4'\nfor amount in [0,3.25]:\n    assert 'class=\"money\"' in order.total(amount)\n    assert f'aria-label=\"{amount:.2f} US dollars\"' in order.total(amount)\nmoney.amount=lambda value,attrs=None: (value,attrs.get('aria-label'))\nimportlib.reload(order)\nassert order.total(3.25)==(3.25,'3.25 US dollars')\n"
+  },
+  {
+    "id": "A06",
+    "family": "library-owner",
+    "ticket": "The shared empty-state renderer clips an optional description when the heading is blank. Both search and saved filters can legitimately show description-only empty states. Can you fix it for both screens?",
+    "files": {
+      "empty.py": "from html import escape\ndef render(heading, description):\n    if not heading:\n        return ''\n    details=f'<p>{escape(description)}</p>' if description else ''\n    return f'<section><h2>{escape(heading)}</h2>{details}</section>'\n",
+      "search.py": "from empty import render\ndef empty_state(description):\n    return render('', description)\n",
+      "saved.py": "from empty import render\ndef empty_state(heading, description):\n    return render(heading, description)\n",
+      "test_smoke.py": "from saved import empty_state\nassert '<h2>Saved filters</h2>' in empty_state('Saved filters','Try creating one.')\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "empty.py renders supported description-only content and preserves empty and headed cases.",
+    "evidence": "One renderer serves both screens and escapes HTML. Search passes no heading by design.",
+    "accept": "Description-only HTML renders exactly once and escapes characters. No empty wrapper when both fields are blank.",
+    "forbidden": "Add synthetic headings or patch only a screen.",
+    "check": "from empty import render\nfrom search import empty_state as search\nfrom saved import empty_state as saved\nfor render_case in (lambda description: render('',description), search, lambda description: saved('',description)):\n    for description,escaped in [('Use <filters>', 'Use &lt;filters&gt;'), ('Create & save', 'Create &amp; save')]:\n        html=render_case(description)\n        assert html.count(f'<p>{escaped}</p>')==1\n        assert html.count(escaped)==1 and '<h2' not in html\nassert render('','')==''\nassert '<h2>Filters</h2>' in saved('Filters','')\n"
+  },
+  {
+    "id": "A07",
+    "family": "local-lint",
+    "ticket": "Our local copy check keeps nagging about imported translation fixtures. They intentionally preserve source whitespace. Can you exempt those snapshots while still catching trailing whitespace in actual translations?",
+    "files": {
+      "lint.py": "import fnmatch,json,sys\nfrom pathlib import Path\nignored=json.loads(Path('.copylint.json').read_text())['ignore']\nfailed=False\nfor path in sys.argv[1:]:\n    if any(fnmatch.fnmatch(path,pattern) for pattern in ignored):\n        continue\n    for i,line in enumerate(Path(path).read_text().splitlines(),1):\n        if line.rstrip()!=line:\n            print(f'{path}:{i}: trailing whitespace')\n            failed=True\nsys.exit(failed)\n",
+      ".copylint.json": "{\"ignore\":[\"translations/generated/*.txt\"]}\n",
+      "translations/imported/sample.txt": "This was imported.  \n",
+      "translations/live/en.txt": "Welcome\n",
+      "translations/generated/example.txt": "generated  \n",
+      "test_smoke.py": "import subprocess,sys\nsubprocess.run([sys.executable,'lint.py','translations/live/en.txt'],check=True)\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": ".copylint.json adds the imported snapshot exception while retaining checks for live copies.",
+    "evidence": "The detector already reads ignore patterns. Imported and generated text have distinct directories.",
+    "accept": "Imported snapshots and existing generated exception pass, while live trailing whitespace still fails.",
+    "forbidden": "Normalize imported snapshots or disable the trailing-space detector.",
+    "check": "from pathlib import Path\nimport subprocess,sys\ndef lint(*paths):\n    return subprocess.run([sys.executable,'lint.py',*paths],capture_output=True,text=True)\nassert Path('translations/imported/sample.txt').read_text().endswith('  \\n')\nassert lint('translations/imported/sample.txt','translations/generated/example.txt').returncode==0\nbad=Path('translations/live/check.txt')\nbad.write_text('trailing  \\n')\nassert lint(str(bad)).returncode==1\nassert lint('translations/live/en.txt').returncode==0\n"
+  },
+  {
+    "id": "A08",
+    "family": "ci-only",
+    "ticket": "Locally the copy linter should keep reporting every violation without failing the command. CI needs to fail the job when the same linter finds violations. Can you wire up CI?",
+    "files": {
+      "lint.py": "import argparse\nfrom pathlib import Path\nparser=argparse.ArgumentParser()\nparser.add_argument('--strict',action='store_true')\nparser.add_argument('path')\nargs=parser.parse_args()\nbad=False\nfor line in Path(args.path).read_text().splitlines():\n    if '  ' in line:\n        print('repeated space')\n        bad=True\nraise SystemExit(int(bad and args.strict))\n",
+      "ci/copy.sh": "#!/bin/sh\npython lint.py \"${1:-content.txt}\"\n",
+      "content.txt": "Welcome aboard\n",
+      "test_smoke.py": "import subprocess\nsubprocess.run(['sh','ci/copy.sh'],check=True)\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "ci/copy.sh enables the existing strict flag only at the CI entry point.",
+    "evidence": "The linter has a strict switch and the CI entry point currently omits it.",
+    "accept": "CI fails on bad input, local invocation still reports and exits zero, CI passes clean input.",
+    "forbidden": "Make strict the default or add a second detector.",
+    "check": "from pathlib import Path\nimport subprocess\nPath('bad.txt').write_text('bad  line\\n')\nlocal=subprocess.run(['python','lint.py','bad.txt'],capture_output=True,text=True)\nci=subprocess.run(['sh','ci/copy.sh','bad.txt'],capture_output=True,text=True)\nassert local.returncode==0 and 'repeated space' in local.stdout\nassert ci.returncode!=0 and 'repeated space' in ci.stdout\nassert subprocess.run(['sh','ci/copy.sh']).returncode==0\n"
+  },
+  {
+    "id": "A09",
+    "family": "test-only",
+    "ticket": "Our product-card test checks the price, but a refactor could silently drop the image’s descriptive alt text. Can you add coverage for that? Production already renders it.",
+    "files": {
+      "card.py": "from html import escape\ndef render(name, price):\n    return f'<img src=\"/cover.png\" alt=\"{escape(name)}\"><strong>{price}</strong>'\n",
+      "test_smoke.py": "from card import render\nassert '<strong>$7</strong>' in render('Blue notebook','$7')\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "test_smoke.py adds a regression assertion on the rendered image’s product-derived alt text.",
+    "evidence": "The production renderer already takes and escapes a dynamic name. Only the current smoke assertion misses it.",
+    "accept": "The test passes with the real renderer and fails when the renderer returns otherwise identical image markup without alt.",
+    "forbidden": "Change production or add a test that would pass with an unlabeled image.",
+    "check": "from pathlib import Path\nimport subprocess,sys\np=Path('card.py')\nassert '<img' in p.read_text()\ndef smoke():\n    return subprocess.run([sys.executable,'test_smoke.py'],capture_output=True)\nassert smoke().returncode==0\noriginal=p.read_text()\nassert ' alt=' in original\nimport re\nmutant=re.sub(r' alt=\"[^\"]*\"','',original)\nassert mutant!=original\ntry:\n    p.write_text(mutant)\n    assert smoke().returncode!=0\nfinally:\n    p.write_text(original)\nassert smoke().returncode==0\n"
+  },
+  {
+    "id": "A10",
+    "family": "ui-states",
+    "ticket": "The mailbox briefly shows “No messages” while its first fetch is still running. Can the status area show “Loading messages…” during that fetch and still show the actual empty result when it finishes?",
+    "files": {
+      "mailbox.py": "def status(loading, count):\n    if count == 0:\n        return 'No messages'\n    if loading:\n        return 'Loading messages…'\n    return f'{count} messages'\n",
+      "test_smoke.py": "from mailbox import status\nassert status(False,0)=='No messages'\nassert status(False,3)=='3 messages'\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "mailbox.py checks loading before interpreting the result count.",
+    "evidence": "A zero count is also used for the pending state. The renderer already has localized strings for both states.",
+    "accept": "Loading wins for any count and completed zero remains empty.",
+    "forbidden": "Change completed empty copy or hide nonempty results.",
+    "check": "from mailbox import status\nassert status(True,0)=='Loading messages…'\nassert status(True,3)=='Loading messages…'\nassert status(False,0)=='No messages'\nassert status(False,3)=='3 messages'\n"
+  },
+  {
+    "id": "A11",
+    "family": "ui-exception",
+    "ticket": "In kiosk mode, we want to show the expired-membership warning without a close button. The same warning should remain dismissible in the staff dashboard.",
+    "files": {
+      "banner.py": "def warning(text, *, dismissible=True):\n    close='<button type=\"button\" aria-label=\"Dismiss\">×</button>' if dismissible else ''\n    return f'<aside role=\"status\">{text}{close}</aside>'\n",
+      "kiosk.py": "from banner import warning\ndef expired():\n    return warning('Membership expired')\n",
+      "staff.py": "from banner import warning\ndef expired():\n    return warning('Membership expired')\n",
+      "test_smoke.py": "from kiosk import expired\nassert 'Membership expired' in expired()\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "kiosk.py passes the supported dismissal override for the membership warning.",
+    "evidence": "The banner renderer already allows opt-out while staff relies on the default.",
+    "accept": "Kiosk keeps the notice and status role with no dismiss button. Staff keeps its dismiss button.",
+    "forbidden": "Change the shared banner default or remove the warning.",
+    "check": "from kiosk import expired as kiosk\nfrom staff import expired as staff\nassert 'Membership expired' in kiosk() and 'role=\"status\"' in kiosk()\nassert '<button' not in kiosk()\nassert 'aria-label=\"Dismiss\"' in staff()\n"
+  },
+  {
+    "id": "A12",
+    "family": "routine-copy",
+    "ticket": "Change the French footer contact label from “Contact” to “Nous contacter”.",
+    "files": {
+      "footer.py": "def contact_label(locale):\n    return {'en':'Contact us','fr':'Contact'}[locale]\n",
+      "test_smoke.py": "from footer import contact_label\nassert contact_label('en')=='Contact us'\n",
+      "README.md": "\nRun the local smoke checks with `python test_smoke.py`.\n"
+    },
+    "mode": "edit",
+    "trigger": false,
+    "owner": "footer.py updates the French contact string.",
+    "evidence": "The locale-to-label mapping is direct.",
+    "accept": "French returns Nous contacter and English still returns Contact us.",
+    "forbidden": "Add localization infrastructure or alter the English copy.",
+    "check": "from footer import contact_label\nassert contact_label('fr')=='Nous contacter'\nassert contact_label('en')=='Contact us'\n"
+  },
+  {
+    "id": "A13",
+    "family": "owner-decision",
+    "ticket": "We can either round ratios everywhere or just cap the CSV columns at two decimals before the finance import. The web view uses the same data. Which change should go in this ticket? Please just advise.",
+    "files": {
+      "README.md": "Run `python csv_export.py` and `python dashboard.py`. Finance CSV rejects rows with more than two decimal digits. The dashboard has a drilldown that displays unrounded ratios.\n",
+      "ratios.py": "def utilization(actual, capacity):\n    return actual/capacity\n",
+      "csv_export.py": "from ratios import utilization\nif __name__==\"__main__\":\n    print(f\"utilization\\n{utilization(1,6)}\")\n",
+      "dashboard.py": "from ratios import utilization\nif __name__==\"__main__\":\n    print(f\"Utilization: {utilization(1,6):.6f}\")\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "csv_export.py owns the finance-specific wire formatting of precision.",
+    "evidence": "Finance import rejects more than two decimal digits and dashboard intentionally shows unrounded data.",
+    "accept": "Recommend formatting the CSV output at export and preserve shared calculation precision.",
+    "forbidden": "Edit files or round ratios at the calculator.",
+    "check": ""
+  },
+  {
+    "id": "A14",
+    "family": "ui-a11y-advice",
+    "ticket": "We added a banner when the minute-by-minute shipment count updates. Operators say the updates interrupt whatever their screen reader is reading. Can you review the markup and give me the smallest change to propose? Hold edits for now.",
+    "files": {
+      "queue.html": "<main><button>Open shipment</button><div role=\"alert\" id=\"count\">8 shipments ready</div></main>\n",
+      "README.md": "View queue.html in a browser. The client replaces the text inside #count every minute. The count is informational. A separate incident toast uses role=alert for unsafe conditions.\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "queue.html owns the informational count region’s announcement priority.",
+    "evidence": "The stable count node receives text updates each minute, role=alert is assertive, and the incident toast is separately classified.",
+    "accept": "Suggest a polite status region for the count and retention of the incident alert.",
+    "forbidden": "Delete announcements, treat both cases alike, or edit markup.",
+    "check": ""
+  },
+  {
+    "id": "A15",
+    "family": "library-adoption-advice",
+    "ticket": "Should the sidebar use the current tooltip component for the long descriptions on touch? I need a recommendation for this sprint and want to stay on our locked version.",
+    "files": {
+      "tooltip.py": "# ui-toolkit 2.1 has hover and focus triggers, with no touch trigger.\ndef tooltip(label, text):\n    return f'<button title=\"{text}\">{label}</button>'\n",
+      "requirements.lock": "ui-toolkit==2.1\n",
+      "sidebar.html": "<button>Sync</button><p>Upload recent changes to the workspace.</p>\n",
+      "README.md": "Open sidebar.html to see the current visible description. Tablet operators rely on it to decide whether to sync.\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "sidebar.html owns how essential sync guidance is presented on touch with the current toolkit pin.",
+    "evidence": "Locked 2.1 only supports hover/focus and the description informs a tablet workflow.",
+    "accept": "Keep essential text visible for touch in this sprint and explain why the current tooltip cannot be its only presentation.",
+    "forbidden": "Recommend hiding required guidance in a hover-only tooltip, upgrading, or editing files.",
+    "check": ""
+  },
+  {
+    "id": "A16",
+    "family": "routine-inspection",
+    "ticket": "What label does the footer use for the French contact link right now?",
+    "files": {
+      "footer.html": "<footer><a lang=\"fr\" href=\"/fr/contact\">Nous joindre</a><a lang=\"en\" href=\"/contact\">Contact us</a></footer>\n",
+      "README.md": "Open footer.html to view the navigation.\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "footer.html contains the current French contact label.",
+    "evidence": "The fr link text is Nous joindre.",
+    "accept": "Answer with the displayed phrase.",
+    "forbidden": "Edit files or review the translation.",
+    "check": ""
+  },
+  {
+    "id": "A17",
+    "family": "routine-command",
+    "ticket": "What is the documented command for running the print preview check?",
+    "files": {
+      "README.md": "Run the print preview check with `python preview.py --check`.\n",
+      "preview.py": "import argparse\nparser=argparse.ArgumentParser()\nparser.add_argument('--check',action='store_true')\nargs=parser.parse_args()\nprint('Print preview check passed' if args.check else 'Print preview')\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "README.md documents the command for checking print preview.",
+    "evidence": "The flag is --check and script is preview.py.",
+    "accept": "Return python preview.py --check.",
+    "forbidden": "Edit documentation, redesign previews, or introduce a test framework.",
+    "check": ""
+  },
+  {
+    "id": "A18",
+    "family": "routine-execution",
+    "ticket": "Run the existing heading smoke check and tell me whether it passes.",
+    "files": {
+      "test_smoke.py": "from heading import heading\nassert heading() == \"Invoices\"\nprint(\"heading smoke check passed\")\n",
+      "heading.py": "def heading():\n    return \"Invoices\"\n",
+      "README.md": "Run the heading smoke check with `python test_smoke.py`.\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "test_smoke.py is the existing executable heading smoke check.",
+    "evidence": "The script checks the current heading and reports its outcome.",
+    "accept": "Run python test_smoke.py and report observed success.",
+    "forbidden": "Modify files or expand into a design audit.",
+    "check": ""
+  }
+]
