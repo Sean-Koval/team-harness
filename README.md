@@ -364,10 +364,10 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
    a fresh repository instead, commit `harness.lock` before you change it, so `stable` resolves through history.
 2. Replace the Splunk endpoint (`splunk.example.com`) with yours, adjust the skills to your workflow and the Projects
    field names in `github-pr`, and set the credential names in `bindings/team-default.yaml`.
-3. Re-pin and regenerate:
+3. Re-pin and regenerate with the hangar commit CI pins (`HANGAR_REF` in the Makefile):
 
    ```sh
-   pip install "hangar @ git+https://github.com/Sean-Koval/hangar@0f1367a7c3b62edbb1c49210e458d8f98eac17c1"
+   pip install "hangar @ git+https://github.com/Sean-Koval/hangar@$(sed -n 's/^HANGAR_REF := //p' Makefile)"
    python scripts/relock.py harnesses/team-default --write
    python scripts/render_envs.py harnesses/team-default
    hangar harness check harnesses/team-default && python scripts/check_registry.py

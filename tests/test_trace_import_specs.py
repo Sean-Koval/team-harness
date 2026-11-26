@@ -20,9 +20,9 @@ SID = "5e1c9c3a-1f0b-4d7e-9b52-7a0e2c4d6f81"
 READ = ("mcp__atlassian__getJiraIssue", {"cloudId": "c1", "issueIdOrKey": "SVC-1"})
 # an approval ticket an agent files: the example org's ESS request (SRE approves the work ticket itself, KAN-373). The
 # long description comes first in the call, so the spec matches only if the import keeps the summary in the preview
-SRE = ("mcp__atlassian__createJiraIssue", {"cloudId": "c1", "projectKey": "OPS", "issueTypeName": "Task",
-                                           "description": "Why the queue is safe to ship. " * 20,
-                                           "summary": "ESS request: SVC-1 add the queue"})
+APPROVAL = ("mcp__atlassian__createJiraIssue", {"cloudId": "c1", "projectKey": "OPS", "issueTypeName": "Task",
+                                                "description": "Why the queue is safe to ship. " * 20,
+                                                "summary": "ESS request: SVC-1 add the queue"})
 PR = ("Bash", {"command": "gh pr create --draft --title 'SVC-1: add the queue' --body-file /tmp/pr.md"})
 
 
@@ -78,8 +78,8 @@ def test_reading_the_ticket_then_editing_passes_across_turns(repo):
 
 def test_approvals_are_filed_after_the_sessions_own_pr(repo):
     spec = "work-approvals-filed-after-own-pr"
-    assert _judge(repo, [[READ, _edit(repo)], [PR, SRE]], spec) == {"pass"}
-    assert _judge(repo, [[READ, SRE], [PR]], spec) == {"fail"}
+    assert _judge(repo, [[READ, _edit(repo)], [PR, APPROVAL]], spec) == {"pass"}
+    assert _judge(repo, [[READ, APPROVAL], [PR]], spec) == {"fail"}
 
 
 def test_without_the_manifest_the_specs_do_not_apply(repo):
