@@ -409,4 +409,5 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 
 Every PR runs `hangar harness check` on each harness (hangar installed from git at a pinned commit),
 `scripts/check_registry.py`, and `flightdeck spec lint` on the behavior specs. Check out with full history
-(`fetch-depth: 0`): channels resolve through it.
+(`fetch-depth: 0`): channels resolve through it, and so does the artifact check's pin in the scaffold template
+(KAN-559). In a shallow clone, `scripts/sync_shared.py --check` fails on that pin; run `git fetch --unshallow` first.

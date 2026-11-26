@@ -54,7 +54,7 @@ def test_targets_name_an_org_for_work_default_only():
 def _broken(change):
     org = copy.deepcopy(EXAMPLE)
     change(org)
-    return sync_shared.validate_org(org, "org.yaml", {"tracker", "kb_site", "kb_space", "owner"})
+    return sync_shared.validate_org(org, "org.yaml", {"tracker", "kb_site", "kb_space", "owner", "artifact_check_repo"})
 
 
 @pytest.mark.parametrize("change, message", [

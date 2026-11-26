@@ -35,3 +35,16 @@ jobs:
       - run: python -m ruff format --check .
       - run: python -m pyright
       - run: python -m pytest -q
+
+  # artifact-check: begin
+  # The artifact check: starts the server over stdio, checks each tool's input schema, runs evals/golden/ and uploads
+  # artifact-check.json. Pinned to one commit of the check, and called on pull_request and push only, where a fork's
+  # PR gets no secrets.
+  artifact-check:
+    uses: {{artifact_check_repo}}/.github/workflows/artifact-check.yml@{{artifact_check_sha}}
+    with:
+      kind: mcp-server
+      harness-repo: "{{artifact_check_repo}}"
+      harness-ref: "{{artifact_check_sha}}"
+      command: python tests/serve_fake.py
+  # artifact-check: end

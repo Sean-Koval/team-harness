@@ -44,8 +44,11 @@ Do this in your company's private fork, never in the public repository.
 1. Copy `orgs/example-co/` to `orgs/<your-org>/`, and set `name: <your-org>` in its `org.yaml`.
 2. Replace `skills/org-process/SKILL.md` with your company's flow skill. Keep `name: org-process`.
 3. Fill `org.yaml`: the tracker and knowledge-base `params`, every `ticket_types` entry, the `gates` in order, and
-   the `review_request` room and template. Then set `placeholder: false`. `params` may set only `tracker` and the
-   `kb_*` keys; the merge rule, the wall and the approval steps stay the harness profile's.
+   the `review_request` room and template. Then set `placeholder: false`. `params` may set only `tracker`,
+   `artifact_check_repo` (your copy of this repository, whose artifact check scaffolded servers' CI calls) and the
+   `kb_*` keys. That copy must keep this repository's history (a fork or a full mirror), because the pin is one of
+   its commits, and if it is private, its Actions access setting must let your repositories call its workflows. The
+   merge rule, the wall and the approval steps stay the harness profile's.
 4. In `shared/work-system/targets.yaml`, change the harness's line to `org: orgs/<your-org>`.
 5. Commit only your org files and that line. The copies, the lock and `candidate` are built on main after merge
    (KAN-481). To test locally first:
