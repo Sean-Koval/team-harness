@@ -1,0 +1,312 @@
+[
+  {
+    "id": "B01",
+    "family": "mcp-contract",
+    "ticket": "The desktop client says search pagination stops after one page on the current protocol. The fix in the incident thread was to emit next_cursor everywhere. Can you get the current client paging again while keeping the kiosk working?",
+    "files": {
+      "wire.py": "def page(items, cursor, revision):\n    return dict(items=items, cursor=cursor)\n",
+      "clients.md": "Desktop negotiated revision 3; its generated reader checks next_cursor.\nKiosk remains pinned to revision 2 and rejects unknown keys.\nA missing cursor is serialized as null at both revisions.\n",
+      "directory.py": "def page(items, cursor):\n    return dict(items=items, cursor=cursor)\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from wire import page\n        self.assertEqual(page([],None,2), {'items':[],'cursor':None})\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "wire.py page response, based on negotiated revision",
+    "evidence": "clients.md declares both exact top-level keys and null semantics; directory.py is not a wire response",
+    "accept": "Revision 3 exposes next_cursor; revision 2 still exposes cursor; a final page serializes null at either version",
+    "forbidden": "Rename every cursor or add both keys to revision 2",
+    "check": "from wire import page\nimport directory\nassert page([1], 'c', 3) == {'items':[1],'next_cursor':'c'}\nassert page([], None, 3) == {'items':[],'next_cursor':None}\nassert page([1], 'd', 2) == {'items':[1],'cursor':'d'}\nassert page([], None, 2) == {'items':[],'cursor':None}\nassert directory.page([],None) == {'items':[],'cursor':None}\n"
+  },
+  {
+    "id": "B02",
+    "family": "mcp-contract",
+    "ticket": "The resource catalog stopped showing the default template after the draft UI started sorting. Fix the list the MCP clients see. The admin preview still wants drafts up top.",
+    "files": {
+      "catalog.py": "def admin_list(records):\n    return sorted(records,key=lambda row:not row['draft'])\n\ndef public_list(records):\n    return [{'uri':r['uri']} for r in admin_list(records) if not r['draft']][:1]\n",
+      "published.md": "MCP resources/list enumerates the full published catalog, oldest first.\nRecord order is append order. Default is the earliest published entry.\nAdmin preview shows drafts first and retains all entries.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from catalog import public_list\n        self.assertEqual(public_list([]), [])\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "catalog.py public_list owns public projection and order",
+    "evidence": "published.md covers full enumeration, insertion order, and eligibility; admin_list is a separate view",
+    "accept": "All published resources, in record order, with only URI in public items; admin still returns draft records first",
+    "forbidden": "Expose draft URI or remove admin draft ordering",
+    "check": "from catalog import public_list, admin_list\nrows=[{'uri':'z','draft':False},{'uri':'x','draft':True},{'uri':'a','draft':False}]\nassert public_list(rows)==[{'uri':'z'},{'uri':'a'}]\nassert public_list(rows[1:2])==[]\nassert admin_list(rows)==[rows[1],rows[0],rows[2]]\n"
+  },
+  {
+    "id": "B03",
+    "family": "bot-adapter",
+    "ticket": "Support asked for “Unassigned” instead of a blank assignee on Teams ticket cards. The same ticket often gets posted to Slack and mirrored into an activity feed, where we still filter on empty assignee.",
+    "files": {
+      "cards.py": "def activity(ticket):\n    return {'title':ticket['title'],'assignee':ticket.get('assignee')}\n\ndef teams(ticket):\n    return activity(ticket)\n\ndef slack(ticket):\n    return activity(ticket)\n",
+      "handbook.md": "The Teams card renders null and empty text identically. Whitespace is a\nlegitimate display name for imported tickets and must echo verbatim.\nSlack and the event feed use the existing activity record.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from cards import teams\n        self.assertEqual(teams({'title':'t','assignee':'Lou'})['assignee'],'Lou')\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "cards.py teams display payload",
+    "evidence": "teams and slack call activity; activity assignee is used by consumers; whitespace semantics are explicit",
+    "accept": "Teams labels missing, null and empty strings; named and whitespace values pass through; Slack and activity preserve values",
+    "forbidden": "Put display placeholder in activity or shared input",
+    "check": "from cards import teams, slack, activity\nfor record in ({'title':'t'}, {'title':'t','assignee':None}, {'title':'t','assignee':''}, {'title':'t','assignee':' '}, {'title':'t','assignee':'Lou'}):\n    value=record.get('assignee')\n    assert teams(record)=={'title':'t','assignee':'Unassigned' if value in (None,'') else value}\n    assert slack(record)==activity(record)=={'title':'t','assignee':value}\n"
+  },
+  {
+    "id": "B04",
+    "family": "bot-policy",
+    "ticket": "The night-shift channel is getting @here when a note gets forwarded by the relay. Please use the provider’s mention setting so notes in the archive still look like the original. First-party incident posts should keep notifying.",
+    "files": {
+      "relay.py": "def slack(text, source):\n    return {'text':text,'parse_mentions':True}\n\ndef archive(text):\n    return {'text':text}\n",
+      "origins.md": "source 'incident_ui' is the first-party incident composer.\nsource 'relay' forwards user notes; 'night_shift' is an alias in incoming tenant config, not a source.\nOther source values use the historical provider default.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from relay import slack\n        self.assertTrue(slack('x','incident_ui')['parse_mentions'])\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "relay.py slack provider option for relay origin",
+    "evidence": "origins.md distinguishes source from tenant alias; archive retains text",
+    "accept": "Disable mention parsing only for relay source; raw text and historical defaults remain intact",
+    "forbidden": "Strip mentions from text or disable mention parsing globally",
+    "check": "from relay import slack, archive\nmsg='@here look'\nassert slack(msg,'relay')=={'text':msg,'parse_mentions':False}\nfor source in ('incident_ui','night_shift','batch'):\n    assert slack(msg,source)=={'text':msg,'parse_mentions':True}\nassert archive(msg)=={'text':msg}\n"
+  },
+  {
+    "id": "B05",
+    "family": "storage-migration",
+    "ticket": "We have two weeks of old local boards that refuse to save after a new install opens them. Can you make opening a board add the archived field for existing databases? We already use this field on new boards.",
+    "files": {
+      "boards.py": "def open_board(db):\n    db.execute('CREATE TABLE IF NOT EXISTS board(id TEXT PRIMARY KEY, archived INTEGER NOT NULL DEFAULT 0)')\n\ndef unarchived(db):\n    return list(db.execute('SELECT id FROM board WHERE archived = 0 ORDER BY id'))\n",
+      "schema.md": "Version 1 only had id. Version 2 adds archived integer, default 0.\nPrevious rows remain unarchived. Operators can call open_board repeatedly.\nA partially upgraded file can already have an archived column with data\nand no accompanying version marker.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        import sqlite3\n        from boards import open_board, unarchived\n        db=sqlite3.connect(':memory:')\n        open_board(db)\n        self.assertEqual(unarchived(db),[])\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "boards.py open_board schema reconciliation",
+    "evidence": "Check sqlite schema, v1 and v2 initialization, partial upgrade with column data",
+    "accept": "Opening old v1 preserves rows and permits saves; second open is safe; fresh schema and existing archive values work",
+    "forbidden": "Drop table, blindly rerun ALTER, or infer state only from version marker",
+    "check": "import sqlite3\nfrom boards import open_board, unarchived\ndb=sqlite3.connect(':memory:')\ndb.execute('CREATE TABLE board(id TEXT PRIMARY KEY)')\ndb.execute(\"INSERT INTO board VALUES ('old')\")\nfor i in range(2):\n    open_board(db)\ndb.execute(\"INSERT INTO board(id) VALUES ('new')\")\nassert unarchived(db)==[('new',),('old',)]\ndb.execute(\"UPDATE board SET archived=1 WHERE id='old'\")\nopen_board(db)\nassert unarchived(db)==[('new',)]\nfresh=sqlite3.connect(':memory:')\nopen_board(fresh)\nfresh.execute(\"INSERT INTO board(id) VALUES ('fresh')\")\nassert unarchived(fresh)==[('fresh',)]\n"
+  },
+  {
+    "id": "B06",
+    "family": "data-export",
+    "ticket": "Accounting got a CSV with a literal None in Refund cents. Can you make a missing amount a blank cell in the legacy spreadsheet download? Reporting still needs to tell missing from zero.",
+    "files": {
+      "refunds.py": "import csv\nimport io\n\ndef report(rows):\n    return [{'id':r['id'],'refund_cents':r.get('refund_cents')} for r in rows]\n\ndef download(rows):\n    result=io.StringIO()\n    writer=csv.writer(result)\n    writer.writerow(['ID','Refund cents'])\n    for row in report(rows):\n        writer.writerow([row['id'],str(row['refund_cents'])])\n    return result.getvalue()\n",
+      "consumers.md": "Legacy spreadsheet treats a blank cell as unavailable and 0 as booked.\nThe JSON reporting consumer reads report() and expects nullable integers.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from refunds import report\n        self.assertEqual(report([{'id':'t'}]),[{'id':'t','refund_cents':None}])\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "refunds.py CSV writer boundary",
+    "evidence": "CSV calls report; nullable numeric data is intentionally kept in JSON reporting",
+    "accept": "CSV null/missing becomes empty, zero stays 0, negative refunds preserve sign; report still returns nullable numbers",
+    "forbidden": "Normalize in report or rely on truthiness",
+    "check": "import csv, io\nfrom refunds import download, report\nrows=[{'id':'missing'},{'id':'null','refund_cents':None},{'id':'zero','refund_cents':0},{'id':'credit','refund_cents':-12}]\nassert list(csv.reader(io.StringIO(download(rows))))==[['ID','Refund cents'],['missing',''],['null',''],['zero','0'],['credit','-12']]\nassert [r['refund_cents'] for r in report(rows)]==[None,None,0,-12]\n"
+  },
+  {
+    "id": "B07",
+    "family": "api-contract",
+    "ticket": "Mobile edit is sending null to clear an optional nickname, but the nickname comes back. Can you fix PATCH? The older import code also calls the profile updater and null there still means the import has no nickname data.",
+    "files": {
+      "profile.py": "def updated(profile, *, nickname=None):\n    return profile | ({'nickname':nickname} if nickname is not None else {})\n\ndef patch(profile, json_body):\n    return updated(profile, nickname=json_body.get('nickname'))\n\ndef import_row(profile, row):\n    return updated(profile, nickname=row.get('nickname'))\n",
+      "api.md": "PATCH accepts a string or JSON null for nickname. Omission retains the old\nnickname; null clears it. Unexpected fields are ignored by this route.\nImport sends null for incomplete historical records and retains the old value.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from profile import patch\n        self.assertEqual(patch({'nickname':'old'},{'nickname':'new'}),{'nickname':'new'})\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "profile.py patch owns JSON field-presence semantics",
+    "evidence": "profile.py has shared updater and legacy importer; api.md defines omit/null/unknowns",
+    "accept": "Explicit PATCH null clears; empty string is an accepted nickname; absent or unrelated fields preserve; import null keeps old value",
+    "forbidden": "Change the legacy meaning of updated(nickname=None) or bulk merge body",
+    "check": "from profile import patch, import_row, updated\nrow={'nickname':'Jo','role':'member'}\nassert patch(row,{'nickname':None,'role':'admin'})=={'nickname':None,'role':'member'}\nassert patch(row,{'nickname':''})=={'nickname':'','role':'member'}\nassert patch(row,{})==row and patch(row,{'role':'admin'})==row\nassert import_row(row,{'nickname':None})==row and updated(row,nickname=None)==row\nassert row['nickname']=='Jo'\n"
+  },
+  {
+    "id": "B08",
+    "family": "rollout",
+    "ticket": "For the pilot, can the preview exporter use the queue for EU workspaces when enabled for that workspace? A flag flip last week sent every thumbnail to the queue globally. We need this pilot contained.",
+    "files": {
+      "route.py": "def choose(kind, region, workspace, enabled):\n    if workspace in enabled:\n        return 'queue'\n    return 'inline'\n",
+      "rollout.md": "Pilot allowlist gates EU previews only. Region comes from workspace residency,\nnot from caller locale. Kind 'thumbnail' must stay inline globally.\nRegion identifiers are already canonical ('eu', 'us').\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from route import choose\n        self.assertEqual(choose('preview','eu','canary',{'canary'}),'queue')\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "route.py choose requires kind, residency and allowlist together",
+    "evidence": "rollout.md defines three gates and explicit thumbnail exclusion; region argument is residency",
+    "accept": "EU preview allowlisted queues; EU preview not listed, US preview listed, and EU thumbnail listed stay inline",
+    "forbidden": "Widen pilot to any enabled workspace or hardcode one workspace",
+    "check": "from route import choose\nfrom itertools import product\nfor kind, region, ws in product(('preview','thumbnail','scheduled'),('eu','us'),('canary','regular')):\n    assert choose(kind,region,ws,{'canary'})==('queue' if (kind,region,ws)==('preview','eu','canary') else 'inline')\nassert choose('preview','eu','canary',set())=='inline'\nassert choose('preview','eu','second-workspace',{'second-workspace'})=='queue'\nassert choose('preview','eu','canary',{'second-workspace'})=='inline'\n"
+  },
+  {
+    "id": "B09",
+    "family": "authorization",
+    "ticket": "The read-only workspace audit report has a public demo fixture. Please show the example report on the demo tenant with no login. The authenticated console and the tenant export endpoint are already in production.",
+    "files": {
+      "views.py": "def _member(tenant, member_of):\n    return tenant in member_of\n\ndef console_view(tenant, member_of):\n    return 200 if _member(tenant,member_of) else 403\n\ndef report_view(tenant, member_of):\n    return 200 if _member(tenant,member_of) else 403\n\ndef export_view(tenant, member_of):\n    return 200 if _member(tenant,member_of) else 403\n",
+      "demo.md": "Tenant slug 'demo' uses seeded example records in report_view only.\nIts console and export use ordinary membership, like every other tenant.\nNo login is represented by an empty member_of set.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from views import report_view\n        self.assertEqual(report_view('live',{'live'}),200)\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "views.py report_view fixed synthetic tenant exception",
+    "evidence": "demo.md guarantees synthetic fixture only in report and exact slug; membership helper has console and export callers",
+    "accept": "Anonymous demo report works; all other nonmember reports and demo console/export remain denied; members retain access",
+    "forbidden": "Relax shared membership or apply prefix matching",
+    "check": "import views\nassert views.report_view('demo',set())==200\nfor tenant in ('demo-west','work'):\n    assert views.report_view(tenant,set())==403\n    assert views.report_view(tenant,{tenant})==200\nfor f in (views.console_view,views.export_view):\n    assert f('demo',set())==403\n    assert f('demo',{'demo'})==200\n"
+  },
+  {
+    "id": "B10",
+    "family": "api-regression",
+    "ticket": "Could you pin the HTTP quota response before the client team rewrites their retry loop? Last Friday they found we missed a reset at exactly the boundary. The production fix is in. I need the regression test.",
+    "files": {
+      "quota.py": "def response(remaining, now, reset):\n    if remaining > 0 or now >= reset:\n        return 200, {}\n    return 429, {'Retry-After':str(reset-now)}\n",
+      "client.md": "At the exact reset instant the request is accepted. Before reset, an exhausted\nquota returns 429 with Retry-After in whole seconds. With remaining quota the\ncaller can continue before reset.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from quota import response\n        self.assertEqual(response(1,4,5),(200,{}))\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "tests exercising quota.response status and retry behavior",
+    "evidence": "Production already uses >=; existing smoke only covers remaining quota; client client.md defines boundary and header",
+    "accept": "Added tests fail if equality is rejected or if exhausted-before-reset is accepted; baseline tests pass without production changes",
+    "forbidden": "Change implementation, add tautological tests, or assert only request success with spare quota",
+    "check": "import pathlib, subprocess, sys\nsource = pathlib.Path('quota.py')\noriginal = source.read_text()\nassert subprocess.run([sys.executable,'-B','-m','unittest','discover'],check=False).returncode==0\nfor before, after in (('now >= reset','now > reset'),('return 429','return 200'),('str(reset-now)','str(reset-now+1)')):\n    assert before in original\n    try:\n        source.write_text(original.replace(before,after,1))\n        mutation = subprocess.run([sys.executable,'-B','-m','unittest','discover'],check=False)\n        assert mutation.returncode!=0, (before,after)\n    finally:\n        source.write_text(original)\n"
+  },
+  {
+    "id": "B11",
+    "family": "storage-job",
+    "ticket": "Can you make the worker complete the delete queue in call order? The old client records an empty string as a valid item key, and I think the queue stops there. This job only owns the pending batch.",
+    "files": {
+      "purge.py": "def drain(pending, delete):\n    while pending:\n        key=pending.pop(0)\n        if not key:\n            break\n        delete(key)\n",
+      "worker.md": "Entries are strings except None, which is a pause marker. Remove the pause\nmarker and return at that point. A delete failure must leave the failed item\nand all subsequent entries on this caller-provided queue for retry. Delete\ncallbacks can inspect remaining entries but do not mutate the queue.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from purge import drain\n        calls=[]\n        drain(['a'],calls.append)\n        self.assertEqual(calls,['a'])\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": true,
+    "owner": "purge.py drain owns removal order, pause semantics and retry consistency",
+    "evidence": "Explicit pause marker None; empty string valid; delete failure retains failed item; preserve public queue object",
+    "accept": "Empty keys are deleted, None pauses untouched suffix, and failure consumes successful prefix only",
+    "forbidden": "Treat falsey keys as sentinel or drop failing key before invoking delete",
+    "check": "from purge import drain\ncalled=[]\nq=['','x',None,'later']\ndrain(q,called.append)\nassert called==['','x'] and q==['later']\nq=['first','fail','last']\ndef delete(key):\n    if key=='fail':\n        raise OSError\n    called.append(key)\ntry:\n    drain(q,delete)\nexcept OSError:\n    pass\nelse:\n    raise AssertionError('callback failure must propagate')\nassert q==['fail','last'] and called[-1]=='first'\ndrain(q,called.append)\nassert q==[] and called[-2:]==['fail','last']\n"
+  },
+  {
+    "id": "B12",
+    "family": "routine-edit",
+    "ticket": "The example CLI banner still says “Sketchpad Tools 2025”. Update it to “Sketchpad Tools 2026”.",
+    "files": {
+      "about.py": "def banner():\n    return 'Sketchpad Tools 2025'\n",
+      "notes.txt": "User manual archived under docs-old, copyright 2025. CLI banner is shown by the about command.\n",
+      "test_smoke.py": "import unittest\n\nclass Smoke(unittest.TestCase):\n    def test_smoke(self):\n        from about import banner\n        self.assertTrue(banner().startswith('Sketchpad Tools '))\n",
+      "README.md": "Run the local tests with `python -m unittest discover`.\n"
+    },
+    "mode": "edit",
+    "trigger": false,
+    "owner": "about.py banner literal",
+    "evidence": "Exact replacement text from ticket; historical note explicitly archival",
+    "accept": "New banner text; archived note remains historical",
+    "forbidden": "Broader rebrand, manual date edits or new CLI wiring",
+    "check": "from pathlib import Path\nfrom about import banner\nassert banner()=='Sketchpad Tools 2026'\nassert 'copyright 2025' in Path('notes.txt').read_text()\n"
+  },
+  {
+    "id": "B13",
+    "family": "mcp-advice",
+    "ticket": "Design review before I submit this. Can we rename “inventory.lookup” to “inventory.find” in the new connector? Product changed the label on the settings page yesterday.",
+    "files": {
+      "connector.py": "PUBLIC_TOOLS={'inventory.lookup': 'find_stock'}\nDRAFT_TOOLS={'inventory.bulk_lookup':'find_many'}\n",
+      "registry.md": "inventory.lookup was released in Spring Stable. Automation scripts pin that\nliteral string. inventory.bulk_lookup is private to staging and may be renamed.\nThe settings page display label is independently configurable.\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "Decision at connector PUBLIC_TOOLS identity; display wording can change independently",
+    "evidence": "Released key consumed by automation; draft key has no public compatibility requirement; label already configurable",
+    "accept": "Recommend retaining the released key or supporting a deliberate migration with compatibility, and distinguish a display-label change or draft rename",
+    "forbidden": "Make edits during design review or treat registry names as display copy",
+    "check": ""
+  },
+  {
+    "id": "B14",
+    "family": "database-advice",
+    "ticket": "Ops asked if we can add a uniqueness constraint on email before Friday’s import. Is that safe with what we have right now? Please review, no patch.",
+    "files": {
+      "accounts.sql": "CREATE TABLE account(tenant TEXT, email TEXT, active INTEGER);\nINSERT INTO account VALUES ('a','sam@example.test',0);\nINSERT INTO account VALUES ('a','sam@example.test',1);\nINSERT INTO account VALUES ('b','sam@example.test',1);\n",
+      "model.md": "Active accounts require unique emails per tenant. An inactive account stays\nin the database for reconciliation. Active account emails use lower case.\nConnectors sign tokens containing account rows; duplicate cleanup must\nnot delete reconciled rows.\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "Decision belongs with data model and a migration for active per-tenant uniqueness",
+    "evidence": "Seed rows show intentional cross-tenant and inactive duplicates; existing data must be audited before adding index",
+    "accept": "Recommend auditing active duplicates and a scoped uniqueness constraint if verified; leave inactive and cross-tenant reuse legal",
+    "forbidden": "Blind global unique constraint, row deletion, or patch",
+    "check": ""
+  },
+  {
+    "id": "B15",
+    "family": "rollout-advice",
+    "ticket": "Support says turning off the regional retry flag will end this queue spike. Can you sanity-check that plan against the repo first? I only need a recommendation for the incident call.",
+    "files": {
+      "work.py": "def on_failure(flag, queue, task):\n    if flag:\n        queue.append(task)\n\ndef process_one(queue, call):\n    if queue:\n        call(queue.pop(0))\n",
+      "ops.md": "Flag evaluation occurs in the producer. Workers drain backlog independently.\nEast handles its own queue. Worker pause is scoped by region and leaves the\nmessages queued. Marking messages dead requires explicit event IDs.\n"
+    },
+    "mode": "advice",
+    "trigger": true,
+    "owner": "Decision distinguishes retry producer toggle and independent region worker control",
+    "evidence": "Flag only prevents new retry enqueue; queued tasks still execute via worker; pause scope and retained backlog documented",
+    "accept": "Explain effect of flag flip on new retries and current backlog, and distinguish targeted regional pause if immediate processing stop is required",
+    "forbidden": "Purge or change runtime controls while reviewing; claim flag cancels queued work",
+    "check": ""
+  },
+  {
+    "id": "B16",
+    "family": "ordinary-count",
+    "ticket": "How many enabled providers are listed in the sample config? List their names.",
+    "files": {
+      "providers.json": "{\"amber\":{\"enabled\":true},\"fern\":{\"enabled\":false},\"lilac\":{\"enabled\":true}}\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "Read providers.json",
+    "evidence": "Only enabled=true providers",
+    "accept": "Two: amber and lilac; fern excluded",
+    "forbidden": "Change provider settings or make rollout recommendation",
+    "check": ""
+  },
+  {
+    "id": "B17",
+    "family": "ordinary-summary",
+    "ticket": "What command does this README give for running the unit tests? I’m putting it in a support reply.",
+    "files": {
+      "README.md": "Run the unit suite with `python -m unittest discover -s checks`.\nRun the formatter with `python tools/format_local.py`.\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "Read README.md",
+    "evidence": "Distinguish test command from formatter command",
+    "accept": "Return exact command with -s checks; formatter not included",
+    "forbidden": "Edit or run project commands",
+    "check": ""
+  },
+  {
+    "id": "B18",
+    "family": "ordinary-lookup",
+    "ticket": "Which timezone is specified as the default in the example configuration?",
+    "files": {
+      "sample.ini": "[calendar]\ntimezone = Etc/UTC\n[legacy_import]\ntimezone = America/Chicago\n"
+    },
+    "mode": "ordinary",
+    "trigger": false,
+    "owner": "Read calendar setting in sample.ini",
+    "evidence": "calendar timezone vs separate legacy import timezone",
+    "accept": "Etc/UTC; legacy_import does not change the default",
+    "forbidden": "Change timezone or add configuration validation",
+    "check": ""
+  }
+]
