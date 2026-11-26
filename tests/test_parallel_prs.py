@@ -458,3 +458,27 @@ def test_the_push_job_accepts_every_path_the_build_writes():
     assert any("/native/claude-code/agents/" in p for p in paths), "the build writes no stage agents any more"
     refused = [p for p in paths if not allowed.search(p)]
     assert not refused, f"generated.yml's push job would refuse paths the build writes: {refused}"
+
+
+def test_a_shared_skill_targets_yaml_does_not_name_is_generated(tmp_path):
+    """KAN-606: sync_shared ships every directory under shared/work-system/skills/ (KAN-433), named in targets.yaml or
+    not, so the build's list of generated paths must hold them too. When it didn't, `--restore` left such a skill's copy
+    untracked, `--guard` let a PR commit it, and main failed the settings test once the copies were committed."""
+    pytest.importorskip("hangar")
+    import shutil
+
+    import build_generated
+
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT / "shared", root / "shared")
+    shutil.copytree(ROOT / "orgs", root / "orgs")
+    (root / "harnesses").mkdir()
+    write(root, "shared/work-system/skills/zz-every/SKILL.md", "---\nname: zz-every\n---\nall\n")
+    write(root, "shared/work-system/skills/zz-work/SKILL.md", "---\nname: zz-work\nharnesses: [work-default]\n---\nw\n")
+    t = yaml.safe_load((root / "shared/work-system/targets.yaml").read_text(encoding="utf-8"))
+    assert "zz-every" not in t["skills"]
+    prefixes = build_generated.generated_prefixes(root)
+    for h in t["harnesses"]:
+        assert build_generated.is_generated(prefixes, f"harnesses/{h}/skills/zz-every/SKILL.md")
+    assert build_generated.is_generated(prefixes, "harnesses/work-default/skills/zz-work/SKILL.md")
+    assert not build_generated.is_generated(prefixes, "harnesses/suite-default/skills/zz-work/SKILL.md")
