@@ -77,7 +77,6 @@ import argparse
 import base64
 import codecs
 import copy
-import hashlib
 import json
 import os
 import re
@@ -93,6 +92,12 @@ from typing import Any
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# the digests: the same values as hangar's harness_lock (tests compare them with hangar's own)
+from lockfile import files_digest, harness_digest, sha  # noqa: E402
+from lockfile import read_dir as _read_dir  # noqa: E402
+
+
 SCHEMA = "team-harness.install/v1"
 MANIFEST = "team-harness.json"
 MANIFEST_LOCAL = "team-harness.local.json"  # this machine's settings.local.json entries: never committed
@@ -102,8 +107,6 @@ SETTINGS = "settings.json"
 SETTINGS_LOCAL = "settings.local.json"  # per machine and gitignored: project-scope hooks, whose command is per OS
 SECTION = {SETTINGS: "settings", SETTINGS_LOCAL: "settings_local"}  # each file's block in the manifest
 LOCAL_IGNORE = ".claude/*.local.json"  # settings.local.json and team-harness.local.json
-_MCP_FIELDS = (("endpoint", "url"), ("header_names", "headers"), ("env_names", "env"), ("command", "command"),
-               ("args", "args"))
 _HOME_HOOK = re.compile(r'"?(?:\$HOME|\$\{HOME\}|~)/\.claude/hooks/([^"\s]+)"?')
 # the one hook shape the harnesses use: python3 "$HOME/.claude/hooks/<file>.py", rewritten for Windows
 _PY_HOOK = re.compile(r'\s*python3?\s+"?(?:\$HOME|\$\{HOME\}|~)/\.claude/hooks/([A-Za-z0-9_.-]+\.py)"?\s*')
@@ -123,66 +126,6 @@ GUARD_FIELDS = {"shell": "powershell", "onFailure": "block"}
 
 class Refused(Exception):
     """The harness or the target is not in a state this script will act on (exit 2)."""
-
-
-# --- digests: the same values as hangar's harness_lock (tests compare them with hangar's own) -------------------
-
-def sha(data: bytes) -> str:
-    return "sha256:" + hashlib.sha256(data).hexdigest()
-
-
-def files_digest(files: dict[str, bytes]) -> str:
-    """hangar `harness_lock.files_digest`: per file in path-component order, the path, NUL, raw SHA-256."""
-    h = hashlib.sha256()
-    for rel in sorted(files, key=lambda r: tuple(r.split("/"))):
-        h.update(rel.encode() + b"\0")
-        h.update(hashlib.sha256(files[rel]).digest())
-    return "sha256:" + h.hexdigest()
-
-
-def harness_digest(lock: dict[str, Any]) -> str:
-    """hangar `harness_lock.harness_digest`: SHA-256 of the canonical JSON of the lock's identity sections."""
-    runtime, model, binding = lock.get("runtime") or {}, lock.get("model") or {}, lock.get("binding") or {}
-    comps = lock.get("components") or []
-
-    def kind(c: dict[str, Any]) -> str:
-        return c.get("id", "").partition(":")[0]
-
-    def cname(c: dict[str, Any]) -> str:
-        return c["id"].partition(":")[2]
-
-    guide = next((c for c in comps if kind(c) == "guide"), None)
-    plugins = []
-    for c in comps:
-        if kind(c) == "plugin":
-            name, _, mkt = cname(c).rpartition("@")
-            plugins.append({"name": name, "marketplace": mkt, "digest": c.get("digest"),
-                            "enabled": c.get("enabled", True)})
-    mcp = []
-    for x in binding.get("mcp") or []:
-        d = {"name": x.get("name"), "transport": x.get("transport")}
-        for ours, theirs in _MCP_FIELDS:
-            d[theirs] = x.get(ours)
-        mcp.append(d)
-    ident = {
-        "harness.name": runtime.get("harness"),
-        "harness.locked": runtime.get("version"),
-        "model.id": model.get("id"),
-        "instructions.global.declared.digest": guide.get("digest") if guide else None,
-        "skills.declared[*].{name,digest}": [{"name": cname(c), "digest": c.get("digest")}
-                                             for c in comps if kind(c) == "skill"],
-        "plugins[*].{name,marketplace,digest,enabled}": plugins or None,
-        "mcp_servers[*].{name,transport,url,headers,env,command,args}": mcp,
-        "hooks[*].{event,source,digest}": [{"event": x.get("event"), "source": x.get("source"),
-                                           "digest": x.get("digest")} for x in binding.get("hooks") or []],
-        "permissions.approvals": (binding.get("permissions") or {}).get("approvals"),
-    }
-    return sha(json.dumps(ident, sort_keys=True, separators=(",", ":"), default=str).encode())
-
-
-def _read_dir(d: Path) -> dict[str, bytes]:
-    return {f.relative_to(d).as_posix(): f.read_bytes()
-            for f in sorted(d.rglob("*")) if f.is_file() and not f.is_symlink()}
 
 
 # --- the harness, as the lock pins it ---------------------------------------------------------------------------
