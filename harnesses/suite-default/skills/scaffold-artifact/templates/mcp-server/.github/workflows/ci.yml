@@ -1,0 +1,50 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+      - run: python -m pyright
+      - run: python -m pytest -q
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+      - run: python -m pyright
+      - run: python -m pytest -q
+
+  # artifact-check: begin
+  # The artifact check: starts the server over stdio, checks each tool's input schema, runs evals/golden/ and uploads
+  # artifact-check.json. Pinned to one commit of the check, and called on pull_request and push only, where a fork's
+  # PR gets no secrets.
+  artifact-check:
+    uses: Sean-Koval/team-harness/.github/workflows/artifact-check.yml@fed47f83918c5a1038146fc29d27b951f5878d9c
+    with:
+      kind: mcp-server
+      harness-repo: "Sean-Koval/team-harness"
+      harness-ref: "fed47f83918c5a1038146fc29d27b951f5878d9c"
+      command: python tests/serve_fake.py
+  # artifact-check: end

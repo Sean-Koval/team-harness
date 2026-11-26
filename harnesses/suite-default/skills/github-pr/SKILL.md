@@ -44,6 +44,9 @@ None beyond the PR's own checks: a suite PR needs no separate approval tickets.
 
 ## Checks and reviews
 
+- Before you open or update the PR, delegate a lint-style review of the branch's diff to the `review-lint`
+  subagent (it runs on claude-haiku-5-5), and fix what you confirm. It checks the contract above and mechanical
+  mistakes; correctness and design stay with you and the reviewers.
 - If a check fails, read its log, fix the cause and push. Re-run a check once only when its log shows an
   infrastructure failure, and say so in the PR.
 - Answer every review comment, with a commit that addresses it or a short reason you disagree.

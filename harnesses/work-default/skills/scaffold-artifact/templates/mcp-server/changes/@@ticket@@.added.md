@@ -1,0 +1,1 @@
+- The @@project@@ MCP server: @@description@@ (@@ticket@@).

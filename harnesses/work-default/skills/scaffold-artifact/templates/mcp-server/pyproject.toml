@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "@@project@@"
+version = "0.1.0"
+description = "@@description@@"
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.3,<3"]
+
+[project.optional-dependencies]
+# pinned: a new ruff or pyright rule would turn every fresh scaffold red; move them in a PR of their own
+dev = ["pytest>=8,<10", "ruff~=0.17.5", "pyright==1.1.414", "jsonschema>=4,<5"]
+
+[project.scripts]
+@@project@@ = "@@package@@.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
