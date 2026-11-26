@@ -2,9 +2,9 @@
 
 The same values and bytes as hangar's `harness_lock` at the ref CI pins (`HANGAR_REF` in the Makefile), so a company
 can build its overlay's revision (`build_generated.py`, `relock.py`) with only Python and PyYAML.
-`tests/test_lockfile.py` holds every function here to hangar's own wherever hangar is installed, as it is in CI; bump
-`HANGAR_REF` and that test says what moved. Checking a lock against its files (`hangar harness check`), freezing and
-promoting still use hangar.
+`tests/test_harness_lockfile.py` holds every function here to hangar's own wherever hangar is installed, as it is in
+CI; bump `HANGAR_REF` and that test says what moved. Checking a lock against its files (`hangar harness check`),
+freezing and promoting still use hangar.
 """
 
 from __future__ import annotations

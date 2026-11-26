@@ -1,7 +1,7 @@
 """KAN-600: a company builds its overlay revision without hangar, and the lock is the one hangar would write.
 
-`scripts/lockfile.py` replaces hangar's `harness_lock` in the build. The build test runs with `import hangar` blocked;
-the parity tests hold every function to hangar's own where hangar is installed (CI pins it, `HANGAR_REF`)."""
+`scripts/harness_lockfile.py` replaces hangar's `harness_lock` in the build. The build test runs with `import hangar`
+blocked; the parity tests hold every function to hangar's own where hangar is installed (CI pins it, `HANGAR_REF`)."""
 
 import copy
 import json
@@ -16,7 +16,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import lockfile  # noqa: E402
+import harness_lockfile as lf  # noqa: E402
+import promote  # noqa: E402
 
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
 LOCK_DIRS = sorted(p.parent for p in (ROOT / "harnesses").glob("**/harness.lock"))
@@ -64,11 +65,11 @@ def built(tmp_path_factory) -> Path:
 def test_overlay_builds_without_hangar(built):
     wd = built / "harnesses/work-default"
     assert LINE in (wd / "skills/org-process/SKILL.md").read_text()
-    lock = lockfile.load(wd)
+    lock = lf.load(wd)
     comp = next(c for c in lock["components"] if c["id"] == "skill:org-process")
-    assert comp["digest"] == lockfile.files_digest(lockfile.read_dir(wd / "skills/org-process"))
+    assert comp["digest"] == lf.files_digest(lf.read_dir(wd / "skills/org-process"))
     chans = yaml.safe_load((built / "channels.yaml").read_text())
-    assert chans["work-default"]["candidate"] == lockfile.harness_digest(lock)
+    assert chans["work-default"]["candidate"] == lf.harness_digest(lock)
 
 
 def test_overlay_lock_is_hangars(built):
@@ -78,7 +79,16 @@ def test_overlay_lock_is_hangars(built):
         res = hl.check(d)
         assert res["ok"], (d.name, res["problems"])
         assert (d / "harness.lock").read_text(encoding="utf-8") == hl.dump(hl.load(d))
-        assert lockfile.harness_digest(lockfile.load(d)) == hl.harness_digest(hl.load(d))
+        assert lf.harness_digest(lf.load(d)) == hl.harness_digest(hl.load(d))
+
+
+def test_promote_without_hangar_says_how_to_get_it(tmp_path):
+    """Promoting still checks the lock with hangar: without it, one line saying so, not a traceback."""
+    r = subprocess.run([sys.executable, "scripts/promote.py", "harnesses/work-default", "--release-only"], cwd=ROOT,
+                       env=_no_hangar_env(tmp_path), capture_output=True, text=True)
+    assert r.returncode == 1 and "Traceback" not in r.stderr, r.stderr
+    assert r.stderr.strip().splitlines() == [f"promoting needs hangar for `hangar harness check`: "
+                                              f"{promote.INSTALL_HANGAR}"]
 
 
 # --- parity with hangar's harness_lock --------------------------------------------------------------------------
@@ -86,23 +96,23 @@ def test_overlay_lock_is_hangars(built):
 @pytest.mark.parametrize("d", LOCK_DIRS, ids=lambda d: d.relative_to(ROOT).as_posix())
 def test_lock_matches_hangar(d):
     hl = pytest.importorskip("hangar.harness_lock")
-    lock = lockfile.load(d)
+    lock = lf.load(d)
     assert lock == hl.load(d)
-    assert lockfile.identity(lock) == hl.identity(lock)
-    assert lockfile.harness_digest(lock) == hl.harness_digest(lock)
-    assert lockfile.dump(lock) == hl.dump(lock)
+    assert lf.identity(lock) == hl.identity(lock)
+    assert lf.harness_digest(lock) == hl.harness_digest(lock)
+    assert lf.dump(lock) == hl.dump(lock)
     bumped = copy.deepcopy(lock) | {"revision": lock["revision"] + 5}
     changed = copy.deepcopy(lock) | {"model": {"id": "another-model", "policy": None}}
     for new in (lock, bumped, changed):
-        assert lockfile.next_revision(lock, new) == hl.next_revision(lock, new)
-    assert lockfile.next_revision(None, lock) == hl.next_revision(None, lock)
+        assert lf.next_revision(lock, new) == hl.next_revision(lock, new)
+    assert lf.next_revision(None, lock) == hl.next_revision(None, lock)
     for c in lock["components"]:
         p = d / (c.get("path") or "")
         if c.get("path") and p.is_dir():
             files = hl.read_dir(p)
-            assert lockfile.read_dir(p) == files
-            assert lockfile.files_digest(files) == hl.files_digest(files)
-            assert lockfile.tree_digest(files) == hl.tree_digest(files)
+            assert lf.read_dir(p) == files
+            assert lf.files_digest(files) == hl.files_digest(files)
+            assert lf.tree_digest(files) == hl.tree_digest(files)
 
 
 BROKEN = [
@@ -128,9 +138,9 @@ def test_problems_match_hangar(i):
     hl = pytest.importorskip("hangar.harness_lock")
     lock = yaml.safe_load((ROOT / "harnesses/work-default/harness.lock").read_text(encoding="utf-8"))
     BROKEN[i](lock)
-    assert lockfile.problems(lock) == hl.problems(lock)
-    assert lockfile.problems(lock)
-    assert lockfile.problems("not a lock") == hl.problems("not a lock")
+    assert lf.problems(lock) == hl.problems(lock)
+    assert lf.problems(lock)
+    assert lf.problems("not a lock") == hl.problems("not a lock")
 
 
 def test_plugin_digests_match_hangar(tmp_path):
@@ -140,9 +150,9 @@ def test_plugin_digests_match_hangar(tmp_path):
     entry = {"name": "p", "source": "./p", "version": "1.0.0", "description": "é"}
     (mkt / "marketplace.json").write_text(json.dumps({"name": "team", "plugins": [entry, {"no": "name"}]}),
                                           encoding="utf-8")
-    assert lockfile.marketplace_entries(tmp_path, "team") == hl.marketplace_entries(tmp_path, "team") == {"p": entry}
-    assert lockfile.marketplace_entries(tmp_path, "other") is hl.marketplace_entries(tmp_path, "other") is None
+    assert lf.marketplace_entries(tmp_path, "team") == hl.marketplace_entries(tmp_path, "team") == {"p": entry}
+    assert lf.marketplace_entries(tmp_path, "other") is hl.marketplace_entries(tmp_path, "other") is None
     files = {"a/b.md": b"x", "a\\odd\nname": b"y", "c.txt": b""}
-    assert lockfile.plugin_digest(entry, files) == hl.plugin_digest(entry, files)
-    assert lockfile.tree_digest(files) == hl.tree_digest(files)
-    assert lockfile.plugin_ref("plugin:p@team") == hl.plugin_ref("plugin:p@team")
+    assert lf.plugin_digest(entry, files) == hl.plugin_digest(entry, files)
+    assert lf.tree_digest(files) == hl.tree_digest(files)
+    assert lf.plugin_ref("plugin:p@team") == hl.plugin_ref("plugin:p@team")

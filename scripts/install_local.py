@@ -94,8 +94,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # the digests: the same values as hangar's harness_lock (tests compare them with hangar's own)
-from lockfile import files_digest, harness_digest, sha  # noqa: E402
-from lockfile import read_dir as _read_dir  # noqa: E402
+from harness_lockfile import files_digest, harness_digest, sha  # noqa: E402
+from harness_lockfile import read_dir as _read_dir  # noqa: E402
 
 
 SCHEMA = "team-harness.install/v1"

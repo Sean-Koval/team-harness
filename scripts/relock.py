@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-pin a harness directory's files in its `harness.lock`, with the same digests as hangar's (`lockfile.py`).
+"""Re-pin a harness directory's files in its `harness.lock`, with hangar's digests (`harness_lockfile.py`).
 
 The normal way to get a lock is `hangar harness freeze` from a turn that went well. Use this when you change the
 harness's files by hand (a new skill, an edited guide, your own MCP endpoints) and want the lock to pin them before a
@@ -22,7 +22,7 @@ changed, so a channel can name the same content at its new digest.
     python scripts/relock.py harnesses/team-default --without-plugins --print-digest
     python scripts/relock.py harnesses/work-default --rekey --write   # same files, new digest form, same revision
 
-Needs only PyYAML, not hangar (KAN-600): `lockfile.py` writes the bytes hangar's `harness_lock` would.
+Needs only PyYAML, not hangar (KAN-600): `harness_lockfile.py` writes the bytes hangar's `harness_lock` would.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from urllib.parse import urlsplit
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import lockfile as hl  # noqa: E402
+import harness_lockfile as hl  # noqa: E402
 from render_envs import SETTINGS, native_files  # noqa: E402
 
 GUIDES = ("CLAUDE.md", "AGENTS.md")  # the first one present is the guide component

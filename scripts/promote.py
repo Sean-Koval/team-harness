@@ -26,9 +26,10 @@ from typing import Any
 
 import yaml
 
-import lockfile as hl
+import harness_lockfile as hl
 
 RELEASES = "releases"
+INSTALL_HANGAR = 'pip install "hangar @ git+https://github.com/Sean-Koval/hangar@<HANGAR_REF in the Makefile>"'
 
 
 def needed(lock: dict[str, Any]) -> list[str]:
@@ -42,8 +43,10 @@ def needed(lock: dict[str, Any]) -> list[str]:
 
 def check(d: Path) -> dict[str, Any]:
     """hangar's `harness_lock.check` (what `hangar harness check` runs): the lock against its directory's files."""
-    from hangar import harness_lock
-
+    try:
+        from hangar import harness_lock
+    except ImportError:
+        raise SystemExit(f"promoting needs hangar for `hangar harness check`: {INSTALL_HANGAR}") from None
     return harness_lock.check(d)
 
 

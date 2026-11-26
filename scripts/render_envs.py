@@ -113,7 +113,7 @@ def stable_dir(root: Path) -> Path:
     """The directory of the lock `stable` names: its release copy, found by digest as hangar's thaw finds it, even when
     it is also the current lock, so env.stable.yaml stays byte for byte when candidate later moves on (KAN-508); the
     harness itself only when it has no `stable` channel yet, or stable is the current lock with no release copy."""
-    import lockfile as hl
+    import harness_lockfile as hl
     import promote  # imported here so native_files needs neither
 
     lock = yaml.safe_load((root / "harness.lock").read_text(encoding="utf-8"))
