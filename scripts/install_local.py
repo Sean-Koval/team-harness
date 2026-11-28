@@ -1027,14 +1027,20 @@ def _added(f: Path, project: Path | None = None) -> set[str] | None:
     return set(servers) if isinstance(servers, dict) else set()
 
 
-def mcp_report(h: Harness, scope: str, base: Path, home: Path, skipped: list[str] | None = None) -> list[str]:
+def mcp_report(h: Harness, scope: str, base: Path, home: Path | None,
+               skipped: list[str] | None = None) -> list[str]:
     """One line per MCP server the harness names: added to Claude Code where its printed line adds it or not, and for
     a stdio server whether its command is on PATH. Reported only: this script prints the add lines and never runs
     them, so a server a person chose not to add (an optional one such as Work Copilot) is not drift. User scope reads
-    `<home>/.claude.json`; project scope reads `<target>/.mcp.json`, and for a laptop-only server the project's entry
-    in `<home>/.claude.json` (`--scope local`)."""
+    the active `.claude.json`; project scope reads `<target>/.mcp.json`, and for a laptop-only server the project's
+    entry in the active `.claude.json` (`--scope local`). An explicit `--home` selects that home's file."""
     target = base.parent.resolve()
-    user_file = (base.parent if scope == "user" else home) / ".claude.json"
+    if home is None:
+        config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+        profile = Path(config_dir) if config_dir else Path.home()
+    else:
+        profile = home.expanduser()
+    user_file = profile / ".claude.json"
     where = {False: (user_file, None) if scope == "user" else (base.parent / ".mcp.json", None),
              True: (user_file, None) if scope == "user" else (user_file, target)}
     found = {k: _added(*v) for k, v in where.items()}
@@ -1309,7 +1315,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("harness", type=Path, help="the harness directory (holds harness.lock)")
     ap.add_argument("--scope", choices=("user", "project"), required=True)
-    ap.add_argument("--home", type=Path, default=Path.home(), help="user scope: the home whose .claude/ to write")
+    ap.add_argument("--home", type=Path,
+                    help="home for user-scope installs and the MCP report (default install home: your home)")
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="project scope: the project directory")
     ap.add_argument("--channel", help="the channels.yaml channel to install (default stable; --check: the installed "
                                       "one); 'checkout' installs the checkout as it is")
@@ -1324,7 +1331,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="exit 1 when the install drifted or the channel moved")
     mode.add_argument("--uninstall", action="store_true", help="remove what this script installed")
     a = ap.parse_args(argv)
-    base = base_dir(a.scope, a.home, a.target)
+    base = base_dir(a.scope, a.home if a.home is not None else Path.home(), a.target)
     try:
         with tempfile.TemporaryDirectory(prefix="team-harness-") as scratch:
             return _run(a, base, Path(scratch))
