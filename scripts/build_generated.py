@@ -25,7 +25,7 @@ written with (`stable_frozen`).
 `--restore` touches only generated files and lines (a harness's own files and other edits to channels.yaml or
 agent.yaml stay). `--guard` is skipped in CI for a PR labelled `generated-files` (a lock frozen from a run).
 
-Needs hangar importable (see relock.py).
+Needs only PyYAML and git, not hangar (KAN-600; see relock.py).
 """
 
 from __future__ import annotations
@@ -40,12 +40,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import collect_changes  # noqa: E402
+import harness_lockfile as hl  # noqa: E402
 import promote  # noqa: E402
 import relock  # noqa: E402
 import render_envs  # noqa: E402
 import sync_shared  # noqa: E402
 import yaml  # noqa: E402
-from hangar import harness_lock as hl  # noqa: E402
 
 NOTE_LIMIT = 1200  # characters of a channels.yaml comment; older history is in git
 CHANGE_LIMIT = 300  # characters of one revision's note; the full entry is in the changelog

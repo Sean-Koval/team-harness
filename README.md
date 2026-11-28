@@ -355,12 +355,13 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
    a fresh repository instead, commit `harness.lock` before you change it, so `stable` resolves through history.
 2. Replace the Splunk endpoint (`splunk.example.com`) with yours, adjust the skills to your workflow and the Projects
    field names in `github-pr`, and set the credential names in `bindings/team-default.yaml`.
-3. Re-pin and regenerate with the hangar commit CI pins (`HANGAR_REF` in the Makefile):
+3. Re-pin and regenerate. That needs only Python and PyYAML (KAN-600). The checks need the hangar commit CI pins
+   (`HANGAR_REF` in the Makefile):
 
    ```sh
-   pip install "hangar @ git+https://github.com/Sean-Koval/hangar@$(sed -n 's/^HANGAR_REF := //p' Makefile)"
    python scripts/relock.py harnesses/team-default --write
    python scripts/render_envs.py harnesses/team-default
+   pip install "hangar @ git+https://github.com/Sean-Koval/hangar@$(sed -n 's/^HANGAR_REF := //p' Makefile)"
    hangar harness check harnesses/team-default && python scripts/check_registry.py
    ```
 
@@ -385,7 +386,7 @@ Point hangar at them with `HANGAR_ENV_DIRS` (this repository's `harnesses/work-d
 | `channels.yaml` | Channel → `harness_digest`, per harness |
 | `bindings/<name>.yaml` | Where each MCP credential comes from (credential names, `${VAR}` references), for the environments |
 | `flightdeck/` | The A/B suite, its pre-registered decision, the behavior specs and `suites/regression-v0/` (its tasks) |
-| `scripts/relock.py` | Re-pin a hand-edited harness with hangar's digest code |
+| `scripts/relock.py` | Re-pin a hand-edited harness, with hangar's digests (`scripts/harness_lockfile.py`, no hangar needed) |
 | `scripts/promote.py` | Promote: write `releases/rN/` and point `stable` at it |
 | `scripts/render_envs.py` | Generate the hangar environments that provide a harness's files |
 | `scripts/install_local.py` | Install a harness into Claude Code on a laptop (user or project scope), with a manifest for `--check` and `--uninstall` |

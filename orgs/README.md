@@ -51,7 +51,7 @@ Do this in your company's private fork, never in the public repository.
    merge rule, the wall and the approval steps stay the harness profile's.
 4. In `shared/work-system/targets.yaml`, change the harness's line to `org: orgs/<your-org>`.
 5. Commit only your org files and that line. The copies, the lock and `candidate` are built on main after merge
-   (KAN-481). To test locally first:
+   (KAN-481). To test locally first (Python and PyYAML only, no hangar):
 
    ```sh
    python scripts/build_generated.py     # sync, relock, render, candidate
