@@ -60,11 +60,15 @@ LINE_NAMES = {"channels.yaml": "candidate", "environments/agent.yaml": "AGENT_EN
 def generated_prefixes(root: Path) -> list[str]:
     """Paths (a trailing / is a directory) that the build writes: the shared layer's and the org's copies in each
     target harness, and every harness's lock and env files. Release copies are promote.py's, never these."""
-    t = yaml.safe_load((root / "shared" / "work-system" / "targets.yaml").read_text(encoding="utf-8"))
+    shared = root / "shared" / "work-system"
+    t = yaml.safe_load((shared / "targets.yaml").read_text(encoding="utf-8"))
+    harnesses = t["harnesses"] or {}
+    # Every shared skill directory ships, not only the ones targets.yaml names (KAN-433), so ask sync_shared which.
+    common = sync_shared.shared_skills(shared, t, harnesses, [])
     out = []
-    for h, entry in (t["harnesses"] or {}).items():
+    for h, entry in harnesses.items():
         entry = entry or {}
-        skills = list(t["skills"]) + list(entry.get("skills") or [])
+        skills = list(common.get(h, [])) + list(entry.get("skills") or [])
         org = root / entry["org"] / "skills" if entry.get("org") else None
         if org is not None and org.is_dir():
             skills += [d.name for d in org.iterdir() if d.is_dir()]
