@@ -161,7 +161,8 @@ the pre-registered A/B example and stays as registered.
 Where each record goes, and the Jira filters and automation that keep it tidy, are in
 [docs/jira-confluence-organization.md](docs/jira-confluence-organization.md). How to build that Jira project and
 Confluence space, field by field and rule by rule, is in [docs/jira-confluence-setup.md](docs/jira-confluence-setup.md). Running `work-default` on a company
-laptop, with flightdeck measuring each session, is in [docs/work-laptop-runbook.md](docs/work-laptop-runbook.md).
+laptop starts with [the first-loop guide](docs/first-loop.md). Further setup and optional local capture are in
+[the work laptop runbook](docs/work-laptop-runbook.md).
 A teammate's guide to the knowledge system (first record, capture, review, finding a decision) is in
 [docs/knowledge/](docs/knowledge/README.md).
 
@@ -224,31 +225,18 @@ package indexes, `api.atlassian.com` (tracker and wiki), the bound MCP servers a
 
 ## Run it on a laptop
 
-Claude Code on your own machine can carry the same harness, pinned to a channel's lock. For a work harness, install
-it into each work repository (`project` scope):
+For company work, install `work-default` in each work repository with project scope and use the approved private
+copy's `candidate` channel. Follow [the first-loop guide](docs/first-loop.md) for commands and review steps.
 
-```sh
-cd ~/src/svc
-python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project            # the plan
-python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --apply    # into .claude/
-python ~/src/team-harness/scripts/install_local.py ~/src/team-harness/harnesses/work-default --scope project --check    # drift, or stable moved
-python ~/src/team-harness/scripts/doctor.py ~/src/team-harness/harnesses/work-default                                     # is the laptop ready?
-```
+The installer requires an explicit scope and defaults to the `stable` channel. Public `stable` has the example org,
+which files zero approval tickets. When the checkout's lock differs from the requested channel, the installer finds
+that channel's revision in Git history. It refuses a checkout with uncommitted changes in the harness unless you pass
+`--allow-dirty`.
 
-`--check` compares the installed files with the manifest. `scripts/doctor.py` checks the rest: Claude Code against the
-lock, the hook interpreter, the lock's MCP servers, `gh`, the org overlay, the channel, the guide, the repository's
-test commands in the allowlist and trace capture. Each line is `ok`, `fix` (with the command) or `skip`; `--json`
-serves hangar's preflight.
+Project scope confines work-default's guards to that repository. User scope applies them to every Claude Code session
+on the machine and suits a personal setup such as suite-default.
 
-It installs `stable` by default (`--channel candidate` to try the next revision). When the checkout's lock isn't that
-channel's, it installs the channel's revision from git history. It refuses a checkout with uncommitted changes in the
-harness unless you pass `--allow-dirty`.
-
-Why project scope: work-default's guards are written for hangar's sandbox. `guard_work.py` blocks `terraform plan`,
-`kubectl exec` and `env`, and its `/workspace/deploy` rules match nothing on a laptop. In `user` scope
-(`~/.claude/`) they would apply to every session on the machine. `user` scope suits suite-default.
-
-The script copies the skills and hooks, and merges the hooks and deny rules into `settings.json`. A symlinked
+The script copies the skills and hooks, and merges deny rules into `settings.json` and puts project-scope hooks into `settings.local.json`. A symlinked
 `settings.json` is written through to its target. The guide goes to `.claude/team-harness/<harness>.md`, and one
 `@import` line is added to `CLAUDE.md`, so your own edits there never block an upgrade.
 
