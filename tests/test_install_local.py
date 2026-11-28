@@ -633,6 +633,47 @@ def test_check_reads_project_servers_from_mcp_json_and_local_ones_from_the_proje
     assert f"added in {home / '.claude.json'} (project {target.resolve()})" in report["work-copilot"]
 
 
+@pytest.mark.parametrize("override", ["registered", "missing", "empty"])
+def test_project_mcp_report_uses_active_claude_config(tmp_path, capsys, monkeypatch, override):
+    home, target, config = tmp_path / "home", tmp_path / "svc", tmp_path / "config"
+    home.mkdir()
+    config.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "" if override == "empty" else str(config))
+    assert project(WORK, target, "--apply") == 0
+    registration = {"projects": {target.resolve().as_posix(): {"mcpServers": {"work-copilot": {}}}}}
+    (home / ".claude.json").write_text(json.dumps(registration))
+    if override == "registered":
+        (config / ".claude.json").write_text(json.dumps(registration))
+
+    capsys.readouterr()
+    assert project(WORK, target, "--check") == 0
+    report = _check_report(capsys.readouterr().out)
+    location = (home if override == "empty" else config) / ".claude.json"
+    expected = "not added" if override == "missing" else "added"
+    assert f": {expected} in {location} (project {target.resolve()})" in report["work-copilot"]
+
+    assert project(WORK, target, "--check", "--home", home) == 0
+    report = _check_report(capsys.readouterr().out)
+    assert f": added in {home / '.claude.json'} " in report["work-copilot"]
+
+
+def test_user_mcp_report_reads_active_claude_config(tmp_path, capsys, monkeypatch):
+    home, config = tmp_path / "home", tmp_path / "config"
+    home.mkdir()
+    config.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    assert user(WORK, home, "--apply") == 0
+    (config / ".claude.json").write_text(json.dumps({"mcpServers": {"ai-dlc": {}, "work-copilot": {}}}))
+
+    capsys.readouterr()
+    assert run(WORK, "--scope", "user", "--check") == 0
+    report = _check_report(capsys.readouterr().out)
+    for name in ("ai-dlc", "work-copilot"):
+        assert f": added in {config / '.claude.json'}" in report[name]
+
+
 def test_a_harness_named_as_dot_still_finds_its_binding(tmp_path, capsys, monkeypatch):
     """Run from inside the harness directory (`install_local.py .`): the binding is found from the resolved path, so
     Work Copilot's line and its --check report are still there."""
