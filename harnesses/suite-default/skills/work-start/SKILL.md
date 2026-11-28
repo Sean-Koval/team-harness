@@ -27,6 +27,8 @@ link what it drafts.
    - **Description:** the goal, acceptance criteria a test can check, the verify command, what is out of scope, and
      the governing ADR or spec.
 
+   
+
    Tell Sean the key. Filing a ticket is always allowed. Setting its priority, putting `exec:agent` on it, or
    moving it is not.
 3. **Name the branch** `<KEY>-<short-slug>`, for example `SVC-412-retry-queue`. In a cloud session whose branch name

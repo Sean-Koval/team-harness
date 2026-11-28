@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: work-default
-revision: 20
+revision: 21
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -12,7 +12,7 @@ model:
   policy: balanced
 components:
 - id: guide:CLAUDE.md
-  digest: sha256:1ade4b1ef3786edf9756dda502f816c88b58ac47842991b0d4b7d0cd0d7797cd
+  digest: sha256:17867820933c1d7163b8b12e16e721405cd0f17c20b0defb369cd596ae0bddb9
   path: CLAUDE.md
 - id: skill:change-set
   digest: sha256:c5bf04538692f87401fefa0a8a974c538f349ec935fc2bc3a720b8f39eae2070
@@ -40,8 +40,8 @@ components:
   path: skills/work-docs
   source: path:skills/work-docs
 - id: skill:work-start
-  digest: sha256:2fecf3b2071471d54dd1119feccc63bd40b59111fba24e29118c70ff21ec1522
-  tree: sha256:f96fd0d3a831c3800776afdb10c757e50e9f167afa17cc67b77096fc852d45f0
+  digest: sha256:2e9c3112d7370b1e075d384bc185cbb0f82bf010ca388f87c91d0220096900f8
+  tree: sha256:c3d2212c985de8abf5b695c41fba1ea09c3c9d3d91eae1b07dbb270c7dabe487
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:release-approvals
@@ -75,8 +75,8 @@ components:
   path: skills/whats-next
   source: path:skills/whats-next
 - id: skill:plan-to-tickets
-  digest: sha256:cb163032c8172e137483547b70561cb958fa2b569e9657ab4668af1032d524e0
-  tree: sha256:3370d21d940b16850feec9484e10beeb0464cfb663eadf2c7e9660a320e6b4d4
+  digest: sha256:a726dfe0ca3f7c9229b5c507dce743284df4abe3b020fdcfb768e61ac154e61d
+  tree: sha256:d9d1db150d57a5a45580f0fcf2a389370d2bbd25944767c1ff0b0f4f5bf282f4
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: skill:codify-lesson
@@ -95,8 +95,8 @@ components:
   path: skills/confluence-context
   source: path:skills/confluence-context
 - id: skill:implement-standard
-  digest: sha256:714367d6110fc36fc3755b64484086ea05db94120d26a926b52c81cf54214416
-  tree: sha256:2ab681e0a80045a3bbb91e6cc75cad2978657506c38cc14f753085f925fb08c3
+  digest: sha256:891afe0319a767bf9ccbc0bf818e8b57ce0a399a9f7edc78c3e88c5a455d508e
+  tree: sha256:0bbf9ef8146f1b9a7c390ec9873c9aa24904989946ea2c56a6755aed61ac6823
   path: skills/implement-standard
   source: path:skills/implement-standard
 - id: skill:scaffold-artifact
@@ -125,11 +125,14 @@ components:
 - id: native:claude-code/hooks/prices.json
   digest: sha256:9089ee7d6917223f03a22eb97138c14ddde790351e0c4caf7f1401623974df13
   path: native/claude-code/hooks/prices.json
+- id: native:claude-code/hooks/standards_intake.py
+  digest: sha256:2c6dbf2f1890a0e0c601cec529100c33d07db0daafd05ae89ec18a2f84e6884d
+  path: native/claude-code/hooks/standards_intake.py
 - id: native:claude-code/hooks/usage_session_end.py
   digest: sha256:e47b3ad0eadf8aa50a6e114121334b4f18b5bf3c481deeed9ed0adf15626fb2d
   path: native/claude-code/hooks/usage_session_end.py
 - id: native:claude-code/settings.json
-  digest: sha256:3aca1da0c8d7f57c7bbc4c59895411fa05ae191eabbfd034ac7023881afc9fea
+  digest: sha256:aeb6200415e420ed4abbda06d75c71c53d01398dee863ce1d3fe596651c1c794
   path: native/claude-code/settings.json
 binding:
   mcp:
@@ -156,13 +159,16 @@ binding:
   hooks:
   - event: SessionStart
     source: environment:.claude/settings.json
-    digest: sha256:0909e96a4867aab43b670601befc49077c4ade814f4a0ff48e0df9588ec28420
+    digest: sha256:715d0c1cb1c358ae691fb42e60fce33548880764b42b24439f5b0366c19aeffb
   - event: PreToolUse
     source: environment:.claude/settings.json
-    digest: sha256:0909e96a4867aab43b670601befc49077c4ade814f4a0ff48e0df9588ec28420
+    digest: sha256:715d0c1cb1c358ae691fb42e60fce33548880764b42b24439f5b0366c19aeffb
+  - event: PostToolUse
+    source: environment:.claude/settings.json
+    digest: sha256:715d0c1cb1c358ae691fb42e60fce33548880764b42b24439f5b0366c19aeffb
   - event: SessionEnd
     source: environment:.claude/settings.json
-    digest: sha256:0909e96a4867aab43b670601befc49077c4ade814f4a0ff48e0df9588ec28420
+    digest: sha256:715d0c1cb1c358ae691fb42e60fce33548880764b42b24439f5b0366c19aeffb
 plugins:
   autoUpdate: false
 remote: []

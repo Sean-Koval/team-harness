@@ -4,20 +4,21 @@ import argparse
 
 FIELDS = (
     "Primary recommendation, evidence, and what would change the decision",
-    "Source, scope, and assumptions",
-    "Observable promise and counterexample",
+    "Source, scope, assumptions, and governing ADR or Decision",
+    "Observable promise, counterexample, legitimate exception, and acceptance criteria",
     "Owning code, supported path, and affected callers",
     "Top-down decisions: code, checks, behavior, guidance (change, reuse, or skip and why)",
-    "Executable check, failing case, and repair message",
-    "Behavioral evidence and plausible false pass",
-    "Guidance, exceptions, and who decides",
-    "Verification command, CI job, and evidence",
+    "Realistic violation and supported case, with expected results and evidence",
+    "Executable check and repair message, or behavioral check that rules out a false pass",
+    "Ordinary verification command, CI job and run or revision",
+    "Current ticket or PR, milestone impact, and linked evidence",
+    "Blocked or pending work, Decision or dependency, owner, and next step",
 )
 
 EVIDENCE_PROMPTS = {
     "plan": "List planned checks and expected results. Record any open decisions.",
-    "build": "Record observed local results and hosted CI results. Mark checks still pending.",
-    "review": "Record findings with file or evidence links and the smallest repair. Flag missing evidence.",
+    "build": "Distinguish observed local results and hosted CI results from planned or pending checks.",
+    "review": "Record findings with file or evidence links and the smallest repair. Flag planned or missing evidence.",
 }
 
 

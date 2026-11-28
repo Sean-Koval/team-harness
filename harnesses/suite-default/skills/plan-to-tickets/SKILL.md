@@ -140,9 +140,11 @@ Plan item: <decision id>#<item-slug>
 - Everything below the header is the ticket's description, exactly these sections in this order.
 - When the decision has `checks`, every ticket from it gets them as acceptance criteria, after the item's own
   lines. Copy each check's `id` and `assert` exactly; never reword a predicate.
-- **Labels**, exactly three: `proposed`, `repo:<repo>`, and `exec:pair`, or `exec:human` when the item says
+- **Base labels:** `proposed`, `repo:<repo>`, and `exec:pair`, or `exec:human` when the item says
   `Exec: human`. An item that asks for `agent` gets `exec:pair`; say so in the report. **Never `exec:agent`:** only
   a person releases a ticket to agents.
+
+
 
 Then write `FILING.md`, a checklist for the person filing:
 
@@ -151,7 +153,7 @@ Then write `FILING.md`, a checklist for the person filing:
 
 For each draft, in this order:
 - [ ] <item-slug>: search the tracker for "Plan item: <decision id>#<item-slug>". If a ticket has it, write its
-      key into filed_as and skip. Otherwise create it from <item-slug>.md (summary, description, the three
+      key into filed_as and skip. Otherwise create it from <item-slug>.md (summary, description, all draft
       labels, parent), link it implements <decision id>, add its blocked-by links, and write its key into filed_as.
 - [ ] <item-slug>: replace "<decision id>#<other slug>" in Start after with the key filed for it.
 - [ ] <item-slug>: comment <item-slug>.revision.md on <key>.          (only for a changed, filed item)

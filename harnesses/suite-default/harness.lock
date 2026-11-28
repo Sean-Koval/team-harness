@@ -2,7 +2,7 @@
 # harness_digest, printed by `hangar harness check`.
 schema: hangar.harness-lock/v1
 name: suite-default
-revision: 18
+revision: 19
 runtime:
   harness: claude-code
   version: 2.1.296
@@ -35,8 +35,8 @@ components:
   path: skills/work-docs
   source: path:skills/work-docs
 - id: skill:work-start
-  digest: sha256:34a458304c5bc487484d74cdbb058f96b8abbf52e165d326a4ab98ba465f3825
-  tree: sha256:8ec26ecf87fe88a137acf3966756a16d38cef92c9b11e7d649964007beac8b83
+  digest: sha256:bcbd859c2f65ba271b1453e06f1c97f9d0fbb2a9a0c4e2fddc4d2d4dd5bce1e0
+  tree: sha256:b9fd67de40e43d12956abd768c9bb7b9582cce461ee93ceedf66f67045c660e9
   path: skills/work-start
   source: path:skills/work-start
 - id: skill:extract-records
@@ -60,8 +60,8 @@ components:
   path: skills/whats-next
   source: path:skills/whats-next
 - id: skill:plan-to-tickets
-  digest: sha256:a2fa29cc16c692758eee7c434b94ef9e9f5344c1f8a0c6487eb925fd0f41b775
-  tree: sha256:475dda14e26cf4007c909f0f1c3577c0bb5168d79bca9f269f45269ca759ba3f
+  digest: sha256:6fa1e47eb63b59c53feda7b1821ec7373d7a7770117f7ef7ba9a22109723f2d2
+  tree: sha256:6062109d4054cab0d49e5762c25931625f8412dbf10b3f0d0a3a5e0e7b0bfeb3
   path: skills/plan-to-tickets
   source: path:skills/plan-to-tickets
 - id: skill:codify-lesson

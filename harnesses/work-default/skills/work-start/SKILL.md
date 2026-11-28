@@ -27,6 +27,8 @@ link what it drafts.
    - **Description:** the goal, acceptance criteria a test can check, the verify command, what is out of scope, and
      the governing ADR or spec.
 
+   During authorized filing, add the exact Jira label `standards-change` when the task calls for establishing, applying, or checking a shared behavior or recurring rule. This includes advice on ownership, a review of whether the rule holds through the real entry point, adoption in a single caller, verification of whether an existing test catches a semantic regression, and checking whether an approval rule applies to the change. Describe the observable promise, a realistic violation, and any valid exception in the acceptance criteria. Routine usage or setup questions, mechanical edits, and reviews without a shared behavior or rule to evaluate use the ordinary labels.
+
    Tell the ticket's owner the key. Filing a ticket is always allowed. Setting its priority, putting `exec:agent` on it, or
    moving it is not.
 3. **Name the branch** `<KEY>-<short-slug>`, for example `SVC-412-retry-queue`. In a cloud session whose branch name
