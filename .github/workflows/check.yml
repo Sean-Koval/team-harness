@@ -52,6 +52,10 @@ jobs:
       - name: A generated file the PR commits matches the build (a hand-edited copy fails, labelled or not)
         if: github.event_name == 'pull_request'
         run: python scripts/build_generated.py --drift HEAD^1
+      - name: Three-tool rehearsal on the generated candidate
+        run: |
+          python -m pip install uv==0.13.6
+          uv run --python 3.12 evals/three-tool-pilot/smoke.py --built-candidate
       - name: Changelog fragments
         run: python scripts/collect_changes.py
       - name: hangar harness check

@@ -1,0 +1,18 @@
+schema = 1
+id = "format-names"
+title = "PILOT-1: Normalize banner names"
+scope = "Trim surrounding name whitespace unless verbatim mode is requested."
+requires_spec = true
+spec_reason = "Changes user-visible banner text."
+acceptance = ["Trim padded names by default.", "Preserve padding with the explicit verbatim option."]
+reviewed = false
+
+[providers]
+specs = "openspec"
+scm = "github"
+tracker = "github-issues"
+knowledge = "obsidian"
+deploy = "none"
+
+[artifacts]
+spec = "openspec/changes/format-names"
