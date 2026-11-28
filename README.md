@@ -166,6 +166,9 @@ laptop starts with [the first-loop guide](docs/first-loop.md). Further setup and
 A teammate's guide to the knowledge system (first record, capture, review, finding a decision) is in
 [docs/knowledge/](docs/knowledge/README.md).
 
+To try a fictional ticket with AI-DLC, Work Copilot and Team Harness in one checkout, run the
+[three-tool rehearsal](evals/three-tool-pilot/README.md).
+
 To adopt the PR check in another repository, follow [its README](actions/work-system-pr/README.md) and copy
 [`templates/pull_request_template.md`](templates/pull_request_template.md).
 

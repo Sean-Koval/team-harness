@@ -1,0 +1,4 @@
+schema = 4
+
+[roles]
+specs = "openspec"
