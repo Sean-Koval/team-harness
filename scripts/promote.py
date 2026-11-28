@@ -10,8 +10,7 @@ or a rewritten history can't lose or change what `stable` runs (KAN-473). Releas
     python scripts/promote.py harnesses/work-default --channel beta
     python scripts/promote.py harnesses/team-default --release-only  # write the copy, leave channels.yaml alone
 
-Needs hangar importable (see relock.py): a release copy is checked against its files with `hangar harness check`'s
-code. `build_generated.py` uses only `set_channel` and `find_release`, which don't need it (KAN-600).
+Needs hangar importable (see relock.py).
 """
 
 from __future__ import annotations
@@ -26,10 +25,9 @@ from typing import Any
 
 import yaml
 
-import harness_lockfile as hl
+from hangar import harness_lock as hl
 
 RELEASES = "releases"
-INSTALL_HANGAR = 'pip install "hangar @ git+https://github.com/Sean-Koval/hangar@<HANGAR_REF in the Makefile>"'
 
 
 def needed(lock: dict[str, Any]) -> list[str]:
@@ -39,15 +37,6 @@ def needed(lock: dict[str, Any]) -> list[str]:
         if c["id"].startswith("plugin:"):
             out.append(f"plugins/{hl.plugin_ref(c['id'])['marketplace']}/.claude-plugin/marketplace.json")
     return out
-
-
-def check(d: Path) -> dict[str, Any]:
-    """hangar's `harness_lock.check` (what `hangar harness check` runs): the lock against its directory's files."""
-    try:
-        from hangar import harness_lock
-    except ImportError:
-        raise SystemExit(f"promoting needs hangar for `hangar harness check`: {INSTALL_HANGAR}") from None
-    return harness_lock.check(d)
 
 
 def release_dir(harness: Path, revision: int) -> Path:
@@ -74,7 +63,7 @@ def release_problems(harness: Path) -> list[str]:
     """Each release copy is a whole harness: its lock checks against its files, and it sits at r<its revision>."""
     out = []
     for d in releases(harness):
-        res = check(d)
+        res = hl.check(d)
         out += [f"{d.relative_to(harness.parent.parent)}: {p}" for p in res["problems"]]
         if res["ok"] and d.name != f"r{res['revision']}":
             out.append(f"{d.relative_to(harness.parent.parent)}: holds r{res['revision']}")
@@ -87,7 +76,7 @@ def write_release(harness: Path, lock_file: Path | None = None) -> Path:
     lock = hl.load(lock_file or harness)
     dest = release_dir(harness, lock["revision"])
     if dest.exists():
-        if hl.harness_digest(hl.load(dest)) == hl.harness_digest(lock) and check(dest)["ok"]:
+        if hl.harness_digest(hl.load(dest)) == hl.harness_digest(lock) and hl.check(dest)["ok"]:
             return dest
         raise SystemExit(f"{dest} already holds another r{lock['revision']}: release copies never change")
     with tempfile.TemporaryDirectory(dir=harness) as tmp:
@@ -100,7 +89,7 @@ def write_release(harness: Path, lock_file: Path | None = None) -> Path:
                 (t / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(src, t / rel)
         (t / hl.LOCK_FILE).write_text(hl.dump(lock), encoding="utf-8", newline="\n")
-        res = check(t)
+        res = hl.check(t)
         if not res["ok"]:
             raise SystemExit(f"{harness}: the files don't match the lock: {'; '.join(res['problems'])}")
         dest.parent.mkdir(exist_ok=True)
@@ -133,7 +122,7 @@ def main() -> int:
     ap.add_argument("--note", default=None, help="the comment for the channels.yaml line")
     a = ap.parse_args()
     lock = hl.load(a.harness)
-    res = check(a.harness)
+    res = hl.check(a.harness)
     if not res["ok"]:
         raise SystemExit(f"{a.harness}: {'; '.join(res['problems'])} (run scripts/relock.py first)")
     digest = hl.harness_digest(lock)
