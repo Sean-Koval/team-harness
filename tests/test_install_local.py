@@ -938,6 +938,7 @@ def test_windows_user_scope_runs_hooks_with_py_and_a_quoted_profile_path(tmp_pat
     profile = Path(os.path.abspath(base)).as_posix()
     assert cmds == [f'py -3 "{profile}/hooks/{h}"{end}' for h, end in (
         ("guard_work.py", GUARD_EXIT), ("guard_work_system.py", GUARD_EXIT),
+        ("standards_intake.py", "; exit $LASTEXITCODE"),
         ("knowledge_session_end.py", "; exit $LASTEXITCODE"), ("usage_session_end.py", "; exit $LASTEXITCODE"))]
     assert not any("$HOME" in c or "python3" in c for c in hook_commands(base))
     assert user(WORK, home, "--check") == 0
@@ -966,6 +967,7 @@ def test_windows_project_scope_has_no_machine_path(tmp_path, monkeypatch):
     cmds = [c for c in hook_commands(base) if not c.startswith("echo ")]
     assert cmds == [hook_command("guard_work.py", "project", base, True),
                     hook_command("guard_work_system.py", "project", base, True),
+                    hook_command("standards_intake.py", "project", base, True),
                     hook_command("knowledge_session_end.py", "project", base, True),
                     hook_command("usage_session_end.py", "project", base, True)]
 
@@ -1515,3 +1517,99 @@ def test_mcp_commands_takes_the_lock_alone_as_doctor_passes_it():
     assert lines == il.mcp_commands(h, "user")
     assert len(lines) == len(h.lock["binding"]["mcp"]) and not any("work-copilot" in ln for ln in lines)
     assert il.mcp_commands(lean, "user", local_only=True) == []
+
+
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_installed_standards_intake_hook(tmp_path, scope):
+    """Run the registered native command against the installed skill in both Claude scopes."""
+    home = tmp_path / "user home"
+    target = tmp_path / "nested work project"
+    home.mkdir()
+    target.mkdir()
+    base = il.base_dir(scope, home, target)
+    assert (user(WORK, home, "--apply") if scope == "user" else project(WORK, target, "--apply")) == 0
+    name = "settings.json" if scope == "user" else "settings.local.json"
+    post = settings(base, name)["hooks"]["PostToolUse"]
+    skill = base / "skills/implement-standard/SKILL.md"
+    # A second scope and a different cwd cannot supply the skill for this installed hook.
+    other_root = target if scope == "user" else home
+    other = other_root / ".claude/skills/implement-standard/SKILL.md"
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_bytes(b"Wrong scope\n")
+    body = skill.read_bytes() + "\nLocally installed line é\n".encode()
+    skill.write_bytes(body)
+    env = {**os.environ, "HOME": str(home), "CLAUDE_PROJECT_DIR": str(target)}
+
+    def invoke(tool, args, response, **extra):
+        commands = [hook for group in post if il._matches(group["matcher"], tool) for hook in group["hooks"]]
+        assert len(commands) == 1
+        hook = commands[0]
+        event = {"hook_event_name": "PostToolUse", "cwd": str(target), "tool_name": tool,
+                 "tool_input": args, "tool_response": response, **extra}
+        result = subprocess.run(il.hook_shell(hook["command"], hook.get("shell")), input=json.dumps(event).encode(),
+                                capture_output=True, env=env, cwd=target, check=True)
+        assert result.stderr == b""
+        return json.loads(result.stdout)["hookSpecificOutput"] if result.stdout else None
+
+    jira = {"key": "SVC-45", "id": "10451", "fields": {"labels": ["repo:xyz", "standards-change"],
+            "comment": {"comments": [{"body": "Keep this comment out of context"}]}}}
+    # Pinned ai-dlc's Jira provider maps the key into item.url and keeps the native numeric ID separately.
+    item = {"id": "10451", "url": "https://company.example/browse/SVC-45", "state": "open",
+            "native_status_id": "1", "native_resolution_id": None, "labels": jira["fields"]["labels"]}
+    aidlc = {"status": "ok", "provider": "jira-cloud", "item": item, "labels": item["labels"], "exec_labels": []}
+
+    def blocks(payload):
+        return [{"type": "text", "text": json.dumps(payload)}]
+
+    native = "mcp__atlassian__getJiraIssue"
+    tracker = "mcp__ai-dlc__tracker_get"
+    jira_args = {"cloudId": "https://company.example", "issueIdOrKey": "SVC-45",
+                 "fields": ["labels", "comment"], "view": "compact"}
+    jira_text = blocks({"data": {"appliedContentFormat": "markdown", **jira}})
+    jira_structured = {"issues": {"nodes": [jira]}}
+    assert not any(il._matches(group["matcher"], "mcp__atlassian__searchJiraIssuesUsingJql") for group in post)
+    for tool, args, payload in [
+        (native, jira_args, blocks(jira)),
+        (native, jira_args, jira),
+        (native, jira_args, {"structuredContent": jira}),
+        (native, jira_args, blocks(jira)[0]),
+        (native, {**jira_args, "issueIdOrKey": "https://company.example/browse/SVC-45"}, jira_text),
+        (native, {**jira_args, "cloudId": "company.example", "issueIdOrKey": "https://company.example/browse/SVC-45"},
+         jira_text),
+        (native, {**jira_args, "issueIdOrKey": "10451"},
+         {"content": jira_text, "structuredContent": jira_structured, "isError": False}),
+        (tracker, {"reference": "SVC-45"}, {"content": blocks(aidlc), "structuredContent": aidlc}),
+        ("mcp__ai_dlc__tracker_get", {"reference": "10451"}, json.dumps(aidlc)),
+    ]:
+        answer = invoke(tool, args, payload)
+        assert answer["hookEventName"] == "PostToolUse"
+        context = answer["additionalContext"]
+        assert "SVC-45" in context and f"sha256={il.sha(body).removeprefix('sha256:')}" in context
+        assert context.endswith(body.decode())
+        assert "Keep this comment" not in context and str(base) not in context
+
+    for tool, args, payload in [
+        (native, jira_args, {"content": blocks(jira), "isError": True}),
+        (native, jira_args, blocks({**jira, "fields": {"labels": ["Standards-Change", "x:standards-change"],
+                                                       "description": "standards-change", "comment": jira}})),
+        (native, {**jira_args, "issueIdOrKey": "SVC-46"}, blocks(jira)),
+        (native, {**jira_args, "issueIdOrKey": "https://another.example/browse/SVC-45"}, jira_text),
+        (native, {**jira_args, "issueIdOrKey": "https://company.example/browse/SVC-46"}, jira_text),
+        (native, jira_args, {"structuredContent": jira_structured}),
+        (native, jira_args, {"issues": [jira]}),
+        (native, jira_args, blocks({"data": {"issues": [jira]}})),
+        (native, jira_args, [*blocks(jira), *blocks(jira)]),
+        (native, jira_args, [{"type": "text", "text": f"comment: {json.dumps(jira)}"}]),
+        ("mcp__unbound__getJiraIssue", jira_args, blocks(jira)),
+        (tracker, {"reference": "SVC-45"}, blocks({**aidlc, "status": "failed"})),
+        (tracker, {"reference": "SVC-46"}, blocks(aidlc)),
+        (tracker, {"reference": "SVC-45"}, blocks({**aidlc, "item": {**item, "labels": []}})),
+    ]:
+        assert invoke(tool, args, payload) is None
+    assert invoke(native, jira_args, blocks(jira), hook_event_name="PostToolUseFailure") is None
+
+    skill.unlink()
+    missing = invoke(native, jira_args, blocks(jira))["additionalContext"]
+    assert "SVC-45" in missing and "unavailable" in missing
+    assert "repair" in missing and "Independent work can continue" in missing
+    assert "sha256=" not in missing and str(base) not in missing and "Wrong scope" not in missing

@@ -1,22 +1,25 @@
 ---
 name: implement-standard
 harnesses: [work-default]
-description: Use when asked where a change belongs, how to verify or enforce a shared behavior, or how to apply a design or architecture standard. Covers advice, implementation and review.
+description: Use for a ticket marked standards-change or when asked where a change belongs, how to verify or enforce a shared behavior, or how to apply a design or architecture standard. Covers advice, implementation and review.
 ---
 
 # Implement a standard
 
-Start with the requested outcome, design handoff, architecture decision, or review feedback. Read the source material, repo instructions, and existing implementations. Record where the rule came from, what it applies to, and a concrete example outside the rule if scope could be ambiguous. State assumptions that affect the work. Use the product repo's conventions and delivery workflow.
+Start with the requested outcome, design handoff, architecture decision, or review feedback. A `standards-change`
+marker adds intake context. The request, ticket scope, and existing approval gates govern what you can do.
 
 ## Establish the applicable standard
 
-Read the ticket and repository guidance to identify the standard, its source, and the callers or behavior it covers.
-Compare it with an existing implementation before choosing what to change. For routine work with no relevant standard
-to evaluate, continue with the usual workflow.
+Read the ticket, repository guidance, and any linked spec, governing ADR, Jira Decision or ai-dlc decision record.
+Identify the rule's source, the callers and behavior it covers, and any legitimate exception or boundary. Compare it
+with an existing implementation before choosing what to change. State assumptions that affect scope. For routine work
+with no relevant standard to evaluate, continue with the usual workflow.
 
 If the rule or its scope is still missing, ambiguous, or contradictory after inspection, record the sources, the
-specific question, and the affected scope. Use `decision-ticket` where available or follow the repository's decision
-process. Pause the affected work until the decision is resolved.
+specific question, and the affected scope. Check for an existing Decision before using `decision-ticket` or the
+repository's decision process. Link the existing Decision when it covers the question. Continue authorized work
+that can proceed independently and record the affected part as blocked until the owner resolves the Decision.
 
 ## Choose the mode from the request
 
@@ -26,7 +29,13 @@ process. Pause the affected work until the decision is resolved.
 | Build | Implement the supported path and update in-scope callers. Run the applicable checks and record observed results and anything still pending. |
 | Review | Inspect the change and its evidence against the rule. Lead with concrete findings ordered by impact, with file or evidence links, the consequence, and the smallest repair. State any gaps in verification. |
 
-Carry the result in the existing issue, plan, or PR. If there is no suitable form, run `python path/to/implement-standard/scripts/worksheet.py plan` using the path to this skill, then paste the Markdown where the team records the work. Use `build` or `review` for the other modes. The tool prints to stdout and works from any repo.
+Use Plan for advice and Build when asked to make the change. For a one-ticket spec, use the existing Jira
+`Acceptance criteria`, `Verify`, `Out of scope` and `Governing ADR / spec` sections. For a multi-ticket change, put
+the detailed criteria in the repo's OpenSpec change or spec and link it from the epic (`work-docs`). Tie the observable
+promise, counterexample and legitimate exception to checkable acceptance criteria. Name the owning layer and affected
+callers, link the governing ADR or Decision with the scope it settles, and give the ordinary verification command.
+Use the optional stdout worksheet (`python path/to/implement-standard/scripts/worksheet.py plan`, or `build` or
+`review`) as a drafting aid for the existing record.
 
 ## Work from the top down
 
@@ -36,7 +45,7 @@ Carry the result in the existing issue, plan, or PR. If there is no suitable for
 
 1. **Code and architecture.** Write the promise in one observable sentence and give a counterexample that would violate it. Find the component, API, type, or module that should own it. Reuse or improve the supported path and identify the callers or examples that should adopt it. Point to existing enforcement when the repo already provides it.
 2. **Executable checks.** Identify the mistake still possible through normal repo work and the smallest check that can detect it. Use dependency rules or a linter for source structure, types for invalid combinations, and tests for outputs or state. Reuse an existing rule before writing a custom one. For a new rule, exercise a passing case and a deliberately failing case in a fixture or scratch copy. The diagnostic should point to the supported path. Keep the repaired version.
-3. **Behavioral evidence.** Exercise the ordinary user or caller entry point. Choose evidence that distinguishes success from a plausible false pass. For a UI interaction, operate the control with a keyboard and check focus or state. For an architecture rule, check the boundary where it matters to a real caller. Use property tests or model checking when combinations of states justify them. Capture the smallest useful output.
+3. **Behavioral evidence.** Exercise the ordinary user or caller entry point. Choose evidence that distinguishes success from a plausible false pass. For a UI interaction, operate the control with a keyboard and check focus or state. For an architecture rule, check the boundary where it matters to a real caller. Use property tests or model checking when combinations of states justify them. Assert the observable promise through the caller's interface. If the promise depends on input, try two distinct inputs so a constant answer fails. Also try a harmless representation change that preserves the promise. For example, inspect the image's accessible name for two different products; reordering HTML attributes should still pass. For an MCP response, compare the published fields and allow changes to unspecified draft wording. Capture the smallest useful output.
 4. **Guidance.** Capture rationale, exceptions, and remaining judgment in the existing guide. Link the working example. When a layer adds no coverage for the promise, state why and move on. For a subjective design decision, name the reviewer and the question.
 
 ## Break ties using what you observe
@@ -52,6 +61,15 @@ Carry the result in the existing issue, plan, or PR. If there is no suitable for
 
 **Lead the reply with a recommendation.** Tell the engineer: “I recommend changing [owner and location] because [observed evidence]. [Nearest alternative] would apply if [different evidence]. I would prove it with [specific bad and good case].” Mark uninspected facts as unknown. When the user asks where a fix belongs, return advice in Plan mode. In Build mode, carry out scoped changes and report actual results.
 
-Use the repo's verification command locally and follow its CI workflow. Name the relevant CI job and link its evidence when available. Record observed local results, observed hosted CI results, and proposed merge requirements in their respective status. If CI integration is outside scope, record the missing check and who owns it if known.
+For build, run the repo's ordinary verification command and follow its CI workflow. For each realistic violation
+and supported case, including an allowed exception when applicable, give the expected result and any observed
+result. Name the relevant CI job and link its run and revision when available. Distinguish planned checks, observed
+local results, observed hosted CI results, and pending checks or approvals.
+
+Record which acceptance criteria are complete, pending or blocked, with evidence and Decision or dependency links
+in the current ticket or PR. Name the next action, its owner, and what would unblock it. When the result changes a
+project milestone or dependency, reflect it in the existing epic Roadmap and link the supporting ticket or PR
+where the workflow permits edits. Use existing record IDs or links for durable decisions and follow the normal
+permissions and status workflow.
 
 See the [worked confirmation dialog](examples/dialog/README.md) for a shared primitive, an actionable lint rule, and a browser check that exercises the failure case.

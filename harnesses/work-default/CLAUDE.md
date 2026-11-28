@@ -25,9 +25,11 @@ any personal sync or backup. The only Confluence site and space you write are th
    there is a key). Restate the goal, the acceptance criteria and what is out of scope in two or three lines. If the
    criteria are missing or contradict each other, or a choice needs the ticket's owner, file a Decision ticket
    (`decision-ticket`) and stop that part of the work. Never ask in chat and never stop silently.
-   When asked **where a change belongs**, how to enforce a rule, or how to verify a shared behavior, read the
-   `implement-standard` skill during intake, including for advice-only requests and reviews. Use it for a new
-   standard or recurring issue as well. For an ordinary setup or usage question, answer it directly.
+   Read `implement-standard` during intake for a `standards-change` ticket or a request about **where a change
+   belongs**, how to enforce a rule, or how to verify shared behavior, including advice and reviews. Use it for a
+   new standard or recurring issue as well, including a shared promise or rule discovered mid-ticket on an
+   unmarked ticket. The marker adds context. The ticket and approval gates govern the work. For an ordinary
+   setup or usage question, answer it directly.
 2. **Read the company's flow.** Read the `org-process` skill before you plan: it says which tickets, approvals and
    gates this company's work needs. If it and `release-approvals` disagree, `org-process` wins; say so in the PR.
 3. **Plan across the repos.** Use the `change-set` skill: which roles change, in what order they will land, and what
@@ -69,8 +71,8 @@ any personal sync or backup. The only Confluence site and space you write are th
 - Statuses move by events, not by you: Jira automation on branch, PR and merge, and hangar for its jobs. A hook
   refuses transitions, commits on a branch with no key, pushes to main and force pushes; the PR check on GitHub
   repeats the PR rules.
-- When you are blocked, say so in the PR description or the ticket and stop. Don't guess, and don't mark work done
-  that isn't.
+- Record the blocked part, evidence, owner and next step in the current PR description or ticket. Continue
+  authorized work that can proceed independently and leave the affected part pending.
 
 ## Each repository's own guidance wins
 

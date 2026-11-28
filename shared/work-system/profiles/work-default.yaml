@@ -5,6 +5,17 @@
 # with the real site and space before the harness is used. Until it does, the skills write no Confluence page. They
 # are never defaulted to another site.
 params:
+  standards_filing: >-
+    During authorized filing, add the exact Jira label `standards-change` when the task calls for establishing,
+    applying, or checking a shared behavior or recurring rule. This includes advice on ownership, a review of
+    whether the rule holds through the real entry point, adoption in a single caller, verification of whether an
+    existing test catches a semantic regression, and checking whether an approval rule applies to the change.
+    Describe the observable promise, a realistic violation, and any valid exception in the acceptance criteria.
+    Routine usage or setup questions, mechanical edits, and reviews without a shared behavior or rule to evaluate
+    use the ordinary labels.
+  standards_drafting: >-
+    For newly drafted tickets, use the applicability and acceptance criteria in `work-start` to decide whether
+    to include `standards-change` alongside the base labels. The person filing uses the draft labels.
   # The repository whose artifact check a scaffolded repository's CI calls (KAN-559); the commit is filled at build.
   # A placeholder like kb_site: the company's org overlay names its own copy of this repository.
   artifact_check_repo: "COMPANY-ORG/team-harness"

@@ -1,6 +1,8 @@
 # suite-default: Sean's own (personal) projects on the personal Atlassian site.
 # Fills the {{placeholders}} in shared/work-system/ for this harness (scripts/sync_shared.py).
 params:
+  standards_filing: ""
+  standards_drafting: ""
   # The repository whose artifact check a scaffolded repository's CI calls (KAN-559); the commit is filled at build.
   artifact_check_repo: "Sean-Koval/team-harness"
   owner: "Sean"

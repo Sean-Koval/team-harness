@@ -49,3 +49,8 @@ harnesses:
     org: orgs/example-co                  # placeholder org: agents file no approval tickets until a company's replaces it
     skills: [release-approvals]           # in addition to the list above
     own_skills: [change-set]              # the harness's own, not rendered here
+    session_hooks:
+    - file: hooks/standards_intake.py
+      event: PostToolUse
+      matcher: mcp__.+__(tracker_get|getJiraIssue)
+      command: python3 "$HOME/.claude/hooks/standards_intake.py"

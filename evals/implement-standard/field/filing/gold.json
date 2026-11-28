@@ -1,0 +1,122 @@
+[
+  {
+    "ref": "HX-731",
+    "target": "routine",
+    "why": "Local wording and an illustration follow an existing product decision."
+  },
+  {
+    "ref": "HX-746",
+    "target": "mark",
+    "why": "A cross-export compatibility promise is at risk and the work needs a durable way to apply it across exporters."
+  },
+  {
+    "ref": "HX-709",
+    "target": "routine",
+    "why": "Ordinary review against a local design requirement."
+  },
+  {
+    "ref": "HX-762",
+    "target": "mark",
+    "why": "Fixing the new card entails applying a shared interaction promise across differing realizations."
+  },
+  {
+    "ref": "HX-718",
+    "target": "ambiguous",
+    "why": "It is unclear whether the request is a one-path investigation or a decision about a shared default."
+  },
+  {
+    "ref": "HX-755",
+    "target": "routine",
+    "why": "A copy change preserves an already specified field key and asks for no broader convention."
+  },
+  {
+    "ref": "HX-723",
+    "target": "mark",
+    "why": "A team promise applies across creation routes and the template does not make it hold."
+  },
+  {
+    "ref": "HX-743",
+    "target": "routine",
+    "why": "Two mirrors need a typo correction and the tool contract stays intact."
+  },
+  {
+    "ref": "HX-710",
+    "target": "mark",
+    "why": "The work applies an idempotent retry contract across clients and requires choosing or verifying its enforcement boundary."
+  },
+  {
+    "ref": "HX-752",
+    "target": "routine",
+    "why": "A rerun and status update do not change the expectations of CI."
+  },
+  {
+    "ref": "HX-703",
+    "target": "mark",
+    "why": "The requested decision is about the scope and evidence of an actual release promise."
+  },
+  {
+    "ref": "HX-768",
+    "target": "ambiguous",
+    "why": "It could be incident cleanup or a request to set a team-wide acceptance threshold."
+  },
+  {
+    "ref": "HX-728",
+    "target": "routine",
+    "why": "The one-time operation follows an existing approval with prescribed evidence."
+  },
+  {
+    "ref": "HX-739",
+    "target": "mark",
+    "why": "The decision concerns real approval scope and how operators can verify it when activation paths differ."
+  },
+  {
+    "ref": "HX-713",
+    "target": "routine",
+    "why": "The caller uses an existing field for a local display requirement."
+  },
+  {
+    "ref": "HX-760",
+    "target": "mark",
+    "why": "A current backward compatibility promise has to hold for an existing caller as the team evolves shared behavior."
+  },
+  {
+    "ref": "HX-735",
+    "target": "routine",
+    "why": "Executing the established upgrade and smoke procedure does not reconsider a capability promise."
+  },
+  {
+    "ref": "HX-706",
+    "target": "mark",
+    "why": "The package adoption requires a decision about how to preserve a shared compatibility promise across importing products."
+  },
+  {
+    "ref": "HX-749",
+    "target": "routine",
+    "why": "The wording and channel replacements leave the existing approved procedure as given."
+  },
+  {
+    "ref": "HX-721",
+    "target": "mark",
+    "why": "A shared operator-facing promise is undermined by different paths and the upcoming importer requires coverage."
+  },
+  {
+    "ref": "HX-766",
+    "target": "ambiguous",
+    "why": "The desired outcome may be an example-only edit or adoption of a shared import convention."
+  },
+  {
+    "ref": "HX-716",
+    "target": "mark",
+    "why": "A plain-text round-trip promise must hold at a real boundary for more than the example content."
+  },
+  {
+    "ref": "HX-741",
+    "target": "routine",
+    "why": "Status transcription uses a report the team already specified."
+  },
+  {
+    "ref": "HX-757",
+    "target": "mark",
+    "why": "The main ask is focused review of how a customer promise applies to a new export, where existing UI exposure may have different scope."
+  }
+]
