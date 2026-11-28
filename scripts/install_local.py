@@ -15,9 +15,8 @@ holds. When the checkout's lock is that channel's digest it installs from the ch
 (`--allow-dirty` to override). Otherwise it finds the lock in the git history of `harness.lock` and installs that
 commit's harness directory. `--channel checkout` installs the checkout as it is (for trying a change).
 
-Scopes. `user` writes under `<home>/.claude/` (`--home`, default your home): skills to `skills/<name>/`, hooks to
-`hooks/`. Its hooks and deny rules then apply to every Claude Code session on the machine; nothing is committed, so
-it is the team default. `project` writes the same under `<target>/.claude/` (`--target`, default the current
+Scopes. Choose `--scope project` for work-default. The CLI requires an explicit scope. `user` writes under `<home>/.claude/` (`--home`, default your home): skills to `skills/<name>/`, hooks to
+`hooks/`. Its hooks and deny rules then apply to every Claude Code session on the machine. `project` writes the same under `<target>/.claude/` (`--target`, default the current
 directory) and rewrites hook commands from `$HOME/.claude/hooks/...` to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/...`.
 Its skills, guide and deny rules (`settings.json`) can be committed. Its hooks go to `settings.local.json`, and their
 manifest entries to `team-harness.local.json`, as a hook command differs by OS: a team of Macs and Windows machines

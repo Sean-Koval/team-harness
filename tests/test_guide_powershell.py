@@ -1,6 +1,6 @@
 """The teammate guide's Windows commands (KAN-469): what CI can check without a coworker's machine.
 
-Every ```powershell block in docs/knowledge/ must parse. Quickstart step 3, the one block that touches files, runs
+Every PowerShell block in the knowledge guides and work laptop runbook must parse. Quickstart step 3, the one block that touches files, runs
 for real against a scratch knowledge clone: the inbox copy must keep the sample's text, carry the login, and be UTF-8
 with no byte-order mark and LF line ends, which the record parser needs. The macOS block of the same step runs too.
 
@@ -35,7 +35,7 @@ def _blocks(lang: str, text: str) -> list[str]:
 
 def _all_powershell() -> list[tuple[str, int, str]]:
     found = []
-    for page in sorted(GUIDE.glob("*.md")):
+    for page in [*sorted(GUIDE.glob("*.md")), ROOT / "docs" / "work-laptop-runbook.md"]:
         for i, body in enumerate(_blocks("powershell", page.read_text(encoding="utf-8"))):
             found.append((page.name, i, body))
     return found
@@ -62,7 +62,7 @@ def _check_inbox_copy(knowledge: Path, login: str) -> None:
 
 def test_the_guide_has_powershell_for_every_page_with_commands():
     blocks = _all_powershell()
-    assert {name for name, _, _ in blocks} >= {"quickstart.md", "capture.md", "find.md"}
+    assert {name for name, _, _ in blocks} >= {"quickstart.md", "capture.md", "find.md", "work-laptop-runbook.md"}
     assert len(blocks) >= 5
 
 
